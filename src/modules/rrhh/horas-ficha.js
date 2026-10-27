@@ -1,6 +1,7 @@
 // Se ejecuta dentro de la misma transacción que la ficha administrativa.
 function error(message){return Object.assign(new Error(message),{status:400});}
 export async function guardarHorasFicha(client,{workerId,horas,desde,hoy,autor,tipoJornada}) {
+  if(tipoJornada==='completa')horas=40;
   if(tipoJornada==='por_horas') {
     await client.query('LOCK TABLE hor_contratos IN SHARE ROW EXCLUSIVE MODE');
     const {rows}=await client.query('SELECT * FROM hor_contratos WHERE worker_id=$1 ORDER BY desde,id FOR UPDATE',[workerId]);

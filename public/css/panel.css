@@ -1895,3 +1895,70 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .rr-hours-row { display:flex;align-items:center;flex-wrap:wrap;gap:8px; }
 .rr-hours-row .chips { margin:0;gap:6px; }
 .rr-hours-row input.rr-hours-other { width:96px;flex:0 0 96px;min-width:0;margin:0; }
+
+/* Equipo: todos los filtros visibles, también en tarjetas estrechas. */
+.invsecs.rr-equipo-filtros{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px 0;overflow:visible;box-sizing:border-box}
+.rr-equipo-filtros .btn{flex:0 0 auto;max-width:100%;white-space:normal;height:auto;min-height:32px}
+
+/* Pendientes de la ficha: indicación suave y textual, sin impedir guardar un borrador. */
+.rr-campo-pendiente{background:color-mix(in srgb,#c84949 7%,var(--surface));border:1px solid color-mix(in srgb,#c84949 28%,var(--border));border-radius:14px;padding:12px}
+.rr-pendiente-texto{color:#ad4141;font-size:12px;display:block;margin-top:5px}
+.rr-pendiente-texto[hidden]{display:none}
+
+/* Alta y edición comparten dimensiones y distribución compacta. */
+.modal.rr-worker-modal{width:min(620px,94vw)}
+.rr-worker-modal .modal-h{padding:16px 20px}
+.rr-worker-modal .modal-b{padding:18px 20px}
+.rr-worker-modal .promo-step{margin-bottom:10px}
+.rr-worker-modal .promo-step>summary{padding:12px 14px;font-size:14px}
+.rr-worker-modal .promo-step-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:14px}
+.rr-worker-modal .promo-step-body>*{grid-column:1/-1;min-width:0}
+.rr-worker-modal .promo-step-body>.field{grid-column:auto}
+.rr-worker-modal .field{margin:0;min-width:0}
+.rr-worker-modal .field:has([name=nombre]),.rr-worker-modal .field:has([name=direccion]),.rr-worker-modal .field:has([name=fecha_nac]),.rr-worker-modal .field:has([name=fecha_alta]),.rr-worker-modal .field:has(#altaAreas){grid-column:1/-1}
+.rr-worker-modal .field>label{font-size:12px;margin-bottom:5px}
+.rr-worker-modal .field input:not([type=checkbox]):not([type=hidden]),.rr-worker-modal .field select{box-sizing:border-box;width:100%;min-height:40px;padding:8px 10px;font-size:14px;border-radius:10px}
+.rr-worker-modal .field input.rr-hours-other{width:96px}
+.rr-worker-modal .promo-help[open]{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.rr-worker-modal .promo-help>summary{grid-column:1/-1}
+.rr-worker-modal .promo-help>.field:first-of-type{margin-top:0}
+.rr-worker-modal .promo-actions{padding:10px 14px;gap:8px}
+.rr-worker-modal .btn{min-height:38px;padding:8px 12px;font-size:13px}
+.rr-worker-modal .promo-note,.rr-worker-modal p.mut{font-size:13px;line-height:1.5;margin:0}
+.rr-worker-modal .rr-birth{max-width:360px}
+.rr-worker-modal .rr-birth-footer{margin-top:4px}
+.rr-worker-modal .rr-campo-pendiente{padding:9px}
+@media(max-width:540px){
+ .rr-worker-modal .modal-b{padding:12px}
+ .rr-worker-modal .promo-step-body,.rr-worker-modal .promo-help[open]{grid-template-columns:minmax(0,1fr)}
+ .rr-worker-modal .field input:not([type=checkbox]):not([type=hidden]),.rr-worker-modal .field select{font-size:16px;min-height:44px}
+ .rr-worker-modal .btn{min-height:44px}
+}
+
+/* La regla flex de los campos no debe anular hidden. */
+#fWorker .field[hidden],#fRRD .field[hidden]{display:none!important}
+
+.rr-datos-areas{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 12px;margin-top:16px;padding-top:12px;border-top:1px solid var(--border);font-size:13px}
+.rr-datos-areas .linkbtn{color:var(--brand)}
+.rr-datos-pendientes{margin-top:14px;font-size:12px;color:var(--ink3)}
+.rr-datos-pendientes summary{cursor:pointer;color:#986b45}
+.rr-datos-pendientes p{line-height:1.6}
+
+/* Horas y ausencias forman parte de la situación laboral. */
+.rr-laboral-seccion{margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+.rr-laboral-seccion h4{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:13px;font-weight:650;color:var(--ink2)}
+.rr-laboral-horas .lab-g{grid-template-columns:repeat(3,minmax(0,1fr));padding:12px;border-radius:12px;background:var(--surface2);gap:14px}
+.rr-laboral-seccion .row{padding:10px 0}
+@media(max-width:540px){.rr-laboral-horas .lab-g{grid-template-columns:minmax(0,1fr);gap:12px}.rr-laboral-seccion{margin-top:16px;padding-top:14px}}
+
+.rr-ficha-pestanas{min-width:0;display:grid;gap:16px}
+.rr-ficha-tabs{display:flex;flex-wrap:wrap;gap:0 18px;border-bottom:1px solid var(--border);padding:0 4px}
+.rr-ficha-tabs button{display:flex;align-items:center;gap:7px;border:0;border-bottom:3px solid transparent;background:none;padding:12px 0;color:var(--ink3);font:inherit;font-size:13px;cursor:pointer;min-height:44px}
+.rr-ficha-tabs button[aria-selected=true]{color:var(--brand);border-bottom-color:var(--brand);font-weight:650}
+.rr-ficha-tabs button:focus-visible{outline:2px solid var(--brand);outline-offset:3px;border-radius:4px}
+.rr-tab-aviso{font-size:10px;background:#eee5d4;color:#926538;min-width:18px;padding:1px 5px;text-align:center;border-radius:20px}
+.rr-ficha-panel{display:grid;gap:16px;min-width:0}
+.rr-ficha-panel[hidden]{display:none!important}
+@media(max-width:540px){.rr-ficha-tabs{gap:0 14px}.rr-ficha-tabs button{font-size:12px;padding:10px 0}}
+
+.rr-aviso-item{width:100%;text-align:left;background:none;color:var(--ink);border:0;cursor:pointer;font:inherit}.rr-aviso-item .t2{display:block}.rr-aviso-item:hover{background:var(--surface2)}

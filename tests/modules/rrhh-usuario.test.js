@@ -21,19 +21,20 @@ describe("el nombre, limpio", () => {
 });
 
 describe("las formas de llamar a alguien, de la más natural a la menos", () => {
-  test("primero el nombre a secas", () => {
-    assert.equal(candidatosUsuario("Erika Soler Puig")[0], "erika");
+  test("primero el nombre y primer apellido juntos", () => {
+    assert.equal(candidatosUsuario("Erika Soler Puig")[0], "erikasoler");
   });
 
   test("y solo después se complica, en este orden", () => {
     const c = candidatosUsuario("Erika Soler Puig");
-    assert.deepEqual(c.slice(0, 5), ["erika", "erika.s", "erikasoler", "erika.sp", "erikasolerpuig"]);
+    assert.deepEqual(c.slice(0, 5), ["erikasoler", "erikasoler2", "erikasoler3", "erikasoler4", "erikasoler5"]);
   });
 
   test("UN NÚMERO ES LO ÚLTIMO, no lo primero", () => {
     // «erika2» funciona, pero no dice nada de nadie. Se llega ahí cuando ya no queda otra.
     const c = candidatosUsuario("Erika Soler Puig");
-    assert.ok(c.indexOf("erika2") > 3, "el número no puede ir antes que el apellido");
+    assert.equal(c[1], "erikasoler2");
+    assert.ok(c.every(u => !u.includes(".")));
   });
 
   test("con un solo nombre se pasa directo a los números", () => {
@@ -60,19 +61,19 @@ describe("las formas de llamar a alguien, de la más natural a la menos", () => 
 
 describe("el primero que esté libre", () => {
   test("si el nombre está libre, ese", () => {
-    assert.equal(primerUsuarioLibre("Erika Soler", ["kevin", "marta"]), "erika");
+    assert.equal(primerUsuarioLibre("Erika Soler", ["kevin", "marta"]), "erikasoler");
   });
 
   test("si está cogido, la siguiente forma natural", () => {
-    assert.equal(primerUsuarioLibre("Erika Soler", ["erika"]), "erika.s");
-    assert.equal(primerUsuarioLibre("Erika Soler", ["erika", "erika.s"]), "erikasoler");
+    assert.equal(primerUsuarioLibre("Erika Soler", ["erikasoler"]), "erikasoler2");
+    assert.equal(primerUsuarioLibre("Erika Soler", ["erikasoler", "erikasoler2"]), "erikasoler3");
   });
 
   test("comparando SIN mayúsculas, que es como se guarda", () => {
     // Comparar sin normalizar deja pasar el duplicado y lo convierte en un error de clave
     // única a mitad del alta, cuando ya se ha escrito todo lo demás.
-    assert.notEqual(primerUsuarioLibre("Erika Soler", ["ERIKA"]), "erika");
-    assert.notEqual(primerUsuarioLibre("Erika Soler", [" Erika "]), "erika");
+    assert.notEqual(primerUsuarioLibre("Erika Soler", ["ERIKASOLER"]), "erikasoler");
+    assert.notEqual(primerUsuarioLibre("Erika Soler", [" ErikaSoler "]), "erikasoler");
   });
 
   test("con la casa llena de Erikas, sigue encontrando uno", () => {

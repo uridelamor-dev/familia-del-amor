@@ -1,3 +1,5 @@
+import { avisosDatos } from './src/modules/rrhh/avisos-datos.js';
+import { guardarPinVisible, leerPinVisible } from './src/modules/rrhh/pin-visible.js';
 import { CONFIRMACION_SCHEMA, registrarConfirmaciones } from './src/modules/rrhh/confirmacion-alta.js';
 import { generarPinProvisional } from './src/modules/rrhh/pin-provisional.js';
 import {crearPlanificacionPersonal,leerPersonal} from './src/modules/informes/planificacion-personal.js';
@@ -1970,6 +1972,7 @@ async function initDB() {
       worker_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       direccion TEXT, iban TEXT, tipo_jornada TEXT, tipo_contrato TEXT, talla_ropa TEXT
     )`);
+    await client.query('ALTER TABLE rrhh_datos_alta ADD COLUMN IF NOT EXISTS talla_camiseta TEXT, ADD COLUMN IF NOT EXISTS talla_sudadera TEXT');
     for (const col of ['fecha_conversacion TEXT', 'asunto TEXT', 'interlocutor TEXT', 'canal TEXT', 'acuerdos TEXT']) {
       await client.query(`ALTER TABLE hr_worker_notes ADD COLUMN IF NOT EXISTS ${col}`);
     }
@@ -9212,6 +9215,16 @@ function rrhhPuedeLocal(req, local) {
 }
 async function rrhhWorkerLocal(id) { const r = await dbGet("SELECT local FROM users WHERE id = ?", [id]); return r ? (r.local || "") : null; }
 
+app.get('/api/rrhh/avisos-datos',requireAuth(RRHH_ROLES),async(req,res)=>{
+ try{
+  res.set('Cache-Control','no-store');
+  const rows=await dbAll(`SELECT u.id,u.username,u.nombre,u.local,u.activo,u.fecha_baja,u.telefono,u.puesto,u.fecha_nac,u.email,u.dni,
+    a.direccion,a.iban,a.tipo_jornada,a.tipo_contrato,a.talla_camiseta,a.talla_sudadera
+    FROM users u LEFT JOIN rrhh_datos_alta a ON a.worker_id=u.id WHERE u.rol IN ('trabajador','encargado')`);
+  res.json({ok:true,data:avisosDatos(rows.filter(w=>rrhhPuedeLocal(req,w.local)),{privado:puedeVerPrivado(req.user.rol),hoy:hoyISO()})});
+ }catch{res.status(500).json({ok:false,error:'No se pudieron cargar los avisos de RR. HH.'});}
+});
+
 app.get("/api/rrhh/trabajadores", requireAuth(RRHH_ROLES), async (req, res) => {
   try {
     const scope = rrhhLocalScope(req);
@@ -9309,8 +9322,8 @@ async function rrhhCrearTrabajador({ req, datos, client, extras = {}, auditar = 
   const permitidos = puedeVerPrivado(req.user.rol) ? personales : personales.filter(k => k !== 'dni');
   const presentes = permitidos.filter(k => admin.datos[k] !== undefined);
   if (presentes.length) await q(`UPDATE users SET ${presentes.map(k => `${k} = ?`).join(', ')} WHERE id = ?`, [...presentes.map(k => admin.datos[k]), id]);
-  if (puedeVerPrivado(req.user.rol)) await q(`INSERT INTO rrhh_datos_alta (worker_id, direccion, iban, tipo_jornada, tipo_contrato, talla_ropa) VALUES (?,?,?,?,?,?)`, [id, ...CAMPOS_PRIVADOS.map(k => admin.datos[k] ?? null)]);
-  if (pin) await q(`UPDATE users SET pin_hash = ?, pin_len = 4, pin_temporal = ?, pin_actualizado_en = ? WHERE id = ?`, [await bcrypt.hash(pin, 10), pinAutomatico, ahora, id]);
+  if (puedeVerPrivado(req.user.rol)) await q(`INSERT INTO rrhh_datos_alta (worker_id, ${CAMPOS_PRIVADOS.join(', ')}) VALUES (?,${CAMPOS_PRIVADOS.map(()=>'?').join(',')})`, [id, ...CAMPOS_PRIVADOS.map(k => admin.datos[k] ?? null)]);
+  if (pin) await q(`UPDATE users SET pin_hash = ?, pin_visible_enc = ?, pin_len = 4, pin_temporal = ?, pin_actualizado_en = ? WHERE id = ?`, [await bcrypt.hash(pin, 10), guardarPinVisible(pin, LLAVERO), pinAutomatico, ahora, id]);
 
   // El PRIMER periodo laboral. Se abre aquí, con el alta, porque un trabajador sin periodo
   // es alguien de quien no consta cuándo empezó: la ficha no sabría desde cuándo contar y el
@@ -16508,9 +16521,7 @@ app.post("/api/fichajes/dispositivos/:id/revocar", requireAuth(FICHAJES_ROLES), 
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo revocar" }); }
 });
 
-// PIN de un trabajador. Se guarda con bcrypt (unidireccional): a diferencia de la
-// contraseña del panel, un PIN no se puede recuperar, solo sustituir. Si se pudiera leer,
-// cualquiera con acceso al panel podría fichar en nombre de otro.
+// PIN de fichaje: bcrypt para verificar y copia cifrada visible solo para Dirección/RR. HH.
 app.put("/api/fichajes/pin/:workerId", requireAuth(FICHAJES_ROLES), async (req, res) => {
   try {
     const w = await dbGet(`SELECT id, nombre, local FROM users WHERE id = ?`, [Number(req.params.workerId)]);
@@ -16522,8 +16533,8 @@ app.put("/api/fichajes/pin/:workerId", requireAuth(FICHAJES_ROLES), async (req, 
     if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
 
     await dbRun(
-      `UPDATE users SET pin_hash = ?, pin_len = ?, pin_temporal = ?, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
-      [await bcrypt.hash(pin, 10), pin.length, !elegido, isoConOffset(Date.now()), w.id]);
+      `UPDATE users SET pin_hash = ?, pin_visible_enc = ?, pin_len = ?, pin_temporal = ?, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
+      [await bcrypt.hash(pin, 10), guardarPinVisible(pin, LLAVERO), pin.length, !elegido, isoConOffset(Date.now()), w.id]);
     // En auditoría queda QUIÉN lo cambió y CUÁNDO. El PIN, evidentemente, no.
     await ficAuditar("pin", w.id, "asignar", req.user.username, { local: w.local, workerId: w.id });
     res.json({ ok: true, mensaje: elegido ? `PIN elegido por ${w.nombre} guardado.` : `PIN asignado a ${w.nombre}. Dile que lo cambie desde su perfil.` });
@@ -16550,8 +16561,8 @@ app.put("/api/mi-pin", requireAuth(), async (req, res) => {
       }
     }
     await dbRun(
-      `UPDATE users SET pin_hash = ?, pin_len = ?, pin_temporal = FALSE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
-      [await bcrypt.hash(nuevo, 10), nuevo.length, isoConOffset(Date.now()), yo.id]);
+      `UPDATE users SET pin_hash = ?, pin_visible_enc = ?, pin_len = ?, pin_temporal = FALSE, pin_actualizado_en = ?, pin_intentos = 0, pin_bloqueado_hasta = NULL WHERE id = ?`,
+      [await bcrypt.hash(nuevo, 10), guardarPinVisible(nuevo, LLAVERO), nuevo.length, isoConOffset(Date.now()), yo.id]);
     await ficAuditar("pin", yo.id, "cambio_propio", req.user.username, { local: yo.local, workerId: yo.id });
     res.json({ ok: true, mensaje: "PIN actualizado." });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cambiar el PIN" }); }
@@ -18617,12 +18628,13 @@ app.put("/api/mi-perfil", requireAuth(), async (req, res) => {
 });
 
 app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, res) => {
+  res.set("Cache-Control", "no-store");
   try {
     const w = await dbGet("SELECT id, username, nombre, rol, local, telefono, email, dni, puesto, fecha_nac, fecha_alta, fecha_baja, foto_url, agora_username, activo, pass_temporal, pass_cambiada_en, creado_en FROM users WHERE id = ?", [req.params.id]);
     if (!w) return res.status(404).json({ ok: false, error: "Trabajador no encontrado" });
     if (!rrhhPuedeLocal(req, w.local)) return res.status(403).json({ ok: false, error: "Sin acceso a este trabajador" });
     const privado = puedeVerPrivado(req.user.rol);
-    if (privado) Object.assign(w, await dbGet(`SELECT direccion, iban, tipo_jornada, tipo_contrato, talla_ropa FROM rrhh_datos_alta WHERE worker_id = ?`, [w.id]) || {});
+    if (privado) Object.assign(w, await dbGet(`SELECT direccion, iban, tipo_jornada, tipo_contrato, talla_ropa, talla_camiseta, talla_sudadera FROM rrhh_datos_alta WHERE worker_id = ?`, [w.id]) || {});
     const contratoAlta = await dbGet(`SELECT id, desde, horas_semana FROM hor_contratos WHERE worker_id = ? AND desde <= ? AND (hasta IS NULL OR hasta >= ?) ORDER BY desde DESC LIMIT 1`, [w.id, hoyISO(), hoyISO()]);
     if (privado) w.horas_semana = contratoAlta?.horas_semana ?? null;
     const pinAlta = await dbGet(`SELECT pin_hash IS NOT NULL AS tiene FROM users WHERE id = ?`, [w.id]);
@@ -18641,10 +18653,13 @@ app.get("/api/rrhh/trabajador/:id/ficha", requireAuth(RRHH_ROLES), async (req, r
       documentos,
       alertasDoc: documentosPorCaducar(documentos, hoy, 30),
       enlazadoAgora: !!w.agora_username,
-      // Solo si TIENE PIN y desde cuándo; el PIN en sí no sale de la base ni hasheado.
-      pin: await dbGet(
-        `SELECT pin_hash IS NOT NULL AS tiene, pin_temporal, pin_actualizado_en, pin_bloqueado_hasta FROM users WHERE id = ?`,
-        [w.id]).catch(() => null),
+      pin: await (async()=>{
+        const p=await dbGet(`SELECT pin_hash IS NOT NULL AS tiene, pin_visible_enc, pin_temporal, pin_actualizado_en, pin_bloqueado_hasta FROM users WHERE id = ?`,[w.id]);
+        if(!p)return null;
+        const visible=leerPinVisible(p.pin_visible_enc,LLAVERO,req.user.rol);
+        delete p.pin_visible_enc;
+        return {...p,visible};
+      })(),
     });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -18842,6 +18857,8 @@ app.get("/api/rrhh/trabajador/:id/ficha-laboral", requireAuth(RRHH_ROLES), async
     };
     // Lo que hay que HACER con esta persona, arriba del todo. Se calcula al final porque
     // necesita la respuesta entera, y solo entra lo que alguien puede resolver.
+    const jornadaFicha=await dbGet('SELECT tipo_jornada FROM rrhh_datos_alta WHERE worker_id=?',[w.id]);
+    cuerpo.trabajador.tipo_jornada=jornadaFicha?.tipo_jornada||null;
     cuerpo.asuntos = asuntosPendientes(cuerpo, hoy);
     res.json(cuerpo);
   } catch (e) {

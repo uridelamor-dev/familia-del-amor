@@ -493,7 +493,7 @@ function shell(active, bodyHtml) {
               Dashboard, que es donde tiene nombre propio. */""}
         <div class="spacer"></div>
         <span id="waPill" class="gstat"><span class="sdot st-off"></span>WhatsApp…</span>
-        <button class="iconbtn bell hidesm" data-view="dashboard" aria-label="Alertas">${ic("bell")}${DASH_CONCERNS ? `<span class="n">${DASH_CONCERNS}</span>` : ""}</button>
+        <button class="iconbtn bell" data-act="avisos-abrir" aria-label="Alertas">${ic("bell")}${(AVISOS_RR.length+(puedeVer("dashboard")?DASH_CONCERNS:0)) ? `<span class="n">${AVISOS_RR.length+(puedeVer("dashboard")?DASH_CONCERNS:0)}</span>` : ""}</button>
         <button class="iconbtn" id="themeBtn" data-act="theme" aria-label="Cambiar tema">${ic(isDark() ? "moon" : "sun")}</button>
         <span class="avatar" title="${esc(uname)}">${esc(initials)}</span>
         <button class="iconbtn" data-act="logout" title="Cerrar sesión" aria-label="Cerrar sesión">${ic("exit")}</button>
@@ -918,6 +918,7 @@ window.addEventListener("resize", dpClose);
 window.addEventListener("scroll", dpClose, true);
 
 // ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
+let AVISOS_RR = [];
 let DASH_LOCAL = "", SELECCION = [], COLLAPSED = false, PERIOD = "hoy", DASH_CONCERNS = 0;
 
 /**
@@ -1003,7 +1004,7 @@ function fijarPendientes(d) {
     mantenimiento: "Incidencias abiertas",
     reviews: "Reseñas sin responder",
   };
-  DASH_CONCERNS = PENDIENTES.dashboard;
+  DASH_CONCERNS = avisosOtrosDepartamentos(d).length;
 }
 let DASH_RANGE = { from: null, to: null, label: "Hoy" };
 let DASH_PERIODO = null;
@@ -3771,7 +3772,7 @@ function renderRRSegSidebar() {
   // que la plantilla es más pequeña de lo que es.
   const c = RRSEG.cuentas;
   const est = RRSEG.estado || "activos";
-  const filtro = c ? `<div class="invsecs" style="display:flex;gap:6px;padding:10px 16px 0">
+  const filtro = c ? `<div class="invsecs rr-equipo-filtros">
       ${[["activos", `En plantilla (${c.activos})`], ["bajas", `Archivados (${c.bajas})`], ["todos", `Todos (${c.total})`]]
         .map(([k, t]) => `<button class="btn sm ${est === k ? "primary" : ""}" data-act="rr-estado" data-estado="${k}">${esc(t)}</button>`).join("")}
     </div>` : "";
@@ -3816,7 +3817,7 @@ function rrCategoriaSelect(value = '', attrs = 'name="puesto"') {
 function rrCamposAdministrativos(t = {}) {
   const input = (k, lab) => `<div class="field"><label>${lab}</label><input name="${k}" value="${esc(t[k] || '')}" ${k === 'iban' ? 'autocomplete="off" maxlength="42"' : ''}></div>`;
   const select = (k, lab, options) => `<div class="field"><label>${lab}</label><select name="${k}"><option value="">Pendiente de completar</option>${options.map(([v,l]) => `<option value="${v}" ${t[k] === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`;
-  return input('dni','DNI/NIE') + input('direccion','Dirección completa') + input('iban','IBAN') + input('talla_ropa','Talla de ropa')
+  return input('dni','DNI/NIE') + input('direccion','Dirección completa') + input('iban','IBAN') + select('talla_camiseta','Camiseta',['XS','S','M','L','XL','XXL'].map(t=>[t,t])) + select('talla_sudadera','Sudadera',['XS','S','M','L','XL','XXL'].map(t=>[t,t]))
     + select('tipo_jornada','Tipo de jornada',[['completa','Completa'],['parcial','Parcial'],['por_horas','Por horas']])
     + select('tipo_contrato','Tipo de contrato',[['indefinido','Indefinido'],['temporal','Temporal'],['fijo_discontinuo','Fijo discontinuo']]);
 }
@@ -3828,6 +3829,16 @@ function renderRRAlta() {
     ${a.faltanFicha.length ? `<p class="mut">Para completar la ficha: ${esc(a.faltanFicha.join(' · '))}.</p>` : ''}
     <p class="mut">Correo de gestoría pendiente de conectar. Guardar esta ficha no solicita ni confirma el alta laboral.</p>
     <button class="btn" disabled>Enviar alta a gestoría · próximamente</button></div>`;
+}
+function rrAltaGestoria(id) {
+  const a=RRSEG.ficha?.alta;
+  if(!a){toast('Espera a que termine de cargar la ficha.');return;}
+  const ov=modal('Enviar alta a gestoría',`<p><b>${esc(RRSEG.ficha?.trabajador?.nombre||'Trabajador')}</b></p>
+    ${a.faltanGestoria.length?`<p>Antes de preparar el alta, completa:</p><ul>${a.faltanGestoria.map(x=>`<li>${esc(x)}</li>`).join('')}</ul><button type="button" class="btn" id="rrGestoriaCompletar">Completar datos</button>`:'<p>Los datos básicos de la ficha están completos.</p>'}
+    <p class="promo-note">Falta conectar el correo de gestoría. Todavía no se puede enviar la solicitud desde el panel.</p>
+    <p class="mut">Guardar la ficha o confirmar los datos no tramita el alta laboral.</p>
+    <button type="button" class="btn" data-close>Cerrar</button>`);
+  ov.querySelector('#rrGestoriaCompletar')?.addEventListener('click',()=>{ov.remove();rrEditarDatos(id);});
 }
 async function rrCumpleConfig() {
   try {
@@ -3848,6 +3859,19 @@ function renderRRDocs() {
   }).join("") : `<div class="mut" style="padding:8px 14px">Sin documentos.</div>`;
   return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Documentos</h3><button class="btn sm" data-act="rr-doc-subir" data-id="${RRSEG.sel.id}">+ Subir</button></div><div class="rows">${list}</div></div>`;
 }
+function rrDatosPendientes() {
+ const faltan=RRSEG.ficha?.alta?.faltanFicha||[];
+ const asuntos=RRSEG.lab?.asuntos||[];
+ if(!faltan.length&&!asuntos.length)return '';
+ const acciones={contrato:'rr-contrato',areas:'rr-areas',bolsa:'rr-libro',ausencias:'rr-ir-ausencias',revision:'rr-ir-revision'};
+ return `<details class="rr-datos-pendientes"><summary>${faltan.length?`${faltan.length} datos por completar`:''}${faltan.length&&asuntos.length?' · ':''}${asuntos.length?`${asuntos.length} avisos por revisar`:''}</summary>
+ ${faltan.length?`<p>${esc(faltan.join(' · '))}</p><button class="btn sm" data-act="rr-editar-datos" data-id="${RRSEG.sel.id}">Completar datos</button>`:''}
+ ${asuntos.map(x=>`<p>${esc(x.texto)} ${acciones[x.accion]?`<button class="linkbtn" data-act="${acciones[x.accion]}" data-id="${RRSEG.sel.id}">Revisar</button>`:''}</p>`).join('')}</details>`;
+}
+function rrAreasEnDatos(){
+ const a=RRSEG.lab?.areas;if(!a)return '';
+ return `<div class="rr-datos-areas"><span class="t2">Áreas</span><span>${esc(!a.configurado?'Sin configurar':a.data.length?a.data.map(x=>x.nombre+(x.activo?'':' (desactivada)')).join(' · '):'Ninguna asignada')}</span><button class="linkbtn" data-act="rr-areas">Cambiar</button></div>`;
+}
 function renderRRFicha() {
   const w = RRSEG.sel;
   if (!w) return `<div class="card" style="min-height:200px;display:grid;place-items:center"><div class="mut">Selecciona un trabajador para ver su ficha, datos y documentos.</div></div>`;
@@ -3864,20 +3888,46 @@ function renderRRFicha() {
     : (baja ? '<span class="pill bad">Baja</span>' : '<span class="pill ok">Activo</span>');
   const fechaAlta = String(t.fecha_alta || "").slice(0, 10);
   const altaCabecera = /^\d{4}-\d{2}-\d{2}$/.test(fechaAlta) ? fechaAlta.split("-").reverse().join("/") : "Pendiente";
-  const resumenCabecera = `Categoría: ${t.puesto || "Pendiente"} · Ubicación: ${t.local || "Pendiente"} · Alta: ${altaCabecera}`;
-  const pinCabecera = f ? `<button class="btn sm" style="margin-top:10px;white-space:normal" data-act="rr-pin" data-id="${w.id}" title="Establecer un nuevo PIN de fichaje">${f.pin?.tiene ? "PIN configurado · Cambiar" : "Asignar PIN"}</button>` : "";
+  const resumenCabecera = `${t.puesto || "Pendiente"} · ${t.local || "Pendiente"} · Alta: ${altaCabecera}`;
+  const pinCabecera = f ? `<button class="btn sm" style="margin-top:10px;white-space:normal" data-act="rr-pin" data-id="${w.id}" title="Establecer un nuevo PIN de fichaje">${f.pin?.visible ? `PIN: ${esc(f.pin.visible)} · Cambiar` : f.pin?.tiene ? "PIN no recuperable · Cambiar" : "Asignar PIN"}</button>` : "";
   const ini = (t.nombre || t.username || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const foto = t.foto_url ? `<img src="${esc(t.foto_url)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : `<span class="avatar" style="width:56px;height:56px;font-size:20px;flex:none">${esc(ini)}</span>`;
   const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
-  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Categoría", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) + dato("Dirección", t.direccion) + dato("IBAN", t.iban) + dato("Jornada", t.tipo_jornada) + dato("Tipo de contrato", t.tipo_contrato?.replaceAll("_", " ")) + dato("Talla de ropa", t.talla_ropa) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
+  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Categoría", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) + dato("Dirección", t.direccion) + dato("IBAN", t.iban) + dato("Jornada", t.tipo_jornada) + dato("Tipo de contrato", t.tipo_contrato?.replaceAll("_", " ")) + dato("Camiseta", t.talla_camiseta) + dato("Sudadera", t.talla_sudadera) + dato("Talla anterior (sin prenda)", t.talla_ropa) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div>${rrAreasEnDatos()}${rrDatosPendientes()}</div>`;
   const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(resumenCabecera)}</div>${pinCabecera}</div></div>${esDir ? `<details class="rr-mas"><summary class="btn sm" title="Más acciones">···</summary>
       <div class="rr-mas-menu">
+        <button class="btn sm" data-act="rr-reset-pass" data-id="${w.id}" data-nombre="${esc(t.nombre || "")}">Restablecer contraseña</button>
+        <button class="btn sm" data-act="rr-alta-gestoria" data-id="${w.id}">Enviar alta a gestoría</button>
+        <button class="btn sm" data-act="rr-doc-subir" data-id="${w.id}">Añadir documento</button>
         <button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar del sistema</button>
         <p class="mut" style="margin:8px 0 0;font-size:11.5px;max-width:230px;line-height:1.5">Borra su acceso y su ficha.
           Para alguien que se va, lo que toca es <b>Dar de baja</b>: conserva su histórico.</p>
       </div></details>` : ""}</div></div>`;
-  return `<div class="grid" style="gap:16px">${hero}${renderRRAlta()}${datos}${renderRRLaboral()}${renderRRPin()}${renderRRDocs()}${renderRRNotas()}</div>`;
+  const pestañas=[
+    ['datos','Datos personales',datos+renderRRPin(),f?.alta?.faltanFicha?.length||0],
+    ['laboral','Situación laboral',renderRRLaboral(),RRSEG.lab?.asuntos?.length||0],
+    ['documentos','Documentos',renderRRDocs(),f?.alertasDoc?.length||0],
+    ...(esDir?[['seguimiento','Seguimiento',renderRRNotas(),0]]:[])
+  ];
+  const activa=pestañas.some(([k])=>k===RRSEG.fichaTab)?RRSEG.fichaTab:'datos';
+  return `<div class="rr-ficha-pestanas">${hero}
+    <div class="rr-ficha-tabs" role="tablist" aria-label="Apartados de la ficha">${pestañas.map(([k,t,html,n])=>`<button type="button" role="tab" id="rr-ficha-tab-${k}" aria-controls="rr-ficha-panel-${k}" aria-selected="${k===activa}" tabindex="${k===activa?0:-1}" data-act="rr-ficha-tab" data-tab="${k}">${t}${n?`<span class="rr-tab-aviso" aria-label="${n} pendientes">${n}</span>`:''}</button>`).join('')}</div>
+    ${pestañas.map(([k,t,html])=>`<section class="rr-ficha-panel" role="tabpanel" id="rr-ficha-panel-${k}" aria-labelledby="rr-ficha-tab-${k}" ${k===activa?'':'hidden'}>${html||'<p class="mut">No se ha podido cargar este apartado. Vuelve a seleccionar al trabajador para intentarlo de nuevo.</p>'}</section>`).join('')}</div>`;
 }
+function rrFichaTab(tab){
+ const root=document.getElementById('rrFicha');if(!root)return;
+ const botones=[...root.querySelectorAll('[data-act="rr-ficha-tab"]')];
+ if(!botones.some(b=>b.dataset.tab===tab))return;
+ RRSEG.fichaTab=tab;
+ botones.forEach(b=>{const activo=b.dataset.tab===tab;b.setAttribute('aria-selected',String(activo));b.tabIndex=activo?0:-1;document.getElementById(b.getAttribute('aria-controls')).hidden=!activo;});
+}
+document.addEventListener('keydown',e=>{
+ const tab=e.target.closest?.('[data-act="rr-ficha-tab"]');if(!tab||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;
+ const tabs=[...tab.parentElement.querySelectorAll('[role="tab"]')],i=tabs.indexOf(tab);
+ const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+ e.preventDefault();rrFichaTab(tabs[next].dataset.tab);tabs[next].focus();
+});
+
 
 // ── Necesita tu atención ────────────────────────────────────────────────────
 // La bandeja operativa. NO es un dashboard: sin porcentajes, sin medias, sin gráficos. Solo
@@ -3951,15 +4001,16 @@ function renderRRLaboral() {
   const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
   const h = (m) => ficHoras(Math.abs(Math.round(m || 0)));
   const c = f.contrato.vigente;
+  const porHoras=(f.trabajador.tipo_jornada||RRSEG.ficha?.trabajador?.tipo_jornada)==='por_horas';
 
   const resumen = `<div class="lab-g">
     <div><div class="t2">Estado</div><div class="t1">${esc(f.estado.etiqueta)}</div>
       ${f.estado.detalle ? `<div class="mut" style="font-size:11.5px">${esc(f.estado.detalle)}</div>` : ""}</div>
     <div><div class="t2">Antigüedad</div><div class="t1">${esc(f.antiguedad?.texto || "—")}</div>
       <div class="mut" style="font-size:11.5px">desde el ${esc((f.trabajador.fecha_alta || "—").slice(0, 10))}</div></div>
-    <div><div class="t2">Contrato</div><div class="t1">${c ? esc(c.horas_semana + " h/semana") : "<span class=\"mut\">sin contrato</span>"}</div>
+    <div><div class="t2">Contrato</div><div class="t1">${c ? esc(c.horas_semana + " h/semana") : porHoras ? "Por horas" : "<span class=\"mut\">Horas pendientes</span>"}</div>
       ${c ? `<div class="mut" style="font-size:11.5px">desde el ${esc(c.desde)}${c.hasta ? ` hasta el ${esc(c.hasta)}` : ""}</div>`
-          : `<div class="mut" style="font-size:11.5px">sin horas no entra en el generador</div>`}</div>
+          : `<div class="mut" style="font-size:11.5px">${porHoras ? "Sin objetivo semanal fijo" : "Configura las horas semanales"}</div>`}</div>
     <div><div class="t2">Bolsa de horas</div><div class="t1">${esc(ficSigno(f.bolsa.saldo))}</div>
       ${f.bolsa.puedeVerLibro ? `<button class="linkbtn" data-act="rr-libro" data-id="${f.trabajador.id}" style="color:var(--brand);font-size:11.5px">Ver el libro</button>` : ""}</div>
   </div>`;
@@ -4042,18 +4093,17 @@ function renderRRLaboral() {
         Lo que se reconoce de las anteriores no lo decide el sistema.</p></details>` : "";
 
   const accion = (t, id) => `<button class="btn sm" data-act="${id}">${t}</button>`;
-  return `${asuntos}
+  return `
     <div class="card"><div class="ch"><h3>Situación laboral</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${esDir ? accion("Cambiar contrato", "rr-contrato") : ""}
         ${esDir && f.estado.enPlantilla ? accion("Dar de baja", "rr-baja") : ""}
         ${f.periodos?.puedeRecontratar ? `<button class="btn sm primary" data-act="rr-recontratar">Desarchivar</button>` : ""}
       </div></div>
-      ${resumen}${solap}${hist}${incorporaciones}${irA}</div>
-    <div class="card"><div class="ch"><h3>Áreas en las que puede trabajar</h3></div>${areas}</div>
-    <div class="card"><div class="ch"><h3>Horas</h3></div>${horas}</div>
-    <div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Ausencias</h3></div>${bloqueAus}</div>
-    <div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Disponibilidad declarada</h3></div>${disp}</div>`;
+      ${resumen}${solap}${hist}${incorporaciones}
+      <section class="rr-laboral-seccion rr-laboral-horas" aria-label="Horas"><h4>Horas</h4>${horas}</section>
+      <section class="rr-laboral-seccion" aria-label="Ausencias"><h4>Ausencias${aus.pendientes.length ? ` <span class="pill warn">${aus.pendientes.length} pendientes</span>` : ''}</h4>${bloqueAus}</section>
+      ${irA}</div>`;
 }
 
 // PIN del kiosco. Se asigna desde aquí porque es donde se está cuando alguien entra a
@@ -4070,7 +4120,7 @@ function renderRRPin() {
   const t = (f && f.trabajador) || {};
   return `<div class="card"><div class="ch"><h3>Acceso</h3>
       <div style="display:flex;gap:8px">
-        <button class="btn sm" data-act="rr-reset-pass" data-id="${RRSEG.sel.id}" data-nombre="${esc(t.nombre || "")}">Restablecer contraseña</button>
+
         <button class="btn sm" data-act="rr-pin" data-id="${RRSEG.sel.id}">${p.tiene ? "Cambiar PIN" : "Asignar PIN"}</button>
       </div></div>
     <div class="grid g3" style="gap:12px">
@@ -4097,7 +4147,7 @@ async function rrAsignarPin(id) {
   const elegido = ["direccion", "rrhh"].includes(USER.rol);
   const ov = modal("PIN de fichaje", `
     <p style="margin:0 0 14px;line-height:1.55">${elegido ? "Introduce los 4 dígitos que ha elegido el propio trabajador. Se guardan como su PIN definitivo." : "PIN provisional de 4 a 6 dígitos. El trabajador podrá cambiarlo desde su perfil."}</p>
-    <p class="mut">El PIN actual no se puede consultar. Al guardar, el nuevo sustituirá al anterior.</p>
+    <p class="mut">Al guardar, el nuevo PIN sustituirá al anterior.</p>
     <label for="rrPinVal">Nuevo PIN de fichaje</label>
     <input class="inp" id="rrPinVal" inputmode="numeric" type="password" maxlength="${elegido ? 4 : 6}" autocomplete="off" placeholder="4917" style="width:100%;font-size:20px;letter-spacing:.3em;text-align:center">
     <p id="rrPinMsg" style="margin:10px 0 0;min-height:18px;color:var(--danger);font-weight:550"></p>
@@ -4180,6 +4230,42 @@ async function rrImportarOperadores() {
     catch (err) { if (err.message !== "noauth") toast("Error: " + err.message); }
   });
 }
+function rrEditarPasos(ov,t) {
+  const form=ov.querySelector('#fRRD'), grid=form.querySelector('.form-grid'), acciones=form.lastElementChild;
+  const flujo=marketingPasos(form,['Datos de la persona','Local y trabajo','Acceso y datos adicionales','Revisar y guardar']);
+  ov.querySelector('.modal').classList.add('campaign-modal','rr-worker-modal');
+  const mover=(paso,nombre)=>{const el=form.elements.namedItem(nombre);if(el)flujo.cuerpos[paso].append(el.closest('.field'));};
+  ['nombre','telefono','email','fecha_nac'].forEach(n=>mover(0,n));
+  flujo.cuerpos[1].innerHTML=`<p class="promo-note">${esc(t.local||'Sin ubicación')} · Alta: ${esc((t.fecha_alta||'').slice(0,10)||'Pendiente')}</p>`;
+  ['puesto','tipo_jornada','tipo_contrato','horas_semana','contrato_desde'].forEach(n=>mover(1,n));
+  flujo.cuerpos[2].innerHTML=`<p class="promo-note">Usuario: <b>${esc(t.username||'Pendiente')}</b>. El PIN se consulta y cambia desde la cabecera de la ficha.</p>`;
+  ['dni','direccion','iban','talla_camiseta','talla_sudadera'].forEach(n=>mover(2,n));
+  grid.remove();
+  const resumen=document.createElement('div');resumen.className='promo-note';resumen.setAttribute('aria-live','polite');flujo.cuerpos[3].append(resumen,acciones);
+  form.querySelectorAll('.field').forEach((campo,i)=>{const el=campo.querySelector('input,select');const lab=campo.querySelector('label');if(el&&lab){el.id||=`rrEditarCampo${i}`;lab.htmlFor=el.id;}});
+  rrNacimientoSelector(form.elements.fecha_nac);
+  const actualizar=()=>{
+    const faltan=[];
+    form.querySelectorAll('.field').forEach(campo=>{
+      const el=campo.querySelector('input[name],select[name]');if(!el)return;
+      const pendiente=!campo.hidden&&!el.disabled&&el.name!=='contrato_desde'&&!String(el.value||'').trim();
+      campo.classList.toggle('rr-campo-pendiente',pendiente);
+      let aviso=campo.querySelector('.rr-pendiente-texto');
+      if(pendiente&&!aviso){aviso=document.createElement('small');aviso.className='rr-pendiente-texto';aviso.textContent='Pendiente de completar';campo.append(aviso);}
+      if(aviso)aviso.hidden=!pendiente;
+      if(pendiente)faltan.push(campo.querySelector('label')?.textContent.trim()||el.name);
+    });
+    resumen.textContent=faltan.length?`Queda por completar: ${faltan.join(' · ')}. Puedes guardar los cambios y continuar después.`:'Los datos de este formulario están completos. Ya puedes guardar los cambios.';
+  };
+  form.addEventListener('input',actualizar);form.addEventListener('change',()=>queueMicrotask(actualizar));actualizar();
+  form.noValidate=true;
+  form.addEventListener('submit',e=>{
+    const invalid=form.querySelector(':invalid');
+    if(invalid){e.preventDefault();e.stopImmediatePropagation();const i=flujo.pasos.findIndex(p=>p.contains(invalid));if(i>=0)flujo.abrir(i);invalid.reportValidity();return;}
+    if(!flujo.pasos[3].open){e.preventDefault();e.stopImmediatePropagation();flujo.abrir(3);actualizar();}
+  },true);
+}
+
 function rrEditarDatos(id) {
   const t = (RRSEG.ficha && RRSEG.ficha.trabajador) || RRSEG.sel; if (!t) return;
   const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
@@ -4190,17 +4276,18 @@ function rrEditarDatos(id) {
   const ov = modal("Editar datos", body);
   if (esDir) {
     const form=ov.querySelector('#fRRD'), h=form.elements.horas_semana, j=form.elements.tipo_jornada;
-    const sync=()=>{const variable=j.value==='por_horas';h.required=j.value==='parcial';h.disabled=variable;h.closest('.field').hidden=variable;if(variable)h.value='';const cambia=variable ? !!horasActuales : h.value!=='' && Number(h.value)!==Number(horasActuales);ov.querySelector('#rrHorasDesde').hidden=!cambia;form.elements.contrato_desde.required=cambia;};
+    const sync=()=>{const variable=j.value==='por_horas';const parcial=j.value==='parcial';h.required=parcial;h.disabled=!parcial;h.closest('.field').hidden=!parcial;if(variable)h.value='';else if(j.value==='completa')h.value='40';const cambia=variable ? !!horasActuales : h.value!=='' && Number(h.value)!==Number(horasActuales);ov.querySelector('#rrHorasDesde').hidden=!cambia;form.elements.contrato_desde.required=cambia;};
     h.addEventListener('input',sync);j.addEventListener('change',sync);sync();
   }
+  rrEditarPasos(ov,t);
   ov.querySelector("#fRRD").addEventListener("submit", async (e) => {
     e.preventDefault(); const fm = e.target;
     const data = { nombre: fm.nombre.value.trim(), puesto: fm.puesto.value.trim(), telefono: fm.telefono.value.trim(), email: fm.email.value.trim(), fecha_nac: fm.fecha_nac.value };
-    if (esDir) for (const k of ['dni','direccion','iban','talla_ropa','tipo_jornada','tipo_contrato']) data[k] = fm.elements[k].value.trim();
+    if (esDir) for (const k of ['dni','direccion','iban','talla_camiseta','talla_sudadera','tipo_jornada','tipo_contrato']) data[k] = fm.elements[k].value.trim();
     if (esDir) { data.horas_semana = fm.elements.horas_semana.value; data.contrato_desde = fm.elements.contrato_desde.value; }
     try {
       const r = await apiSend("PUT", "/api/rrhh/trabajador/" + encodeURIComponent(id), data);
-      ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id);
+      ov.remove(); toast("Datos guardados ✅"); rrSelWorker(id); refrescarAvisosRR();
       // Dar de baja no borra los turnos que ya estuvieran puestos —un horario publicado no se
       // cambia por detrás— así que si quedan, se dice y se dice DÓNDE.
       if (r && r.avisoTurnos) horAvisoTurnos(r.avisoTurnos);
@@ -4212,7 +4299,7 @@ function rrDocSubir(id) {
   const esDir = USER.rol === "direccion" || USER.rol === "rrhh";
   const tipoOpts = Object.keys(RR_DOC_TIPOS).map((k) => `<option value="${k}">${RR_DOC_TIPOS[k]}</option>`).join("");
   const body = `<form id="fRRDoc"><div class="form-grid"><div class="field"><label>Tipo</label><select name="tipo">${tipoOpts}</select></div><div class="field"><label>Nombre</label><input name="nombre" placeholder="Contrato 2026…"></div><div class="field"><label>Caduca (opcional)</label><input name="fecha_caducidad" type="date"></div>${esDir ? `<label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="sensible" style="width:auto"> Documento sensible (solo dirección/RRHH)</label>` : ""}<div class="field full"><label>Archivo (PDF o imagen)</label><input type="file" id="rrDocFile" accept=".pdf,.jpg,.jpeg,.png" required></div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Subir</button></div></form>`;
-  const ov = modal("Subir documento", body);
+  const ov = modal("Añadir documento", body);
   ov.querySelector("#fRRDoc").addEventListener("submit", async (e) => {
     e.preventDefault(); const fm = e.target; const btn = fm.querySelector('button[type="submit"]');
     const file = ov.querySelector("#rrDocFile").files[0]; if (!file) { toast("Elige un archivo"); return; }
@@ -4264,18 +4351,36 @@ function renderRRResumen() {
 }
 // Sin teléfono no se les puede escribir. Lo rellenan ellos desde su perfil, pero
 // aquí se ve de un vistazo a quién le falta, para poder recordárselo.
-function renderRRSinTelefono() {
-  const c = RRSEG.contacto;
-  if (!c || !c.sinTelefono) return "";
-  const nombres = (c.quienes || []).map((w) => esc(w.nombre || "—")).join(", ");
-  return `<details class="card fold" style="margin-bottom:12px" data-priority-review open>
-    <summary><h3>${num(c.sinTelefono)} de ${num(c.activos)} sin teléfono</h3><span class="foldr"><span>no podemos escribirles</span><span class="car">${ic("chev", 16)}</span></span></summary>
-    <div style="padding:14px 18px">
-      <p class="mut" style="margin:0 0 8px;line-height:1.6">Cada uno lo rellena desde <b>su espacio</b> (entra con su usuario → «Mis datos»). Mientras falte, no recibirá el pulso mensual ni los avisos, y Sara le contestaría como si fuera un cliente.</p>
-      <div class="t2">${nombres}</div>
-    </div>
-  </details>`;
+function renderRRSinTelefono() { return ''; }
+function avisosOtrosDepartamentos(d){return (d.preocupaciones||[]).filter(c=>GO_VIEW[c.go]&&GO_VIEW[c.go]!=='rrhh'&&puedeVer(GO_VIEW[c.go]));}
+async function refrescarAvisosRR(){
+ if(!USER||!['direccion','rrhh','encargado'].includes(USER.rol)){AVISOS_RR=[];return;}
+ const sesion=token();
+ try{const r=await apiRaw('/api/rrhh/avisos-datos');if(token()!==sesion)return false;AVISOS_RR=r.data||[];repintarBarra();return true;}catch{return false;}
 }
+async function abrirAvisos(){
+ const ov=modal('Avisos por departamento','<p class="mut">Revisando pendientes…</p>');
+ const actualizado=await refrescarAvisosRR();
+ if(!USER||!ov.isConnected)return;
+ const avisos=AVISOS_RR.slice();
+ const grupos=[];
+ if(actualizado===false)grupos.push('<p class="mut">No se pudieron actualizar los avisos de RR. HH. Inténtalo de nuevo.</p>');
+ if(['direccion','rrhh','encargado'].includes(USER.rol))grupos.push(`<details open><summary>RR. HH. · ${AVISOS_RR.length}</summary><div class="rows">${avisos.map((a,i)=>`<button class="row rr-aviso-item" type="button" data-aviso-rr="${i}"><span class="grow"><b>${esc(a.nombre)}</b><span class="t2">${esc(a.titulo)} · ${esc(a.local||'')}</span></span><span aria-hidden="true">→</span></button>`).join('')||'<p class="mut">No hay datos pendientes.</p>'}</div></details>`);
+ if(puedeVer('dashboard')){
+ try{const d=await api('/api/dashboard');DASH_CONCERNS=avisosOtrosDepartamentos(d).length;repintarBarra();const otros=new Map();for(const c of avisosOtrosDepartamentos(d)){const view=GO_VIEW[c.go];if(!view||view==='rrhh'||!puedeVer(view))continue;const dept=['facturas','proveedores'].includes(view)?'Contabilidad':['reviews','clientes','campanas'].includes(view)?'Marketing':view==='mantenimiento'?'Mantenimiento':view==='whatsapp'?'Atención al cliente':'Operación';if(!otros.has(dept))otros.set(dept,[]);otros.get(dept).push(c);}for(const [dept,items]of otros)grupos.push(`<details><summary>${esc(dept)} · ${items.length}</summary>${items.map(attRow).join('')}</details>`);}catch{grupos.push('<p class="mut">No se pudieron actualizar los avisos de otros departamentos.</p>');}
+ }
+ if(!ov.isConnected)return;ov.querySelector('.modal-b').innerHTML=grupos.join('')||'<p class="mut">No hay avisos disponibles para tu departamento.</p>';
+ ov.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>ov.remove()));
+ ov.querySelectorAll('[data-aviso-rr]').forEach(b=>b.onclick=async()=>{
+  const aviso=avisos[Number(b.dataset.avisoRr)];if(!aviso)return;ov.remove();RRTAB='seguimiento';RRSEG.estado='activos';DASH_LOCAL=aviso.local||'';SELECCION=[];guardarAmbito();await go('rrhh');await rrSelWorker(aviso.worker_id);
+  if(String(RRSEG.sel?.id)!==String(aviso.worker_id)){toast('Selecciona el establecimiento del trabajador para completar su ficha.');return;}
+  rrEditarDatos(aviso.worker_id);
+  const input=document.querySelector(`#fRRD [name="${aviso.campo}"]`);
+  if(input){const paso=input.closest('details.promo-step');if(paso){paso.parentElement.querySelectorAll('details.promo-step').forEach(p=>p.open=p===paso);}const foco=input.type==='hidden'?input.closest('.field').querySelector('select'):input;foco?.focus();input.closest('.field')?.scrollIntoView({block:'center'});}
+ });
+}
+setInterval(()=>{if(document.visibilityState==='visible'&&token())refrescarAvisosRR();},60000);
+
 function renderRRSeg() {
   // El hueco de la bandeja va ARRIBA y se rellena aparte: es lo primero que tiene que ver un
   // responsable al entrar, y no debe retrasar el resto de la pantalla si tarda.
@@ -4370,6 +4475,7 @@ async function rrSelWorker(id) {
   const w = RRSEG.workers.find((x) => String(x.id) === String(id)); if (!w) return;
   const carga = (RRSEG.seleccionCarga || 0) + 1, local = localActualFE();
   RRSEG.seleccionCarga = carga;
+  if(String(RRSEG.sel?.id)!==String(id))RRSEG.fichaTab='datos';
   RRSEG.sel = w; RRSEG.ficha = null; RRSEG.lab = null; RRSEG.notas = [];
   // Una respuesta lenta de la ficha anterior nunca debe sobrescribir la persona actual.
   const [notas, fi, lab] = await Promise.all([
@@ -4485,10 +4591,10 @@ function rrAltaPasos(ov) {
   flujo.cuerpos[1].append(form.querySelector('#altaAreas').parentElement);
   const localFijo=form.querySelector('[name="local"][type="hidden"]');
   if(localFijo)flujo.cuerpos[1].insertAdjacentHTML('afterbegin',`<p class="promo-note">Local: <b>${esc(localFijo.value)}</b></p>`);
-  if(form.querySelector('[name="horas_semana"]'))flujo.cuerpos[1].insertAdjacentHTML('beforeend','<p class="mut">Sin horas contratadas no se incluirá en el reparto automático de turnos.</p>');
+
   ['username','pin','pin_automatico'].forEach(n=>mover(2,n));
   const extra=document.createElement('details');extra.className='promo-help';extra.innerHTML='<summary>Documentación y datos administrativos (puedes completarlos después)</summary>';
-  for(const n of ['dni','direccion','iban','talla_ropa']) {const el=form.querySelector(`[name="${n}"]`);if(el)extra.append(el.closest('.field'));}
+  for(const n of ['dni','direccion','iban','talla_camiseta','talla_sudadera']) {const el=form.querySelector(`[name="${n}"]`);if(el)extra.append(el.closest('.field'));}
   if(extra.querySelector('input'))flujo.cuerpos[2].append(extra);
   const resumen=document.createElement('div');resumen.className='promo-note';resumen.setAttribute('aria-live','polite');flujo.cuerpos[3].append(resumen);
   // Las notas de acceso y del enlace de Ágora siguen visibles antes de confirmar.
@@ -4497,11 +4603,11 @@ function rrAltaPasos(ov) {
   if(['direccion','rrhh'].includes(USER.rol)) flujo.cuerpos[3].insertAdjacentHTML('beforeend','<button class="btn primary" type="submit" name="confirmar_trabajador" value="1">Enviar al trabajador para confirmar</button><p class="mut">Se enviará un enlace personal al teléfono indicado. Hasta que confirme, la ficha quedará pendiente y no tendrá acceso.</p>');
   flujo.cuerpos[3].append(crear);
   originales.forEach(el=>{if(el.parentNode===form)el.remove();});
-  ov.querySelector('.modal').classList.add('campaign-modal');
+  ov.querySelector('.modal').classList.add('campaign-modal','rr-worker-modal');
   form.querySelectorAll('.field > label').forEach((label,i)=>{const el=label.parentNode.querySelector('input:not([type="hidden"]),select');if(el){el.id ||= `rrAltaCampo${i}`;label.htmlFor=el.id;}});
   const revisar=()=>{
     const v=n=>form.querySelector(`[name="${n}"]`)?.value || '';
-    const filas=[['Nombre',v('nombre')||'Falta el nombre'],['Local',v('local')||'Falta el local'],['Rol',v('rol')],['Categoría',v('puesto')||'Pendiente'],['Incorporación',v('fecha_alta')||'Pendiente'],['Horas semanales',v('tipo_jornada')==='por_horas'?'Variables · según turnos y fichajes':v('horas_semana')||'Pendientes de configurar'],['Usuario',v('username')||'Falta el usuario'],['PIN',v('pin_automatico')?'Provisional · se genera al crear':'Pendiente']];
+    const filas=[['Nombre',v('nombre')||'Falta el nombre'],['Local',v('local')||'Falta el local'],['Rol',v('rol')],['Categoría',v('puesto')||'Pendiente'],['Incorporación',v('fecha_alta')||'Pendiente'],['Horas semanales',v('tipo_jornada')==='por_horas'?'Variables · según turnos y fichajes':v('tipo_jornada')==='completa'?'40 h · jornada completa':v('horas_semana')||'Pendientes de configurar'],['Usuario',v('username')||'Falta el usuario'],['PIN',v('pin_automatico')?'Provisional · se genera al crear':'Pendiente']];
     resumen.innerHTML=`<dl class="promo-review">${filas.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
   };
   form.addEventListener('input',revisar);form.addEventListener('change',revisar);flujo.pasos[3].addEventListener('toggle',revisar);revisar();
@@ -4551,7 +4657,7 @@ function rrWorkerAdd(pre = {}) {
       ${localBarra ? `<span class="mut" style="font-size:12px">en <b>${esc(nombreCortoLocal(localBarra))}</b></span>` : ""}</div>
       <div class="form-grid">
         <div class="field"><label>Nombre completo</label><input name="nombre" required value="${esc(pre.nombre || "")}"></div>
-        <div class="field"><label>Usuario</label><input name="username" required placeholder="Se rellena con el nombre"></div>
+        <div class="field"><label>Usuario</label><input name="username" required placeholder="Nombre y primer apellido juntos"></div>
         ${localField}${rolField}
         <div class="field"><label>Categoría</label>${rrCategoriaSelect()}</div>
         <div class="field"><label>Fecha de incorporación</label><input name="fecha_alta" type="date" value="${rrHoy()}"></div>
@@ -4572,8 +4678,7 @@ function rrWorkerAdd(pre = {}) {
       <div id="altaAreas" class="mut" style="font-size:12.5px">Cargando las áreas…</div>
       <p class="mut" style="margin:6px 0 0;font-size:11.5px">Si no marcas ninguna, el generador podrá ponerle en cualquiera hasta que se configuren.</p></div>
     ${pre.agora ? `<p class="fic-nota" style="margin:0">Al crearla se enlazará con el operador <b>${esc(pre.agora)}</b> de Ágora, así sus ventas empezarán a contar en su ficha.</p>` : ""}
-    <p class="mut" style="margin:0;line-height:1.55">Entrará con <b>su usuario como contraseña</b> y lo primero que
-      le sugerirá el sistema es cambiarla. El PIN de fichaje es independiente.</p>
+    <p class="mut" style="margin:0;line-height:1.55"><b>Para entrar al panel:</b> usará su usuario también como contraseña inicial; después podrá cambiarla.<br><b>Para fichar:</b> usará su PIN.</p>
     <button class="btn primary" type="submit">Crear trabajador</button></form>`);
 
   const draftForm=ov.querySelector('#fWorker');
@@ -4606,12 +4711,13 @@ function rrWorkerAdd(pre = {}) {
   const ajustarJornada = () => {
     const h=ov.querySelector('[name=horas_semana]'); if(!h)return;
     const variable=jornadaAlta?.value==='por_horas';
-    h.required=jornadaAlta?.value==='parcial';h.disabled=variable;
-    h.closest('.field').hidden=variable;
-    if(variable)h.value='';
+    const parcial=jornadaAlta?.value==='parcial';
+    h.required=parcial;h.disabled=!parcial;
+    h.closest('.field').hidden=!parcial;
+    if(!parcial)h.value=jornadaAlta?.value==='completa'?'40':'';
     let nota=ov.querySelector('#rrJornadaNota');
     if(!nota){nota=document.createElement('p');nota.id='rrJornadaNota';nota.className='mut';h.closest('.field').after(nota);}
-    nota.textContent=variable?'Por horas: sin objetivo semanal fijo. Consulta por separado los turnos planificados y las horas fichadas.':'';
+    nota.textContent=variable?'Por horas: sin objetivo semanal fijo. Consulta por separado los turnos planificados y las horas fichadas.':jornadaAlta?.value==='completa'?'Jornada completa: 40 horas semanales.':'';
     guardarBorrador();
   };
   jornadaAlta?.addEventListener('change',ajustarJornada);ajustarJornada();
@@ -4674,7 +4780,7 @@ function rrWorkerAdd(pre = {}) {
     if (campoUser.dataset.tocado === "1") return;
     const nom = (ov.querySelector("[name=nombre]")?.value || "").trim();
     if (!nom) { campoUser.value = ""; return; }
-    const sugerido=nom.split(/\s+/)[0].normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,24);
+    const sugerido=nom.split(/\s+/).slice(0,2).join('').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,24);
     if(sugerido.length>=3)campoUser.value=sugerido;
     guardarBorrador();
     const mio = Symbol();
@@ -17403,6 +17509,7 @@ function go(view, { desdeUrl = false } = {}) {
     refreshWaPill(); return;
   }
   document.getElementById("root").innerHTML = shell(view, skeleton());
+  refrescarAvisosRR();
   refreshWaPill(view === "whatsapp"); // en la pantalla de Sara sí interesa el estado del momento
   return VIEWS[view]();
 }
@@ -17631,10 +17738,12 @@ document.addEventListener("click", (e) => {
   else if (act === "rev-sel") revToggleSel(t.getAttribute("data-id"));
   else if (act === "rev-sel-none") revSelNone();
   else if (act === "rev-bulk") revBulk();
+  else if (act === "avisos-abrir") abrirAvisos();
   else if (act === "rr-tab") rrTab(t.getAttribute("data-tab"));
   else if (act === "rr-contr-tab") { RRCONTR = t.getAttribute("data-tab"); loadRRHH(); }
   else if (act === "rr-filtrar") applyRRFilter();
   else if (act === "cand-estado") candEstado(t.getAttribute("data-id"), t.getAttribute("data-estado"));
+  else if (act === "rr-ficha-tab") rrFichaTab(t.dataset.tab);
   else if (act === "rr-worker") rrSelWorker(t.getAttribute("data-id"));
   else if (act === "rr-editar-datos") rrEditarDatos(t.getAttribute("data-id"));
   // Ciclo de vida laboral. El nombre sale de la ficha ya cargada: es el que se enseña.
@@ -17656,6 +17765,7 @@ document.addEventListener("click", (e) => {
   }
   else if (act === "rr-pin") rrAsignarPin(t.getAttribute("data-id"));
   else if (act === "rr-reset-pass") rrResetPassword(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
+  else if (act === "rr-alta-gestoria") rrAltaGestoria(t.getAttribute("data-id"));
   else if (act === "rr-doc-subir") rrDocSubir(t.getAttribute("data-id"));
   else if (act === "rr-doc-firma") rrFirmaDocumento(t.getAttribute("data-id"));
   else if (act === "rr-doc-ver") rrVerDocumento(t.getAttribute("data-id"));

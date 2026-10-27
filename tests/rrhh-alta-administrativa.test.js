@@ -33,7 +33,7 @@ const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
 function altaService() {
   const queries=[];
   const query=async(sql,args=[])=>{queries.push({sql,args}); return {rows:sql.includes('INSERT INTO users')?[{id:7}]:[]};};
-  const env={generarPinProvisional,validarAlta,sanearDatosAlta,puedeVerPrivado,CAMPOS_PRIVADOS,validarFormatoPin,INV_LOCALES:['Local de prueba'],hoyISO:()=>hoy,rrhhPuedeLocal:()=>true,toPositional:x=>x,isoConOffset:()=>hoy,passwordInicial:x=>x,bcrypt:{hash:async x=>'hashed:'+x}};
+  const env={guardarPinVisible:()=>null,LLAVERO:{actual:null},generarPinProvisional,validarAlta,sanearDatosAlta,puedeVerPrivado,CAMPOS_PRIVADOS,validarFormatoPin,INV_LOCALES:['Local de prueba'],hoyISO:()=>hoy,rrhhPuedeLocal:()=>true,toPositional:x=>x,isoConOffset:()=>hoy,passwordInicial:x=>x,bcrypt:{hash:async x=>'hashed:'+x}};
   const start=server.indexOf('async function rrhhCrearTrabajador('), end=server.indexOf('// Envuelve el servicio',start);
   vm.runInNewContext(server.slice(start,end),env);
   return {queries,run:(data,rol='rrhh')=>env.rrhhCrearTrabajador({req:{user:{username:'rrhh',rol}},datos:{nombre:base.nombre,username:'persona',local:base.local,...data},client:{query}})};
@@ -43,7 +43,7 @@ test('alta real guarda los nuevos campos y PIN elegido hasheado en la misma tran
   assert.equal(r.ok,true);
   assert.ok(a.queries.some(q=>q.sql.includes('INSERT INTO rrhh_datos_alta')&&q.args.includes('Calle de prueba')));
   const pin=a.queries.find(q=>q.sql.includes('pin_hash ='));
-  assert.equal(pin.args[0],'hashed:4917');assert.equal(pin.args[1],false);
+  assert.equal(pin.args[0],'hashed:4917');assert.equal(pin.args[2],false);
   assert.ok(!JSON.stringify(r).includes('4917'));
   assert.ok(a.queries.some(q=>q.sql.includes('INSERT INTO hor_contratos')&&q.args.includes(20)));
 });
@@ -136,4 +136,14 @@ test('por horas no cierra contratos futuros ni inventa periodos invertidos',asyn
   }
 });
 
-test('alta con PIN automático genera un PIN válido y temporal',async()=>{const a=altaService();const r=await a.run({pin_automatico:'1'});assert.equal(r.ok,true);assert.equal(validarFormatoPin(r.pinProvisional).ok,true);const q=a.queries.find(q=>q.sql.includes('pin_hash ='));assert.equal(q.args[1],true);assert.equal(q.args[0],'hashed:'+r.pinProvisional);});
+test('alta con PIN automático genera un PIN válido y temporal',async()=>{const a=altaService();const r=await a.run({pin_automatico:'1'});assert.equal(r.ok,true);assert.equal(validarFormatoPin(r.pinProvisional).ok,true);const q=a.queries.find(q=>q.sql.includes('pin_hash ='));assert.equal(q.args[2],true);assert.equal(q.args[0],'hashed:'+r.pinProvisional);});
+
+test('jornada completa se crea con 40 horas sin pedirlas en el formulario',()=>{const r=validarAlta({nombre:'Prueba',username:'prueba',local:'Local de prueba',tipo_jornada:'completa'},{hoy});assert.equal(r.ok,true);assert.equal(r.datos.contrato.horas_semana,40);});
+
+test('camiseta y sudadera se guardan por separado y solo aceptan XS a XXL',async()=>{
+ const a=altaService();assert.equal((await a.run({talla_camiseta:'S',talla_sudadera:'XL'})).ok,true);
+ const q=a.queries.find(q=>q.sql.includes('INSERT INTO rrhh_datos_alta'));
+ assert.ok(q.sql.includes('talla_camiseta'));assert.ok(q.sql.includes('talla_sudadera'));assert.ok(q.args.includes('S'));assert.ok(q.args.includes('XL'));
+ assert.equal(sanearDatosAlta({talla_camiseta:'XXXL'},hoy).ok,false);
+ assert.equal(sanearDatosAlta({talla_sudadera:'xs'},hoy).datos.talla_sudadera,'XS');
+});

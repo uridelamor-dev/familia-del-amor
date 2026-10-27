@@ -1,5 +1,5 @@
 // Datos administrativos: ninguna dependencia de correo ni de WhatsApp.
-export const CAMPOS_PRIVADOS = ['direccion', 'iban', 'tipo_jornada', 'tipo_contrato', 'talla_ropa'];
+export const CAMPOS_PRIVADOS = ['direccion', 'iban', 'tipo_jornada', 'tipo_contrato', 'talla_ropa', 'talla_camiseta', 'talla_sudadera'];
 export const puedeVerPrivado = (rol) => ['rrhh', 'direccion'].includes(rol);
 export function fechaValida(v) {
   const d = new Date(v + 'T12:00:00Z');
@@ -18,6 +18,7 @@ export function sanearDatosAlta(input = {}, hoy) {
     if (input[k] === undefined) continue;
     let v = String(input[k] ?? '').trim();
     if (v.length > (k === 'direccion' ? 400 : 160)) { errores.push(`El campo ${k} es demasiado largo.`); continue; }
+    if (['talla_camiseta','talla_sudadera'].includes(k)) { v=v.toUpperCase(); if(v && !['XS','S','M','L','XL','XXL'].includes(v)) errores.push('Elige una talla entre XS y XXL.'); }
     if (k === 'iban') v = v.replace(/\s/g, '').toUpperCase();
     if (k === 'dni') v = v.replace(/[\s-]/g, '').toUpperCase();
     if (v && k === 'iban' && !ibanValido(v)) errores.push('El IBAN no es válido.');
@@ -34,7 +35,7 @@ export function sanearDatosAlta(input = {}, hoy) {
 export function estadoAlta(persona = {}, contrato = null, tienePin = false) {
   const basicos = { dni: 'DNI/NIE', nombre: 'Nombre completo', tipo_jornada: 'Tipo de jornada', tipo_contrato: 'Tipo de contrato', local: 'Establecimiento', puesto: 'Categoría', fecha_alta: 'Fecha de incorporación', horas_semana: 'Horas semanales' };
   if (persona.tipo_jornada === 'por_horas') delete basicos.horas_semana;
-  const resto = { direccion: 'Dirección', fecha_nac: 'Fecha de nacimiento', iban: 'IBAN', talla_ropa: 'Talla de ropa', telefono: 'Teléfono', email: 'Correo electrónico', pin: 'PIN de 4 dígitos' };
+  const resto = { direccion: 'Dirección', fecha_nac: 'Fecha de nacimiento', iban: 'IBAN', talla_camiseta: 'Talla de camiseta', talla_sudadera: 'Talla de sudadera', telefono: 'Teléfono', email: 'Correo electrónico', pin: 'PIN de 4 dígitos' };
   const valores = { ...persona, horas_semana: contrato?.horas_semana, pin: tienePin };
   const faltan = campos => Object.entries(campos).filter(([k]) => !valores[k]).map(([, v]) => v);
   const faltanGestoria = faltan(basicos), faltanFicha = [...faltanGestoria, ...faltan(resto)];

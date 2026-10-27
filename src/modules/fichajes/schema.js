@@ -16,11 +16,10 @@
 // tabla. No es documentación: es un candado.
 
 export async function ensureSchemaFichajes(x) {
-  // El PIN vive en `users` como las demás columnas del perfil. bcrypt, unidireccional:
-  // nada de copia reversible como la de las contraseñas de dirección — un PIN que se puede
-  // leer permite fichar en nombre de otro.
+  // El hash verifica el fichaje; la copia cifrada solo la consulta Dirección/RR. HH.
   for (const col of [
     "pin_hash TEXT",
+    "pin_visible_enc TEXT",
     "pin_temporal BOOLEAN DEFAULT FALSE",
     "pin_actualizado_en TEXT",
     "pin_intentos INTEGER DEFAULT 0",

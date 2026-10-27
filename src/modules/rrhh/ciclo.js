@@ -103,6 +103,7 @@ export function validarAlta(datos = {}, { locales = null, hoy = null } = {}) {
 
   // El contrato es OPCIONAL, pero si se pone tiene que valer: unas horas a cero o a 200
   // pasarían al cuadrante y el generador repartiría sobre una cifra que nadie quiso.
+  if(datos.tipo_jornada === 'completa') datos={...datos,horas_semana:40};
   let contrato = null;
   if (datos.tipo_jornada !== "por_horas" && datos.horas_semana != null && String(datos.horas_semana) !== "") {
     const horas = Number(datos.horas_semana);
@@ -276,8 +277,8 @@ export function asuntosPendientes(f = {}, hoy) {
   if (f.contrato?.solapados?.length) {
     add("problema", `Tiene ${f.contrato.solapados.length} contrato(s) que se pisan: no se puede saber cuántas horas tiene.`, "contrato");
   }
-  if (!f.contrato?.vigente && f.estado?.enPlantilla) {
-    add("atencion", "No tiene contrato en vigor, así que el generador no le reparte turnos.", "contrato");
+  if (!f.contrato?.vigente && f.estado?.enPlantilla && f.trabajador?.tipo_jornada !== "por_horas") {
+    add("atencion", "Falta configurar las horas semanales de su contrato.", "contrato");
   }
   if (f.areas && !f.areas.configurado && f.estado?.enPlantilla) {
     add("atencion", "Sus áreas están sin configurar: el generador puede ponerle en cualquiera.", "areas");

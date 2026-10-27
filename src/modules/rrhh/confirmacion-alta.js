@@ -8,7 +8,7 @@ export const CONFIRMACION_SCHEMA = `CREATE TABLE IF NOT EXISTS rrhh_confirmacion
 CREATE UNIQUE INDEX IF NOT EXISTS rrhh_confirmacion_usuario_pendiente ON rrhh_confirmaciones ((datos->>'username')) WHERE estado IN ('pendiente','corregir');`;
 export const hashToken = token => createHash('sha256').update(token).digest('hex');
 export function resumenConfirmacion(d) {
- const campos={nombre:'Nombre completo',fecha_nac:'Nacimiento',telefono:'Teléfono',email:'Correo',local:'Local',puesto:'Categoría',fecha_alta:'Incorporación',tipo_jornada:'Jornada',tipo_contrato:'Contrato',horas_semana:'Horas semanales',direccion:'Dirección',talla_ropa:'Talla de ropa',username:'Usuario'};
+ const campos={nombre:'Nombre completo',fecha_nac:'Nacimiento',telefono:'Teléfono',email:'Correo',local:'Local',puesto:'Categoría',fecha_alta:'Incorporación',tipo_jornada:'Jornada',tipo_contrato:'Contrato',horas_semana:'Horas semanales',direccion:'Dirección',talla_camiseta:'Camiseta',talla_sudadera:'Sudadera',username:'Usuario'};
  const r=Object.entries(campos).map(([k,label])=>[label,d[k] || 'Pendiente']);
  for(const [k,label] of [['dni','DNI/NIE'],['iban','IBAN']]) r.push([label,d[k] ? '•••• '+String(d[k]).slice(-4) : 'Pendiente']);
  return r;
@@ -22,7 +22,7 @@ export function registrarConfirmaciones(app,{auth,pool,validar,crear,enviar,list
   const token=randomBytes(32).toString('hex');
   const {rows:[fila]}=await pool.query('INSERT INTO rrhh_confirmaciones(token_hash,datos,autor_id) VALUES($1,$2,$3) RETURNING id',[hashToken(token),JSON.stringify(datos),req.user.id]);
   let enviado=false;
-  try {await enviar(datos.telefono,`Hola ${datos.nombre}. Revisa tus datos de incorporación a Familia del Amor y confirma si son correctos:\n\nhttps://familiadelamor.org/confirmar-alta.html#${token}\n\nEl enlace es personal y caduca en 7 días. La confirmación de datos no sustituye el alta laboral en gestoría.`);enviado=true;}catch{}
+  try {await enviar(datos.telefono,`Hola ${datos.nombre} 👋\n\n*Tu incorporación a Familia del Amor*\n\nHemos preparado tu ficha para ${datos.local}. Abre el enlace, revisa tus datos y elige *«Sí, mis datos son correctos»* o *«Necesito corregir algo»*.\n\nhttps://familiadelamor.org/confirmar-alta.html#${token}\n\nEl enlace es personal y válido durante 7 días.\n¡Gracias!`);enviado=true;}catch{}
   await pool.query('UPDATE rrhh_confirmaciones SET envio=$1 WHERE id=$2',[enviado?'enviado':'revisar',fila.id]);
   res.json({ok:true,id:fila.id,mensaje:enviado?'WhatsApp enviado. Ficha pendiente de confirmación.':'Solicitud guardada, pero no se pudo confirmar el envío. Revísala en Confirmaciones antes de volver a enviar.'});
  }));
