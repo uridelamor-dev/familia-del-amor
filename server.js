@@ -1,3 +1,5 @@
+import { CONFIRMACION_SCHEMA, registrarConfirmaciones } from './src/modules/rrhh/confirmacion-alta.js';
+import { generarPinProvisional } from './src/modules/rrhh/pin-provisional.js';
 import {crearPlanificacionPersonal,leerPersonal} from './src/modules/informes/planificacion-personal.js';
 import {crearDecisionesHistorico,cabeceraHistorica} from './src/modules/facturas/repaso-decision.js';
 import { REPASO_HISTORICO_SCHEMA, crearRepasoHistorico } from './src/modules/facturas/repaso-historico.js';
@@ -1963,6 +1965,7 @@ async function initDB() {
       )
     `);
 
+    await client.query(CONFIRMACION_SCHEMA);
     await client.query(`CREATE TABLE IF NOT EXISTS rrhh_datos_alta (
       worker_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       direccion TEXT, iban TEXT, tipo_jornada TEXT, tipo_contrato TEXT, talla_ropa TEXT
@@ -9274,7 +9277,8 @@ async function rrhhCrearTrabajador({ req, datos, client, extras = {}, auditar = 
   const d = v.datos;
   const admin = sanearDatosAlta({ ...datos, telefono: datos.telefono ?? extras.telefono, email: datos.email ?? extras.email }, hoyISO());
   if (!admin.ok) return { ok: false, status: 400, error: admin.errores.join(' ') };
-  const pin = String(datos.pin || '');
+  const pinAutomatico = datos.pin_automatico === true || datos.pin_automatico === '1';
+  const pin = pinAutomatico ? generarPinProvisional() : String(datos.pin || '');
   if (pin && (!/^\d{4}$/.test(pin) || !validarFormatoPin(pin).ok)) return { ok: false, status: 400, error: 'El PIN elegido por el trabajador debe tener 4 dígitos y no ser una secuencia fácil.' };
   if (!rrhhPuedeLocal(req, d.local)) return { ok: false, status: 403, error: "Sin acceso a este establecimiento" };
 
@@ -9306,7 +9310,7 @@ async function rrhhCrearTrabajador({ req, datos, client, extras = {}, auditar = 
   const presentes = permitidos.filter(k => admin.datos[k] !== undefined);
   if (presentes.length) await q(`UPDATE users SET ${presentes.map(k => `${k} = ?`).join(', ')} WHERE id = ?`, [...presentes.map(k => admin.datos[k]), id]);
   if (puedeVerPrivado(req.user.rol)) await q(`INSERT INTO rrhh_datos_alta (worker_id, direccion, iban, tipo_jornada, tipo_contrato, talla_ropa) VALUES (?,?,?,?,?,?)`, [id, ...CAMPOS_PRIVADOS.map(k => admin.datos[k] ?? null)]);
-  if (pin) await q(`UPDATE users SET pin_hash = ?, pin_len = 4, pin_temporal = FALSE, pin_actualizado_en = ? WHERE id = ?`, [await bcrypt.hash(pin, 10), ahora, id]);
+  if (pin) await q(`UPDATE users SET pin_hash = ?, pin_len = 4, pin_temporal = ?, pin_actualizado_en = ? WHERE id = ?`, [await bcrypt.hash(pin, 10), pinAutomatico, ahora, id]);
 
   // El PRIMER periodo laboral. Se abre aquí, con el alta, porque un trabajador sin periodo
   // es alguien de quien no consta cuándo empezó: la ficha no sabría desde cuándo contar y el
@@ -9340,6 +9344,7 @@ async function rrhhCrearTrabajador({ req, datos, client, extras = {}, auditar = 
   }
 
   return { ok: true, id, username: d.username, nombre: d.nombre, local: d.local,
+           pinProvisional: pinAutomatico ? pin : null,
            passwordInicial: extras.password ? null : inicial,
            contrato: d.contrato, areas: areasPuestas, auditar, fecha_alta: d.fecha_alta };
 }
@@ -9416,12 +9421,32 @@ app.post("/api/rrhh/trabajador", requireAuth(RRHH_ROLES), async (req, res) => {
 
     const r = await rrhhAltaTransaccion(req, datos, { via: "manual" });
     if (!r.ok) return res.status(r.status).json({ ok: false, error: r.error });
-    res.json({ ok: true, id: r.id, username: r.username, passwordInicial: r.passwordInicial,
+    res.json({ ok: true, id: r.id, username: r.username, passwordInicial: r.passwordInicial, pinProvisional: r.pinProvisional,
       contrato: !!r.contrato, areas: r.areas, mensaje: rrhhMensajeAlta(r) });
   } catch (e) {
     console.error("[rrhh] alta:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo dar de alta" });
   }
+});
+
+registrarConfirmaciones(app, {
+ auth: requireAuth(['direccion','rrhh']), pool, enviar: sendMensajeLibre, listo: isReady, invalidar: invalidarInternos,
+ validar: async (req, input) => {
+   const v=validarAlta(input,{locales:INV_LOCALES,hoy:hoyISO()});
+   const a=sanearDatosAlta(input,hoyISO());
+   if(!v.ok||!a.ok)throw Error([...(v.errores||[]),...(a.errores||[])].join(' '));
+   if(!rrhhPuedeLocal(req,v.datos.local))throw Error('Sin acceso a este establecimiento');
+   if(await dbGet('SELECT id FROM users WHERE username=?',[v.datos.username]))throw Error('Este usuario ya existe.');
+   const d={...v.datos,...a.datos,horas_semana:input.horas_semana,contrato_desde:input.contrato_desde,dias_semana:input.dias_semana,areas:v.datos.areas,pin_automatico:'1'};
+   delete d.pin; delete d.password; return d;
+ },
+ crear: async (client,r) => {
+   const {rows:[actor]}=await client.query('SELECT id,username,rol,local,activo FROM users WHERE id=$1',[r.autor_id]);
+   if(!actor||!actor.activo||!['direccion','rrhh'].includes(actor.rol))throw Error('Tu responsable debe revisar de nuevo la solicitud.');
+   const result=await rrhhCrearTrabajador({req:{user:actor},datos:r.datos,client});
+   if(!result.ok)throw Error(result.error);
+   return result;
+ }
 });
 
 // Volver a poner la contraseña inicial (alguien que la ha olvidado). Deja la cuenta otra

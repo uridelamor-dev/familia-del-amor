@@ -25,14 +25,15 @@ export function sanearDatosAlta(input = {}, hoy) {
     if (v && k === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) errores.push('Revisa el correo electrónico.');
     if (v && k === 'telefono' && !/^\+?[\d\s()-]{9,20}$/.test(v)) errores.push('Revisa el teléfono.');
     if (v && k === 'fecha_nac' && (!fechaValida(v) || v >= hoy)) errores.push('Revisa la fecha de nacimiento.');
-    if (v && k === 'tipo_jornada' && !['completa', 'parcial'].includes(v)) errores.push('Elige jornada completa o parcial.');
+    if (v && k === 'tipo_jornada' && !['completa', 'parcial', 'por_horas'].includes(v)) errores.push('Elige jornada completa, parcial o por horas.');
     if (v && k === 'tipo_contrato' && !['indefinido', 'temporal', 'fijo_discontinuo'].includes(v)) errores.push('Elige un tipo de contrato.');
     datos[k] = v || null;
   }
   return { datos, errores, ok: !errores.length };
 }
 export function estadoAlta(persona = {}, contrato = null, tienePin = false) {
-  const basicos = { dni: 'DNI/NIE', nombre: 'Nombre completo', tipo_jornada: 'Tipo de jornada', tipo_contrato: 'Tipo de contrato', local: 'Establecimiento', puesto: 'Puesto', fecha_alta: 'Fecha de incorporación', horas_semana: 'Horas semanales' };
+  const basicos = { dni: 'DNI/NIE', nombre: 'Nombre completo', tipo_jornada: 'Tipo de jornada', tipo_contrato: 'Tipo de contrato', local: 'Establecimiento', puesto: 'Categoría', fecha_alta: 'Fecha de incorporación', horas_semana: 'Horas semanales' };
+  if (persona.tipo_jornada === 'por_horas') delete basicos.horas_semana;
   const resto = { direccion: 'Dirección', fecha_nac: 'Fecha de nacimiento', iban: 'IBAN', talla_ropa: 'Talla de ropa', telefono: 'Teléfono', email: 'Correo electrónico', pin: 'PIN de 4 dígitos' };
   const valores = { ...persona, horas_semana: contrato?.horas_semana, pin: tienePin };
   const faltan = campos => Object.entries(campos).filter(([k]) => !valores[k]).map(([, v]) => v);

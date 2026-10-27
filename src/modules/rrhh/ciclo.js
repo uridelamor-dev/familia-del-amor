@@ -104,7 +104,7 @@ export function validarAlta(datos = {}, { locales = null, hoy = null } = {}) {
   // El contrato es OPCIONAL, pero si se pone tiene que valer: unas horas a cero o a 200
   // pasarían al cuadrante y el generador repartiría sobre una cifra que nadie quiso.
   let contrato = null;
-  if (datos.horas_semana != null && String(datos.horas_semana) !== "") {
+  if (datos.tipo_jornada !== "por_horas" && datos.horas_semana != null && String(datos.horas_semana) !== "") {
     const horas = Number(datos.horas_semana);
     if (!(horas > 0 && horas <= 60)) errores.push("Las horas semanales van de 1 a 60.");
     else contrato = { horas_semana: horas, desde: fecha(datos.contrato_desde) || alta,

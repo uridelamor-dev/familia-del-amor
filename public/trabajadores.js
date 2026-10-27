@@ -62,11 +62,15 @@ async function loadPerfil() {
       pinBloque.classList.toggle("hidden", !tiene);
       if (tiene) {
         const provisional = !!p.pin.pin_temporal;
+        if (provisional) {
+          pinBloque.parentElement.prepend(pinBloque);
+          pinBloque.querySelector('h2').textContent='Elige tu PIN para fichar';
+        } else pinBloque.querySelector('h2').textContent='Mi PIN para fichar';
         // Con el provisional no se pide el actual: es el que le acaban de decir en voz
         // alta, y pedírselo sería un obstáculo justo cuando más interesa que lo cambie.
         document.getElementById("pinActualCampo").classList.toggle("hidden", provisional);
         document.getElementById("pinSub").textContent = provisional
-          ? "Ahora mismo usas el que te dio tu encargado. Cámbialo por uno que solo sepas tú."
+          ? "Tienes un PIN provisional. Elige ahora tu PIN personal para fichar; no necesitas introducir el provisional."
           : "Es el que tecleas en la tablet del local.";
       }
     }

@@ -1,3 +1,4 @@
+import { generarPinProvisional } from '../src/modules/rrhh/pin-provisional.js';
 import { guardarHorasFicha } from '../src/modules/rrhh/horas-ficha.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +33,7 @@ const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
 function altaService() {
   const queries=[];
   const query=async(sql,args=[])=>{queries.push({sql,args}); return {rows:sql.includes('INSERT INTO users')?[{id:7}]:[]};};
-  const env={validarAlta,sanearDatosAlta,puedeVerPrivado,CAMPOS_PRIVADOS,validarFormatoPin,INV_LOCALES:['Local de prueba'],hoyISO:()=>hoy,rrhhPuedeLocal:()=>true,toPositional:x=>x,isoConOffset:()=>hoy,passwordInicial:x=>x,bcrypt:{hash:async x=>'hashed:'+x}};
+  const env={generarPinProvisional,validarAlta,sanearDatosAlta,puedeVerPrivado,CAMPOS_PRIVADOS,validarFormatoPin,INV_LOCALES:['Local de prueba'],hoyISO:()=>hoy,rrhhPuedeLocal:()=>true,toPositional:x=>x,isoConOffset:()=>hoy,passwordInicial:x=>x,bcrypt:{hash:async x=>'hashed:'+x}};
   const start=server.indexOf('async function rrhhCrearTrabajador('), end=server.indexOf('// Envuelve el servicio',start);
   vm.runInNewContext(server.slice(start,end),env);
   return {queries,run:(data,rol='rrhh')=>env.rrhhCrearTrabajador({req:{user:{username:'rrhh',rol}},datos:{nombre:base.nombre,username:'persona',local:base.local,...data},client:{query}})};
@@ -42,7 +43,7 @@ test('alta real guarda los nuevos campos y PIN elegido hasheado en la misma tran
   assert.equal(r.ok,true);
   assert.ok(a.queries.some(q=>q.sql.includes('INSERT INTO rrhh_datos_alta')&&q.args.includes('Calle de prueba')));
   const pin=a.queries.find(q=>q.sql.includes('pin_hash ='));
-  assert.equal(pin.args[0],'hashed:4917');assert.match(pin.sql,/pin_temporal = FALSE/);
+  assert.equal(pin.args[0],'hashed:4917');assert.equal(pin.args[1],false);
   assert.ok(!JSON.stringify(r).includes('4917'));
   assert.ok(a.queries.some(q=>q.sql.includes('INSERT INTO hor_contratos')&&q.args.includes(20)));
 });
@@ -112,3 +113,27 @@ test('editar datos guarda campos nuevos sin sobrescribir otros y revierte si fal
   const mal=await ejecutar(true);assert.equal(mal.status,500);assert.ok(mal.writes.some(x=>x.sql==='ROLLBACK'));assert.ok(!mal.writes.some(x=>x.sql==='COMMIT'));
   const enc=await ejecutar(false,'encargado');assert.ok(!enc.writes.some(x=>x.sql.includes('rrhh_datos_alta')));
 });
+
+test('por horas admite alta sin objetivo semanal y no crea contrato fijo accidental',()=>{
+  assert.equal(sanearDatosAlta({tipo_jornada:'por_horas'},hoy).ok,true);
+  const a=validarAlta({nombre:'Persona',username:'persona',local:'Local',tipo_jornada:'por_horas',horas_semana:40},{hoy});
+  assert.equal(a.ok,true);assert.equal(a.datos.contrato,null);
+  assert.equal(estadoAlta({...base,tipo_jornada:'por_horas'},null).faltanGestoria.includes('Horas semanales'),false);
+});
+test('pasar a por horas conserva el contrato pasado y no inserta uno de cero horas',async()=>{
+  const queries=[];
+  const client={query:async(sql,args)=>{queries.push({sql,args});return {rows:sql.startsWith('SELECT')?[{id:1,desde:'2026-01-01',hasta:null,horas_semana:40}]:[]};}};
+  await guardarHorasFicha(client,{workerId:1,tipoJornada:'por_horas',horas:'',desde:hoy,hoy,autor:'test'});
+  assert.deepEqual(queries.find(q=>q.sql.startsWith('UPDATE')).args,['2026-09-22',1]);
+  assert.equal(queries.some(q=>q.sql.startsWith('INSERT')),false);
+});
+test('por horas no cierra contratos futuros ni inventa periodos invertidos',async()=>{
+  for(const desde of [hoy,'2026-10-01']){
+    const writes=[];
+    const client={query:async(sql,args)=>{if(sql.startsWith('UPDATE'))writes.push(args);return {rows:sql.startsWith('SELECT')?[{id:1,desde,hasta:null}]:[]};}};
+    await assert.rejects(()=>guardarHorasFicha(client,{workerId:1,tipoJornada:'por_horas',desde:hoy,hoy}),/Revisa/);
+    assert.equal(writes.length,0);
+  }
+});
+
+test('alta con PIN automático genera un PIN válido y temporal',async()=>{const a=altaService();const r=await a.run({pin_automatico:'1'});assert.equal(r.ok,true);assert.equal(validarFormatoPin(r.pinProvisional).ok,true);const q=a.queries.find(q=>q.sql.includes('pin_hash ='));assert.equal(q.args[1],true);assert.equal(q.args[0],'hashed:'+r.pinProvisional);});

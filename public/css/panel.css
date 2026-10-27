@@ -1882,3 +1882,16 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
  .campaign-editor .form-grid .full { grid-column:auto; }
  .campaign-editor .promo-actions > .btn { flex:1; }
 }
+
+/* Nacimiento: selector segmentado, compacto y táctil. */
+.rr-birth { width:100%;min-width:0; }
+.rr-birth-segments { display:grid;grid-template-columns:minmax(0,.7fr) minmax(0,1.4fr) minmax(0,1fr);padding:4px;border:1px solid var(--border);border-radius:16px;background:var(--surface2);gap:4px; }
+.rr-birth-segments select { width:100%;min-width:0;min-height:46px;border:0;border-radius:12px;background:var(--surface);color:var(--ink);font-size:16px;font-weight:550;padding:10px;box-shadow:0 1px 3px #00000008; }
+.rr-birth-segments select:focus-visible { outline:2px solid var(--brand);outline-offset:1px; }
+.rr-birth-footer { display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:8px;font-size:12px; }
+.rr-birth-footer button { min-height:32px;color:var(--brand); }
+.rr-birth.has-error .rr-birth-footer span { color:var(--danger); }
+
+.rr-hours-row { display:flex;align-items:center;flex-wrap:wrap;gap:8px; }
+.rr-hours-row .chips { margin:0;gap:6px; }
+.rr-hours-row input.rr-hours-other { width:96px;flex:0 0 96px;min-width:0;margin:0; }

@@ -1,6 +1,17 @@
 // Se ejecuta dentro de la misma transacción que la ficha administrativa.
 function error(message){return Object.assign(new Error(message),{status:400});}
 export async function guardarHorasFicha(client,{workerId,horas,desde,hoy,autor,tipoJornada}) {
+  if(tipoJornada==='por_horas') {
+    await client.query('LOCK TABLE hor_contratos IN SHARE ROW EXCLUSIVE MODE');
+    const {rows}=await client.query('SELECT * FROM hor_contratos WHERE worker_id=$1 ORDER BY desde,id FOR UPDATE',[workerId]);
+    const abiertos=rows.filter(c=>!c.hasta || c.hasta>=hoy);
+    if(!abiertos.length)return;
+    if(desde!==hoy)throw error('El cambio a por horas se aplica desde hoy para mantener coherente la ficha.');
+    if(abiertos.length>1 || abiertos[0].desde>=hoy)throw error('Revisa los contratos actuales o futuros en la ficha laboral antes de pasar a por horas.');
+    const ayer=new Date(hoy+'T12:00:00Z');ayer.setUTCDate(ayer.getUTCDate()-1);
+    await client.query('UPDATE hor_contratos SET hasta=$1 WHERE id=$2',[ayer.toISOString().slice(0,10),abiertos[0].id]);
+    return;
+  }
   if(horas===undefined){if(tipoJornada==='parcial')throw error('Indica las horas semanales de la jornada parcial.');return;}
   if(horas===null || String(horas).trim()==='') {
     if(tipoJornada==='parcial')throw error('Indica las horas semanales de la jornada parcial.');

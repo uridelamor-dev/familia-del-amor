@@ -3772,11 +3772,11 @@ function renderRRSegSidebar() {
   const c = RRSEG.cuentas;
   const est = RRSEG.estado || "activos";
   const filtro = c ? `<div class="invsecs" style="display:flex;gap:6px;padding:10px 16px 0">
-      ${[["activos", `En plantilla (${c.activos})`], ["bajas", `Bajas (${c.bajas})`], ["todos", `Todos (${c.total})`]]
+      ${[["activos", `En plantilla (${c.activos})`], ["bajas", `Archivados (${c.bajas})`], ["todos", `Todos (${c.total})`]]
         .map(([k, t]) => `<button class="btn sm ${est === k ? "primary" : ""}" data-act="rr-estado" data-estado="${k}">${esc(t)}</button>`).join("")}
     </div>` : "";
-  const vacio = est === "bajas" ? "Nadie de baja en este establecimiento." : "Sin trabajadores.";
-  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><span style="display:flex;gap:6px">${agoraBtn}${addBtn}</span></div>${filtro}${groups || `<div class="mut" style="padding:14px">${vacio}</div>`}</div>`;
+  const vacio = est === "bajas" ? "No hay trabajadores archivados en este establecimiento." : "Sin trabajadores.";
+  return `<div class="card p0"><div class="ch" style="padding:16px 16px 0"><h3>Equipo</h3><span style="display:flex;gap:6px">${agoraBtn}${["direccion","rrhh"].includes(USER.rol)?'<button class="btn sm" data-act="rr-confirmaciones">Confirmaciones</button>':''}${addBtn}</span></div>${filtro}${groups || `<div class="mut" style="padding:14px">${vacio}</div>`}</div>`;
 }
 function renderRRCheckin() {
   const w = RRSEG.sel; if (!w) return "";
@@ -3808,11 +3808,16 @@ function renderRRNotas() {
   return form + (list || '<div class="card mut">Sin conversaciones registradas.</div>');
 }
 function rrHoy() { return new Date().toLocaleDateString('sv-SE', {timeZone:'Europe/Madrid'}); }
+const RR_CATEGORIAS = ['Ayudante de camarero','Camarero','Ayudante de cocinero','Cocinero','Encargado','Segundo encargado','Dependiente','Ayudante de camarero · Nivel IV'];
+function rrCategoriaSelect(value = '', attrs = 'name="puesto"') {
+  const opciones = value && !RR_CATEGORIAS.includes(value) ? [value, ...RR_CATEGORIAS] : RR_CATEGORIAS;
+  return `<select ${attrs}><option value="">Selecciona categoría</option>${opciones.map(v=>`<option value="${esc(v)}" ${v===value?'selected':''}>${esc(v)}</option>`).join('')}</select>`;
+}
 function rrCamposAdministrativos(t = {}) {
   const input = (k, lab) => `<div class="field"><label>${lab}</label><input name="${k}" value="${esc(t[k] || '')}" ${k === 'iban' ? 'autocomplete="off" maxlength="42"' : ''}></div>`;
   const select = (k, lab, options) => `<div class="field"><label>${lab}</label><select name="${k}"><option value="">Pendiente de completar</option>${options.map(([v,l]) => `<option value="${v}" ${t[k] === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`;
   return input('dni','DNI/NIE') + input('direccion','Dirección completa') + input('iban','IBAN') + input('talla_ropa','Talla de ropa')
-    + select('tipo_jornada','Tipo de jornada',[['completa','Completa'],['parcial','Parcial']])
+    + select('tipo_jornada','Tipo de jornada',[['completa','Completa'],['parcial','Parcial'],['por_horas','Por horas']])
     + select('tipo_contrato','Tipo de contrato',[['indefinido','Indefinido'],['temporal','Temporal'],['fijo_discontinuo','Fijo discontinuo']]);
 }
 function renderRRAlta() {
@@ -3857,12 +3862,15 @@ function renderRRFicha() {
   const estado = est
     ? `<span class="pill ${PILL[est.clave] || ""}">${esc(est.etiqueta)}</span>`
     : (baja ? '<span class="pill bad">Baja</span>' : '<span class="pill ok">Activo</span>');
-  const antig = f && f.antiguedad ? ` · ${esc(f.antiguedad.texto)} en la empresa` : "";
+  const fechaAlta = String(t.fecha_alta || "").slice(0, 10);
+  const altaCabecera = /^\d{4}-\d{2}-\d{2}$/.test(fechaAlta) ? fechaAlta.split("-").reverse().join("/") : "Pendiente";
+  const resumenCabecera = `Categoría: ${t.puesto || "Pendiente"} · Ubicación: ${t.local || "Pendiente"} · Alta: ${altaCabecera}`;
+  const pinCabecera = f ? `<button class="btn sm" style="margin-top:10px;white-space:normal" data-act="rr-pin" data-id="${w.id}" title="Establecer un nuevo PIN de fichaje">${f.pin?.tiene ? "PIN configurado · Cambiar" : "Asignar PIN"}</button>` : "";
   const ini = (t.nombre || t.username || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const foto = t.foto_url ? `<img src="${esc(t.foto_url)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : `<span class="avatar" style="width:56px;height:56px;font-size:20px;flex:none">${esc(ini)}</span>`;
   const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
-  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Puesto", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) + dato("Dirección", t.direccion) + dato("IBAN", t.iban) + dato("Jornada", t.tipo_jornada) + dato("Tipo de contrato", t.tipo_contrato?.replaceAll("_", " ")) + dato("Talla de ropa", t.talla_ropa) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
-  const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(t.rol || "")}${t.local ? " · " + esc(t.local) : ""}${t.username ? " · @" + esc(t.username) : ""}${antig}</div></div></div>${esDir ? `<details class="rr-mas"><summary class="btn sm" title="Más acciones">···</summary>
+  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Categoría", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) + dato("Dirección", t.direccion) + dato("IBAN", t.iban) + dato("Jornada", t.tipo_jornada) + dato("Tipo de contrato", t.tipo_contrato?.replaceAll("_", " ")) + dato("Talla de ropa", t.talla_ropa) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div></div>`;
+  const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(resumenCabecera)}</div>${pinCabecera}</div></div>${esDir ? `<details class="rr-mas"><summary class="btn sm" title="Más acciones">···</summary>
       <div class="rr-mas-menu">
         <button class="btn sm danger" data-act="rr-worker-del" data-id="${w.id}" data-nombre="${esc(t.nombre || t.username || "")}">Eliminar del sistema</button>
         <p class="mut" style="margin:8px 0 0;font-size:11.5px;max-width:230px;line-height:1.5">Borra su acceso y su ficha.
@@ -4039,7 +4047,7 @@ function renderRRLaboral() {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         ${esDir ? accion("Cambiar contrato", "rr-contrato") : ""}
         ${esDir && f.estado.enPlantilla ? accion("Dar de baja", "rr-baja") : ""}
-        ${f.periodos?.puedeRecontratar ? `<button class="btn sm primary" data-act="rr-recontratar">Recontratar</button>` : ""}
+        ${f.periodos?.puedeRecontratar ? `<button class="btn sm primary" data-act="rr-recontratar">Desarchivar</button>` : ""}
       </div></div>
       ${resumen}${solap}${hist}${incorporaciones}${irA}</div>
     <div class="card"><div class="ch"><h3>Áreas en las que puede trabajar</h3></div>${areas}</div>
@@ -4089,6 +4097,8 @@ async function rrAsignarPin(id) {
   const elegido = ["direccion", "rrhh"].includes(USER.rol);
   const ov = modal("PIN de fichaje", `
     <p style="margin:0 0 14px;line-height:1.55">${elegido ? "Introduce los 4 dígitos que ha elegido el propio trabajador. Se guardan como su PIN definitivo." : "PIN provisional de 4 a 6 dígitos. El trabajador podrá cambiarlo desde su perfil."}</p>
+    <p class="mut">El PIN actual no se puede consultar. Al guardar, el nuevo sustituirá al anterior.</p>
+    <label for="rrPinVal">Nuevo PIN de fichaje</label>
     <input class="inp" id="rrPinVal" inputmode="numeric" type="password" maxlength="${elegido ? 4 : 6}" autocomplete="off" placeholder="4917" style="width:100%;font-size:20px;letter-spacing:.3em;text-align:center">
     <p id="rrPinMsg" style="margin:10px 0 0;min-height:18px;color:var(--danger);font-weight:550"></p>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
@@ -4176,11 +4186,11 @@ function rrEditarDatos(id) {
   const F = (name, lab, val, type) => `<div class="field"><label>${lab}</label><input name="${name}" ${type ? `type="${type}"` : ""} value="${esc(val || "")}"></div>`;
   const horasActuales = t.horas_semana ?? RRSEG.lab?.contrato?.vigente?.horas_semana ?? '';
   const sensibles = esDir ? rrCamposAdministrativos(t) + `<div class="field"><label>Horas semanales contratadas<input name="horas_semana" type="number" min="1" max="60" step="0.5" value="${esc(horasActuales)}" placeholder="Ej. 20"></label></div><div class="field" id="rrHorasDesde" hidden><label>Aplicar estas horas desde<input name="contrato_desde" type="date" min="${todayStr()}" value="${todayStr()}"></label><small class="mut">Se usarán en Horarios. Conservamos el contrato anterior.</small></div>` : '';
-  const body = `<form id="fRRD"><div class="form-grid">${F("nombre", "Nombre", t.nombre)}${F("puesto", "Puesto", t.puesto)}${F("telefono", "Teléfono", t.telefono)}${F("email", "Email", t.email)}${F("fecha_nac", "Nacimiento", (t.fecha_nac || "").slice(0, 10), "date")}${sensibles}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form>`;
+  const body = `<form id="fRRD"><div class="form-grid">${F("nombre", "Nombre", t.nombre)}<div class="field"><label>Categoría</label>${rrCategoriaSelect(t.puesto || "")}</div>${F("telefono", "Teléfono", t.telefono)}${F("email", "Email", t.email)}${F("fecha_nac", "Nacimiento", (t.fecha_nac || "").slice(0, 10), "date")}${sensibles}</div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar</button></div></form>`;
   const ov = modal("Editar datos", body);
   if (esDir) {
     const form=ov.querySelector('#fRRD'), h=form.elements.horas_semana, j=form.elements.tipo_jornada;
-    const sync=()=>{h.required=j.value==='parcial';const cambia=h.value!=='' && Number(h.value)!==Number(horasActuales);ov.querySelector('#rrHorasDesde').hidden=!cambia;form.elements.contrato_desde.required=cambia;};
+    const sync=()=>{const variable=j.value==='por_horas';h.required=j.value==='parcial';h.disabled=variable;h.closest('.field').hidden=variable;if(variable)h.value='';const cambia=variable ? !!horasActuales : h.value!=='' && Number(h.value)!==Number(horasActuales);ov.querySelector('#rrHorasDesde').hidden=!cambia;form.elements.contrato_desde.required=cambia;};
     h.addEventListener('input',sync);j.addEventListener('change',sync);sync();
   }
   ov.querySelector("#fRRD").addEventListener("submit", async (e) => {
@@ -4413,6 +4423,53 @@ async function rrNotaDel(id) {
  * sabe el nombre del operador y a qué hay que enlazarlo. Lo que NO se rellena solo es el rol,
  * las horas y las áreas — que es justo lo que el TPV no sabe y lo que decide una persona.
  */
+// Fecha de nacimiento: tres segmentos accesibles, sin recorrer meses para cambiar de año.
+function rrNacimientoSelector(input, nacimiento = true) {
+  if (!input) return;
+  const field = input.closest('.field');
+  const original = input.value;
+  const label = field.querySelector('label');
+  label.removeAttribute('for');
+  label.id = `rrFechaTitulo-${input.name}`;
+  input.type = 'hidden';
+  const box = document.createElement('div');
+  box.className = 'rr-birth';
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-labelledby', label.id);
+  const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const year = Number(rrHoy().slice(0,4)) + (nacimiento ? 0 : 5);
+  box.innerHTML = `<div class="rr-birth-segments">
+    <select aria-label="Día" data-birth="day"><option value="">Día</option>${Array.from({length:31},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('')}</select>
+    <select aria-label="Mes" data-birth="month"><option value="">Mes</option>${meses.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('')}</select>
+    <select aria-label="Año" data-birth="year"><option value="">Año</option>${Array.from({length:121},(_,i)=>`<option value="${year-i}">${year-i}</option>`).join('')}</select>
+    </div><div class="rr-birth-footer"><span class="mut" aria-live="polite">Opcional</span><button type="button" class="linkbtn">Borrar</button></div>`;
+  field.append(box);
+  const day = box.querySelector('[data-birth="day"]');
+  const month = box.querySelector('[data-birth="month"]');
+  const yyyy = box.querySelector('[data-birth="year"]');
+  const status = box.querySelector('[aria-live]');
+  const clear = box.querySelector('button');
+  if (original) { const [y,m,d]=original.split('-');yyyy.value=String(Number(y));month.value=String(Number(m));day.value=String(Number(d)); }
+  const sync = () => {
+    const d=Number(day.value), m=Number(month.value), y=Number(yyyy.value);
+    const max = m ? new Date(Date.UTC(y || 2000,m,0)).getUTCDate() : 31;
+    for (const option of day.options) option.disabled = Number(option.value)>max;
+    const any=!!(d||m||y), complete=!!(d&&m&&y);
+    const iso=complete ? `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}` : '';
+    const error = !any ? '' : !complete ? 'Completa el día, el mes y el año.' : d>max ? 'Ese día no existe en el mes elegido.' : nacimiento && iso>=rrHoy() ? 'Revisa la fecha de nacimiento.' : '';
+    day.setCustomValidity(error);
+    day.setAttribute('aria-invalid', String(!!error));
+    input.value = !error ? iso : '';
+    status.textContent = error || (complete ? `${d} de ${meses[m-1].toLowerCase()} de ${y}` : 'Opcional');
+    box.classList.toggle('has-error', !!error);
+    clear.hidden=!any;
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+  };
+  box.addEventListener('change',sync);
+  clear.addEventListener('click',()=>{day.value='';month.value='';yyyy.value='';sync();day.focus();});
+  sync();
+}
+
 function rrAltaPasos(ov) {
   const form = ov.querySelector('#fWorker');
   const originales = [...form.children];
@@ -4429,7 +4486,7 @@ function rrAltaPasos(ov) {
   const localFijo=form.querySelector('[name="local"][type="hidden"]');
   if(localFijo)flujo.cuerpos[1].insertAdjacentHTML('afterbegin',`<p class="promo-note">Local: <b>${esc(localFijo.value)}</b></p>`);
   if(form.querySelector('[name="horas_semana"]'))flujo.cuerpos[1].insertAdjacentHTML('beforeend','<p class="mut">Sin horas contratadas no se incluirá en el reparto automático de turnos.</p>');
-  ['username','pin'].forEach(n=>mover(2,n));
+  ['username','pin','pin_automatico'].forEach(n=>mover(2,n));
   const extra=document.createElement('details');extra.className='promo-help';extra.innerHTML='<summary>Documentación y datos administrativos (puedes completarlos después)</summary>';
   for(const n of ['dni','direccion','iban','talla_ropa']) {const el=form.querySelector(`[name="${n}"]`);if(el)extra.append(el.closest('.field'));}
   if(extra.querySelector('input'))flujo.cuerpos[2].append(extra);
@@ -4437,13 +4494,14 @@ function rrAltaPasos(ov) {
   // Las notas de acceso y del enlace de Ágora siguen visibles antes de confirmar.
   originales.filter(el=>el.tagName==='P').forEach(el=>flujo.cuerpos[3].append(el));
   flujo.cuerpos[3].insertAdjacentHTML('beforeend','<p class="mut">Se creará la ficha interna. Esto no solicita ni confirma el alta laboral en gestoría. Puedes completar los datos pendientes después.</p>');
+  if(['direccion','rrhh'].includes(USER.rol)) flujo.cuerpos[3].insertAdjacentHTML('beforeend','<button class="btn primary" type="submit" name="confirmar_trabajador" value="1">Enviar al trabajador para confirmar</button><p class="mut">Se enviará un enlace personal al teléfono indicado. Hasta que confirme, la ficha quedará pendiente y no tendrá acceso.</p>');
   flujo.cuerpos[3].append(crear);
   originales.forEach(el=>{if(el.parentNode===form)el.remove();});
   ov.querySelector('.modal').classList.add('campaign-modal');
   form.querySelectorAll('.field > label').forEach((label,i)=>{const el=label.parentNode.querySelector('input:not([type="hidden"]),select');if(el){el.id ||= `rrAltaCampo${i}`;label.htmlFor=el.id;}});
   const revisar=()=>{
     const v=n=>form.querySelector(`[name="${n}"]`)?.value || '';
-    const filas=[['Nombre',v('nombre')||'Falta el nombre'],['Local',v('local')||'Falta el local'],['Rol',v('rol')],['Puesto',v('puesto')||'Pendiente'],['Incorporación',v('fecha_alta')||'Pendiente'],['Horas semanales',v('horas_semana')||'Pendientes de configurar'],['Usuario',v('username')||'Falta el usuario'],['PIN',v('pin')?'Configurado (no se muestra)':'Pendiente']];
+    const filas=[['Nombre',v('nombre')||'Falta el nombre'],['Local',v('local')||'Falta el local'],['Rol',v('rol')],['Categoría',v('puesto')||'Pendiente'],['Incorporación',v('fecha_alta')||'Pendiente'],['Horas semanales',v('tipo_jornada')==='por_horas'?'Variables · según turnos y fichajes':v('horas_semana')||'Pendientes de configurar'],['Usuario',v('username')||'Falta el usuario'],['PIN',v('pin_automatico')?'Provisional · se genera al crear':'Pendiente']];
     resumen.innerHTML=`<dl class="promo-review">${filas.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
   };
   form.addEventListener('input',revisar);form.addEventListener('change',revisar);flujo.pasos[3].addEventListener('toggle',revisar);revisar();
@@ -4457,6 +4515,16 @@ function rrAltaPasos(ov) {
 }
 
 function rrWorkerAdd(pre = {}) {
+  const draftKey = `rrhh-alta-borrador:${USER.id || USER.username}:${localActualFE() || USER.local || 'todos'}`;
+  let draft = null;
+  try { draft = JSON.parse(sessionStorage.getItem(draftKey) || 'null'); } catch {}
+  if (draft && !pre.borradorElegido) {
+    const aviso = modal('Alta sin terminar', `<p>Hay un borrador de <b>${esc(draft.campos?.nombre || 'un nuevo trabajador')}</b>. ¿Quieres continuar?</p><p class="mut">Guardado en esta pestaña. El PIN no se conserva.</p><div class="promo-actions"><button class="btn" id="rrDraftNuevo">Empezar otro</button><button class="btn primary" id="rrDraftRecuperar">Recuperar borrador</button></div>`);
+    aviso.querySelector('#rrDraftRecuperar').onclick=()=>{aviso.remove();rrWorkerAdd({...pre,borradorElegido:true});};
+    aviso.querySelector('#rrDraftNuevo').onclick=()=>{try{sessionStorage.removeItem(draftKey);}catch{}aviso.remove();rrWorkerAdd({...pre,borradorElegido:true});};
+    return;
+  }
+  if (draft?.agora) pre={...pre,agora:draft.agora};
   // Alta vía endpoint propio de RRHH: el encargado puede crear en SU local (rol fijo trabajador).
   const enc = USER.rol === "encargado";
   // EL LOCAL SALE DE LA BARRA DE ARRIBA. Si hay un establecimiento puesto, dar de alta ahí es
@@ -4483,21 +4551,21 @@ function rrWorkerAdd(pre = {}) {
       ${localBarra ? `<span class="mut" style="font-size:12px">en <b>${esc(nombreCortoLocal(localBarra))}</b></span>` : ""}</div>
       <div class="form-grid">
         <div class="field"><label>Nombre completo</label><input name="nombre" required value="${esc(pre.nombre || "")}"></div>
-        <div class="field"><label>Usuario</label><input name="username" required placeholder="se propone solo"></div>
+        <div class="field"><label>Usuario</label><input name="username" required placeholder="Se rellena con el nombre"></div>
         ${localField}${rolField}
-        <div class="field"><label>Puesto</label><input name="puesto"></div>
+        <div class="field"><label>Categoría</label>${rrCategoriaSelect()}</div>
         <div class="field"><label>Fecha de incorporación</label><input name="fecha_alta" type="date" value="${rrHoy()}"></div>
         <div class="field"><label>Nacimiento</label><input name="fecha_nac" type="date"></div>
         <div class="field"><label>Teléfono</label><input name="telefono" type="tel"></div>
         <div class="field"><label>Correo electrónico</label><input name="email" type="email"></div>
-        <div class="field"><label>PIN elegido por el trabajador (4 dígitos)</label><input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password"></div>
+        <div class="field"><label>PIN de fichaje</label><p class="mut">Se generará un PIN provisional aleatorio. Al entrar en su espacio, el trabajador podrá elegir el suyo.</p><input type="hidden" name="pin_automatico" value="1"></div>
         ${enc ? '' : rrCamposAdministrativos()}
-      </div><p class="mut">Puedes guardar la ficha incompleta y continuar después. El PIN no se muestra ni se envía a gestoría.</p></div>
+      </div><p class="mut">Puedes guardar la ficha incompleta y continuar después. El PIN provisional se mostrará una sola vez al crearla.</p></div>
     ${enc ? "" : `<div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Contrato</h3></div>
       <div class="form-grid">
         <div class="field"><label>Horas por semana</label>
-          <div class="chips" id="altaHoras">${[20, 30, 40].map((h) => `<button type="button" class="chip" data-h="${h}">${h} h</button>`).join("")}</div>
-          <input name="horas_semana" type="number" min="1" max="60" step="0.5" placeholder="u otras…" style="margin-top:6px"></div>
+          <div class="rr-hours-row"><div class="chips" id="altaHoras">${[20, 30, 40].map((h) => `<button type="button" class="chip" data-h="${h}">${h} h</button>`).join("")}</div>
+          <input name="horas_semana" type="number" min="1" max="60" step="0.5" placeholder="Otras h" aria-label="Otras horas por semana" class="rr-hours-other"></div></div>
       </div>
       <p class="mut" style="margin:6px 0 0;font-size:11.5px">Sin horas contratadas no entra en el reparto del generador.</p></div>`}
     <div><div class="ch" style="margin:0 0 8px"><h3 style="margin:0;font-size:13px">Áreas en las que puede trabajar</h3></div>
@@ -4508,9 +4576,45 @@ function rrWorkerAdd(pre = {}) {
       le sugerirá el sistema es cambiarla. El PIN de fichaje es independiente.</p>
     <button class="btn primary" type="submit">Crear trabajador</button></form>`);
 
+  const draftForm=ov.querySelector('#fWorker');
+  if (draft?.campos) for (const [name,value] of Object.entries(draft.campos)) {
+    const el=draftForm.elements.namedItem(name);
+    if(el && name!=='pin' && el.type!=='password') el.value=String(value);
+  }
+  if(draft?.campos?.username)draftForm.elements.username.dataset.tocado='1';
+  ov.querySelectorAll('#altaRol .segm-b').forEach(b=>b.classList.toggle('on',b.dataset.rol===draftForm.elements.rol.value));
+  const draftStatus=document.createElement('p');draftStatus.className='mut';draftStatus.setAttribute('role','status');
+  draftForm.before(draftStatus);
+  let savedAreas=draft?.areas || [];
+  const guardarBorrador=()=>{
+    const fechas={};
+    draftForm.querySelectorAll('.rr-birth').forEach(box=>{const nombre=box.closest('.field').querySelector('input[name]').name;fechas[nombre]=[...box.querySelectorAll('select')].map(el=>el.value);});
+    const campos={};
+    for(const el of draftForm.elements) if(el.name && el.name!=='pin' && el.type!=='password' && !el.disabled) campos[el.name]=el.value;
+    const areas=[...draftForm.querySelectorAll('.altaArea')];
+    if(areas.length)savedAreas=areas.filter(el=>el.checked).map(el=>el.value);
+    try {sessionStorage.setItem(draftKey,JSON.stringify({campos,fechas,areas:savedAreas,agora:pre.agora || null}));draftStatus.textContent='Borrador guardado en esta pestaña · el PIN no se guarda.';}
+    catch {draftStatus.textContent='No se puede guardar el borrador en este navegador. No cierres el formulario.';}
+  };
+  draftForm.addEventListener('input',guardarBorrador);
+  draftForm.addEventListener('change',guardarBorrador);
   rrAltaPasos(ov);
+  rrNacimientoSelector(ov.querySelector('[name="fecha_nac"]'));
+  rrNacimientoSelector(ov.querySelector('[name="fecha_alta"]'), false);
+  for(const [nombre,valores] of Object.entries(draft?.fechas || {})){const input=draftForm.elements.namedItem(nombre);const box=input?.closest('.field')?.querySelector('.rr-birth');if(box){box.querySelectorAll('select').forEach((el,i)=>el.value=valores[i] || '');box.querySelector('select').dispatchEvent(new Event('change',{bubbles:true}));}}
   const jornadaAlta = ov.querySelector('[name=tipo_jornada]');
-  jornadaAlta?.addEventListener('change',()=>{ov.querySelector('[name=horas_semana]').required=jornadaAlta.value==='parcial';});
+  const ajustarJornada = () => {
+    const h=ov.querySelector('[name=horas_semana]'); if(!h)return;
+    const variable=jornadaAlta?.value==='por_horas';
+    h.required=jornadaAlta?.value==='parcial';h.disabled=variable;
+    h.closest('.field').hidden=variable;
+    if(variable)h.value='';
+    let nota=ov.querySelector('#rrJornadaNota');
+    if(!nota){nota=document.createElement('p');nota.id='rrJornadaNota';nota.className='mut';h.closest('.field').after(nota);}
+    nota.textContent=variable?'Por horas: sin objetivo semanal fijo. Consulta por separado los turnos planificados y las horas fichadas.':'';
+    guardarBorrador();
+  };
+  jornadaAlta?.addEventListener('change',ajustarJornada);ajustarJornada();
   // Las áreas son las del local elegido, y se recargan si se cambia: ofrecer las de Blanes
   // para alguien de Lloret sería regalar un id que el servidor va a rechazar.
   let consultaAreas = 0;
@@ -4527,6 +4631,7 @@ function rrWorkerAdd(pre = {}) {
       caja.innerHTML = act.length
         ? `<div class="chips">${act.map((a) => `<label class="chip"><input type="checkbox" class="altaArea" value="${a.id}" hidden> ${esc(a.nombre)}</label>`).join("")}</div>`
         : '<span class="mut">Este establecimiento todavía no tiene áreas.</span>';
+      caja.querySelectorAll('.altaArea').forEach(el=>{el.checked=savedAreas.includes(el.value);el.closest('.chip').classList.toggle('on',el.checked);});
     } catch { if (consulta === consultaAreas) caja.innerHTML = '<span class="mut">No se han podido cargar las áreas. Se pueden poner después.</span>'; }
   }
   ov.querySelector("[name=local]")?.addEventListener("change", cargarAreas);
@@ -4537,6 +4642,7 @@ function rrWorkerAdd(pre = {}) {
     const b = e.target.closest(".segm-b"); if (!b) return;
     ov.querySelectorAll("#altaRol .segm-b").forEach((x) => x.classList.toggle("on", x === b));
     ov.querySelector("[name=rol]").value = b.getAttribute("data-rol");
+    guardarBorrador();
   });
   // Horas: 20, 30 y 40 son casi siempre la respuesta. El campo sigue estando para el resto.
   ov.querySelector("#altaHoras")?.addEventListener("click", (e) => {
@@ -4545,6 +4651,7 @@ function rrWorkerAdd(pre = {}) {
     const campo = ov.querySelector("[name=horas_semana]");
     const ya = String(campo.value) === h;
     campo.value = ya ? "" : h;
+    guardarBorrador();
     ov.querySelectorAll("#altaHoras .chip").forEach((x) => x.classList.toggle("on", !ya && x === b));
   });
   ov.querySelector("[name=horas_semana]")?.addEventListener("input", (e) => {
@@ -4567,20 +4674,23 @@ function rrWorkerAdd(pre = {}) {
     if (campoUser.dataset.tocado === "1") return;
     const nom = (ov.querySelector("[name=nombre]")?.value || "").trim();
     if (!nom) { campoUser.value = ""; return; }
+    const sugerido=nom.split(/\s+/)[0].normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,24);
+    if(sugerido.length>=3)campoUser.value=sugerido;
+    guardarBorrador();
     const mio = Symbol();
     pidiendo = mio;
     try {
       const r = await apiRaw("/api/rrhh/usuario-libre?nombre=" + encodeURIComponent(nom));
       // Si mientras llegaba la respuesta se ha seguido escribiendo, esta ya no vale.
       if (pidiendo !== mio || campoUser.dataset.tocado === "1") return;
-      if (r.usuario) campoUser.value = r.usuario;
+      if (r.usuario) { campoUser.value = r.usuario; guardarBorrador(); }
     } catch { /* sin propuesta se escribe a mano: no es un error que haya que enseñar */ }
   };
   campoUser.addEventListener("input", () => { campoUser.dataset.tocado = campoUser.value.trim() ? "1" : ""; });
   // Si el nombre viene puesto de partida —desde el enlace con Ágora— hay que pedir el usuario
   // igual: rellenar el `value` en el HTML no dispara ningún evento, así que el campo se quedaba
   // vacío y, como es obligatorio, el formulario no llegaba a enviarse.
-  if (pre.nombre) proponerUsuario();
+  if (pre.nombre && !draft) proponerUsuario();
   let _tUser = null;
   ov.querySelector("[name=nombre]")?.addEventListener("input", () => {
     // Se espera a que deje de escribir: proponer con cada tecla serían diez consultas para
@@ -4591,7 +4701,8 @@ function rrWorkerAdd(pre = {}) {
 
   ov.querySelector("#fWorker").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true;
+    const btn = e.submitter || e.target.querySelector("button[type=submit]");
+    const submits=[...e.target.querySelectorAll("button[type=submit]")];submits.forEach(b=>b.disabled=true);
     const data = Object.fromEntries(new FormData(e.target).entries());
     const marcadas = [...ov.querySelectorAll(".altaArea")].filter((c) => c.checked).map((c) => Number(c.value));
     // La lista solo viaja si hay áreas que ofrecer. Mandar `[]` cuando el local no tiene
@@ -4599,7 +4710,13 @@ function rrWorkerAdd(pre = {}) {
     // «este no entra en el generador» — y no es lo que ha decidido nadie aquí.
     if (ov.querySelectorAll(".altaArea").length) data.areas = marcadas;
     try {
+      if(e.submitter?.name==='confirmar_trabajador') {
+        const r=await apiSend('POST','/api/rrhh/confirmaciones',data);
+        try{sessionStorage.removeItem(draftKey);}catch{}
+        ov.remove();modal('Confirmación del trabajador',`<p>${esc(r.mensaje)}</p><button class="btn" data-close>Cerrar</button>`);return;
+      }
       const r = await apiSend("POST", "/api/rrhh/trabajador", data);
+      try { sessionStorage.removeItem(draftKey); } catch {}
       // El enlace con Ágora, si se vino de ahí. NO fatal: la ficha ya está creada y el enlace
       // se puede hacer a mano; perderla por un fallo de enlace sería mucho peor.
       let enlazado = null;
@@ -4610,6 +4727,7 @@ function rrWorkerAdd(pre = {}) {
       ov.remove();
       const fin = modal("Trabajador creado", `
         <p style="margin:0 0 14px;line-height:1.6">${esc(r.mensaje || "Creado.")}</p>
+        ${r.pinProvisional ? `<p>PIN provisional de fichaje: <strong style="font-size:22px;letter-spacing:.15em">${esc(r.pinProvisional)}</strong></p><p class="mut">Se muestra solo ahora. Entrará con su usuario y contraseña del panel y podrá elegir su PIN personal en su espacio.</p>` : ''}
         ${pre.agora ? `<p class="mut" style="margin:0 0 14px;line-height:1.55">${enlazado
           ? `Enlazado con <b>${esc(pre.agora)}</b> de Ágora.`
           : `<b>No se ha podido enlazar con ${esc(pre.agora)}</b>: hazlo desde «Enlazar operadores de Ágora».`}</p>` : ""}
@@ -4622,8 +4740,9 @@ function rrWorkerAdd(pre = {}) {
         fin.addEventListener("click", (ev) => { if (ev.target === fin || ev.target.closest("[data-close]")) setTimeout(pre.alCerrar, 0); });
       }
       loadRRHH();
-    } catch (err) { btn.disabled = false; toast("Error: " + err.message); }
+    } catch (err) { submits.forEach(b=>b.disabled=false); toast("Error: " + err.message); }
   });
+  guardarBorrador();
 }
 // ── Dar de baja ─────────────────────────────────────────────────────────────
 // Dos pasos a propósito: primero se enseña TODO lo que va a pasar y después se confirma.
@@ -4695,11 +4814,11 @@ async function rrDarDeBaja(id, nombre) {
 // las áreas de entonces pueden no ser las de ahora. Se pre-rellena lo que sabemos como
 // SUGERENCIA visible, y hay que confirmarlo.
 async function rrRecontratar(f) {
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = rrHoy();
   const ult = (f.periodos?.historial || [])[0];
-  const ov = modal(`Recontratar · ${f.trabajador.nombre}`, `
+  const ov = modal(`Desarchivar · ${f.trabajador.nombre}`, `
     <p style="margin:0 0 14px">${ult ? `Su última etapa fue <b>${esc(ult.texto)}</b>${ult.local ? ` en ${esc(ult.local)}` : ""}.` : ""}
-      Se abre una etapa nueva; todo lo anterior se queda como está.</p>
+      Volverá a aparecer en plantilla desde la fecha indicada. Se conserva su ficha, documentos e historial y se registra una nueva incorporación.</p><p class="mut">Esto reactiva su acceso al panel; no tramita el alta laboral en gestoría.</p>
     ${f.bolsa.saldo > 0 ? `<p class="fic-nota" style="border-color:var(--warning)">Conserva <b>${esc(ficSigno(f.bolsa.saldo))}</b> a favor de antes.
       Volver <b>no</b> se las liquida: eso se hace desde el libro de horas cuando se decida cómo.</p>` : ""}
     <div class="bl-form">
@@ -4707,13 +4826,13 @@ async function rrRecontratar(f) {
       <label>Establecimiento<select class="inp" id="recLocal">${visiblesFE(null, LOCALES).map((l) => `<option ${l === f.trabajador.local ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
       <label>Horas por semana<input class="inp" id="recHoras" type="number" min="1" max="60" step="0.5" placeholder="40"></label>
     </div>
-    <label class="bl-lbl">Puesto <span class="mut">(opcional)</span><input class="inp" id="recPuesto" value="${esc(f.trabajador.puesto || "")}"></label>
+    <label class="bl-lbl">Categoría <span class="mut">(opcional)</span>${rrCategoriaSelect(f.trabajador.puesto || "", 'id="recPuesto"')}</label>
     <div class="bl-lbl">Áreas en las que podrá trabajar
       <div id="recAreas" class="mut" style="font-size:12.5px;margin-top:6px">Cargando…</div>
       <p class="mut" style="margin:6px 0 0;font-size:11.5px">No se heredan las de antes: hay que volver a marcarlas.</p></div>
     <p id="recMsg" style="margin:8px 0 0;min-height:16px;color:var(--danger);font-weight:550"></p>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
-      <button class="btn" data-close>Cancelar</button><button class="btn primary" id="recOk">Recontratar</button></div>`);
+      <button class="btn" data-close>Cancelar</button><button class="btn primary" id="recOk">Desarchivar y guardar incorporación</button></div>`);
 
   async function cargarAreas() {
     const caja = ov.querySelector("#recAreas");
@@ -4741,7 +4860,7 @@ async function rrRecontratar(f) {
     if (ov.querySelectorAll(".recArea").length) cuerpo.areas = marcadas;
     try {
       const r = await apiSend("POST", `/api/rrhh/trabajador/${f.trabajador.id}/recontratar`, cuerpo);
-      ov.remove(); toast(r.mensaje || "Recontratado ✅"); rrSelWorker(f.trabajador.id); loadRRHH();
+      ov.remove(); toast(r.mensaje || "Trabajador desarchivado ✅"); rrSelWorker(f.trabajador.id); loadRRHH();
     } catch (e) { btn.disabled = false; ov.querySelector("#recMsg").textContent = e.message; }
   });
 }
@@ -17545,6 +17664,7 @@ document.addEventListener("click", (e) => {
   else if (act === "rr-agora-import") rrImportarOperadores();
   else if (act === "rr-rend-cargar") rrCargarRendimiento(t.getAttribute("data-id"));
   else if (act === "rr-worker-add") rrWorkerAdd();
+  else if (act === "rr-confirmaciones") rrConfirmaciones();
   else if (act === "rr-worker-del") rrWorkerDel(t.getAttribute("data-id"), t.getAttribute("data-nombre"));
   else if (act === "rr-checkin-save") rrCheckinSave();
   else if (act === "rr-checkin-edit") rrCheckinEdit();
@@ -17884,3 +18004,10 @@ document.addEventListener("input", e => {
 // Close the compact tools menu on outside click or Escape.
 document.addEventListener("click",e=>{document.querySelectorAll(".cli-settings[open]").forEach(menu=>{if(!menu.contains(e.target))menu.removeAttribute("open");});});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")document.querySelectorAll(".cli-settings[open]").forEach(menu=>{menu.removeAttribute("open");menu.querySelector("summary").focus();});});
+
+async function rrConfirmaciones(){
+ const ov=modal('Confirmaciones de incorporación','<p>Cargando…</p>');
+ try{const r=await apiRaw('/api/rrhh/confirmaciones');ov.querySelector('.modal-b').innerHTML=(r.data||[]).map(x=>`<div class="card"><b>${esc(x.datos.nombre)}</b><p>${esc(x.estado==='corregir'?'Solicita una corrección':'Pendiente de confirmar')} · ${esc(x.datos.local)}</p><p>${esc(x.respuesta||'')}</p><p class="mut">Envío: ${esc(x.envio)} · Caduca: ${esc(new Date(x.vence_en).toLocaleDateString('es-ES'))}</p><button class="btn" data-recuperar="${x.id}">Revisar y preparar nuevo envío</button></div>`).join('')||'<p>No hay confirmaciones pendientes.</p>';
+ ov.querySelectorAll('[data-recuperar]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{const j=await apiSend('POST',`/api/rrhh/confirmaciones/${b.dataset.recuperar}/recuperar`,{});const key=`rrhh-alta-borrador:${USER.id||USER.username}:${localActualFE()||USER.local||'todos'}`;sessionStorage.setItem(key,JSON.stringify({campos:j.datos,areas:j.datos.areas||[]}));ov.remove();rrWorkerAdd();}catch(e){toast(e.message);b.disabled=false;}});
+ }catch(e){ov.querySelector('.modal-b').textContent=e.message;}
+}
