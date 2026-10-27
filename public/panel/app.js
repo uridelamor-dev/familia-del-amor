@@ -3814,10 +3814,62 @@ function rrCategoriaSelect(value = '', attrs = 'name="puesto"') {
   const opciones = value && !RR_CATEGORIAS.includes(value) ? [value, ...RR_CATEGORIAS] : RR_CATEGORIAS;
   return `<select ${attrs}><option value="">Selecciona categoría</option>${opciones.map(v=>`<option value="${esc(v)}" ${v===value?'selected':''}>${esc(v)}</option>`).join('')}</select>`;
 }
+// Adjuntos y propuestas: nunca sobrescribir datos sin una revisión explícita.
+function rrConectarIdentidadDireccion(ov){
+ const form=ov.querySelector('form'),dni=form?.elements.dni;if(!dni)return;
+ const help=dni.closest('.promo-help');if(help){const grid=document.createElement('div');grid.className='rr-admin-grid';[...help.children].filter(e=>e.tagName!=='SUMMARY').forEach(e=>grid.append(e));help.append(grid);}
+ const inicio=form.querySelector('details.promo-step');if(inicio&&!inicio.contains(dni)){const acceso=document.createElement('button');acceso.type='button';acceso.className='btn sm';acceso.textContent='Rellenar nombre y nacimiento desde el DNI';inicio.querySelector('.promo-step-body').prepend(acceso);acceso.onclick=()=>{const paso=dni.closest('details.promo-step');form.querySelectorAll('details.promo-step').forEach(p=>p.open=p===paso);if(help)help.open=true;dni.closest('.field').scrollIntoView({block:'start'});};}
+ const hidden=form.elements.documentos_identidad;
+ const caja=document.createElement('div');caja.className='rr-identidad';
+ caja.innerHTML=`<b>Adjuntar DNI/NIE</b><p class="mut">Parte delantera y trasera · imagen o PDF, hasta 5 MB por cara.</p><div class="rr-dni-caras">${['frontal','trasera'].map(c=>`<label>${c==='frontal'?'Parte delantera':'Parte trasera'}<input type="file" accept="image/jpeg,image/png,application/pdf" data-dni-cara="${c}"><small data-dni-estado="${c}">Sin adjunto</small><button type="button" class="linkbtn" data-dni-quitar="${c}" hidden>Quitar</button></label>`).join('')}</div><button type="button" class="btn sm" data-dni-leer>Leer datos del documento</button><p class="mut" data-dni-mensaje role="status">La lectura utiliza el servicio de IA de la empresa. Podrás revisar los datos antes de aplicarlos.</p><div data-dni-propuesta></div>`;
+ dni.closest('.field').append(caja);
+ let caras={},cargando=0,revision=0;
+ const mensaje=caja.querySelector('[data-dni-mensaje]');
+ const pintar=()=>{for(const c of ['frontal','trasera']){caja.querySelector(`[data-dni-estado="${c}"]`).textContent=caras[c]?'Adjunto guardado':'Sin adjunto';caja.querySelector(`[data-dni-quitar="${c}"]`).hidden=!caras[c];}caja.querySelector('[data-dni-leer]').disabled=!!cargando||!Object.keys(caras).length;};
+ const guardar=()=>{hidden.value=JSON.stringify(Object.values(caras));hidden.dispatchEvent(new Event('change',{bubbles:true}));revision++;caja.querySelector('[data-dni-propuesta]').innerHTML='';pintar();};
+ form.addEventListener('submit',e=>{if(cargando){e.preventDefault();e.stopImmediatePropagation();toast('Espera a que termine la subida del documento.');}},true);
+ if(hidden.value&&hidden.value!=='[]'){
+  cargando++;pintar();apiSend('POST','/api/rrhh/identidad/estado',{documentos_identidad:hidden.value}).then(r=>{caras=Object.fromEntries(r.data.map(d=>[d.cara,d.id]));}).catch(()=>{mensaje.textContent='No se han podido recuperar los adjuntos. Vuelve a abrir el formulario o adjúntalos de nuevo.';}).finally(()=>{cargando--;pintar();});
+ }
+ caja.querySelectorAll('[data-dni-cara]').forEach(el=>el.onchange=async()=>{
+  const file=el.files[0];if(!file)return;
+  if(file.size>5*1024*1024){mensaje.textContent='El archivo supera 5 MB.';el.value='';return;}
+  cargando++;pintar();el.disabled=true;mensaje.textContent='Guardando adjunto privado…';
+  try{const data=new FormData();data.append('archivo',file);data.append('cara',el.dataset.dniCara);
+   const r=await fetch('/api/rrhh/identidad/adjunto',{method:'POST',headers:{Authorization:'Bearer '+token()},body:data});const j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'No se pudo subir');
+   caras[el.dataset.dniCara]=j.id;guardar();mensaje.textContent='Adjunto guardado. Puedes leer sus datos o continuar rellenando la ficha.';
+  }catch(e){mensaje.textContent=e.message;el.value='';}finally{cargando--;el.disabled=false;pintar();}
+ });
+ caja.querySelectorAll('[data-dni-quitar]').forEach(b=>b.onclick=()=>{delete caras[b.dataset.dniQuitar];guardar();});
+ caja.querySelector('[data-dni-leer]').onclick=async()=>{
+  const version=revision;cargando++;pintar();mensaje.textContent='Leyendo el documento…';
+  try{const j=await apiSend('POST','/api/rrhh/identidad/leer',{documentos_identidad:hidden.value});if(version!==revision)return;
+   const datos=j.datos||{},panel=caja.querySelector('[data-dni-propuesta]');
+   panel.innerHTML=`<div class="promo-note"><b>Comprueba la lectura</b><p>Marca los datos que quieras copiar a la ficha.</p>${[['nombre','Nombre completo'],['dni','DNI/NIE'],['fecha_nac','Nacimiento']].map(([k,l])=>`<label class="rr-dni-propuesta"><input type="checkbox" data-usar="${k}" ${datos[k]?'checked':'disabled'}><span>${l}<strong>${esc(datos[k]||'No se ha podido leer')}</strong></span></label>`).join('')}<button type="button" class="btn sm" data-dni-aplicar>Aplicar datos seleccionados</button></div>`;
+   panel.querySelector('[data-dni-aplicar]').onclick=()=>{for(const cb of panel.querySelectorAll('[data-usar]:checked')){const k=cb.dataset.usar,input=form.elements[k];if(!input)continue;input.value=datos[k];if(k==='fecha_nac'){const selects=input.closest('.field').querySelectorAll('.rr-birth select');const [y,m,d]=datos[k].split('-');[d,m,y].forEach((v,i)=>{if(selects[i])selects[i].value=String(Number(v));});selects[0]?.dispatchEvent(new Event('change',{bubbles:true}));}input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));}panel.innerHTML='';mensaje.textContent='Datos copiados. Puedes corregirlos antes de guardar.';};
+   mensaje.textContent='Lectura terminada. Revisa la propuesta con el documento.';
+  }catch(e){mensaje.textContent=e.message+' Puedes completar los datos manualmente; los adjuntos siguen guardados.';}finally{cargando--;pintar();}
+ };
+ pintar();
+ const dir=form.elements.direccion;if(!dir)return;
+ dir.autocomplete='off';dir.placeholder='Empieza por la calle y la población';
+ const resultados=document.createElement('div');resultados.className='rr-direcciones';resultados.setAttribute('aria-live','polite');dir.after(resultados);
+ let timer,version=0;
+ dir.addEventListener('input',()=>{
+  clearTimeout(timer);const actual=++version,q=dir.value.trim();resultados.innerHTML='';
+  if(q.length<4)return;
+  timer=setTimeout(async()=>{try{const j=await apiRaw('/api/rrhh/direcciones?q='+encodeURIComponent(q));if(actual!==version||!dir.isConnected)return;
+   resultados.innerHTML=(j.data||[]).map((d,i)=>`<button type="button" class="rr-direccion-opcion" data-dir="${i}">${esc(d.texto)}</button>`).join('')+(j.data?.length?'<img src="https://maps.gstatic.com/mapfiles/api-3/images/powered-by-google-on-white3.png" alt="Powered by Google" width="120">':'<small>No hay coincidencias. Puedes escribir la dirección completa.</small>');
+   resultados.querySelectorAll('[data-dir]').forEach(b=>b.onclick=async()=>{const elegida=j.data[Number(b.dataset.dir)];const seleccion=++version;try{const detalle=await apiRaw('/api/rrhh/direcciones?id='+encodeURIComponent(elegida.id));if(seleccion!==version||!dir.isConnected)return;for(const k of ['direccion','codigo_postal','poblacion','pais']){const input=form.elements[k];if(input){input.value=detalle.data[k]||'';input.dispatchEvent(new Event('change',{bubbles:true}));}}resultados.innerHTML='<small>Dirección seleccionada. Añade el piso o puerta si hace falta.</small>';}catch(e){if(seleccion===version)resultados.textContent=e.message;}});
+  }catch(e){if(actual===version)resultados.textContent=e.message;}},400);
+ });
+ dir.addEventListener('keydown',e=>{if(e.key==='Escape'){version++;resultados.innerHTML='';}if(e.key==='ArrowDown'){e.preventDefault();resultados.querySelector('button')?.focus();}});
+}
+
 function rrCamposAdministrativos(t = {}) {
   const input = (k, lab) => `<div class="field"><label>${lab}</label><input name="${k}" value="${esc(t[k] || '')}" ${k === 'iban' ? 'autocomplete="off" maxlength="42"' : ''}></div>`;
   const select = (k, lab, options) => `<div class="field"><label>${lab}</label><select name="${k}"><option value="">Pendiente de completar</option>${options.map(([v,l]) => `<option value="${v}" ${t[k] === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`;
-  return input('dni','DNI/NIE') + input('direccion','Dirección completa') + input('iban','IBAN') + select('talla_camiseta','Camiseta',['XS','S','M','L','XL','XXL'].map(t=>[t,t])) + select('talla_sudadera','Sudadera',['XS','S','M','L','XL','XXL'].map(t=>[t,t]))
+  return input('dni','DNI/NIE').replace('</div>','<input type="hidden" name="documentos_identidad" value="[]"></div>') + input('direccion','Dirección completa') + input('codigo_postal','Código postal') + input('poblacion','Población') + input('pais','País') + input('iban','IBAN') + select('talla_camiseta','Camiseta',['XS','S','M','L','XL','XXL'].map(t=>[t,t])) + select('talla_sudadera','Sudadera',['XS','S','M','L','XL','XXL'].map(t=>[t,t]))
     + select('tipo_jornada','Tipo de jornada',[['completa','Completa'],['parcial','Parcial'],['por_horas','Por horas']])
     + select('tipo_contrato','Tipo de contrato',[['indefinido','Indefinido'],['temporal','Temporal'],['fijo_discontinuo','Fijo discontinuo']]);
 }
@@ -3893,7 +3945,7 @@ function renderRRFicha() {
   const ini = (t.nombre || t.username || "?").split(" ").map((x) => x[0]).slice(0, 2).join("").toUpperCase();
   const foto = t.foto_url ? `<img src="${esc(t.foto_url)}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex:none">` : `<span class="avatar" style="width:56px;height:56px;font-size:20px;flex:none">${esc(ini)}</span>`;
   const dato = (lab, val) => val ? `<div><div class="t2">${lab}</div><div class="t1">${esc(val)}</div></div>` : "";
-  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Categoría", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) + dato("Dirección", t.direccion) + dato("IBAN", t.iban) + dato("Jornada", t.tipo_jornada) + dato("Tipo de contrato", t.tipo_contrato?.replaceAll("_", " ")) + dato("Camiseta", t.talla_camiseta) + dato("Sudadera", t.talla_sudadera) + dato("Talla anterior (sin prenda)", t.talla_ropa) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div>${rrAreasEnDatos()}${rrDatosPendientes()}</div>`;
+  const datos = `<div class="card"><div class="ch"><h3>Datos</h3><button class="btn sm" data-act="rr-editar-datos" data-id="${w.id}">Editar</button></div><div class="grid g3" style="gap:12px">${dato("Teléfono", t.telefono)}${dato("Email", t.email)}${dato("Categoría", t.puesto)}${dato("Alta", (t.fecha_alta || "").slice(0, 10))}${dato("Nacimiento", (t.fecha_nac || "").slice(0, 10))}${esDir ? dato("DNI/NIE", t.dni) + dato("Dirección", t.direccion) + dato("Código postal", t.codigo_postal) + dato("Población", t.poblacion) + dato("País", t.pais) + dato("IBAN", t.iban) + dato("Jornada", t.tipo_jornada) + dato("Tipo de contrato", t.tipo_contrato?.replaceAll("_", " ")) + dato("Camiseta", t.talla_camiseta) + dato("Sudadera", t.talla_sudadera) + dato("Talla anterior (sin prenda)", t.talla_ropa) : ""}${baja && t.fecha_baja ? dato("Baja", (t.fecha_baja || "").slice(0, 10)) : ""}</div>${rrAreasEnDatos()}${rrDatosPendientes()}</div>`;
   const hero = `<div class="card hero"><div style="display:flex;justify-content:space-between;gap:12px;align-items:start"><div style="display:flex;gap:14px;align-items:center;min-width:0">${foto}<div style="min-width:0"><div class="eyebrow">Ficha</div><h2 style="margin:0;font-size:19px">${esc(t.nombre || t.username || "—")} ${estado}</h2><div class="t2">${esc(resumenCabecera)}</div>${pinCabecera}</div></div>${esDir ? `<details class="rr-mas"><summary class="btn sm" title="Más acciones">···</summary>
       <div class="rr-mas-menu">
         <button class="btn sm" data-act="rr-reset-pass" data-id="${w.id}" data-nombre="${esc(t.nombre || "")}">Restablecer contraseña</button>
@@ -4239,7 +4291,7 @@ function rrEditarPasos(ov,t) {
   flujo.cuerpos[1].innerHTML=`<p class="promo-note">${esc(t.local||'Sin ubicación')} · Alta: ${esc((t.fecha_alta||'').slice(0,10)||'Pendiente')}</p>`;
   ['puesto','tipo_jornada','tipo_contrato','horas_semana','contrato_desde'].forEach(n=>mover(1,n));
   flujo.cuerpos[2].innerHTML=`<p class="promo-note">Usuario: <b>${esc(t.username||'Pendiente')}</b>. El PIN se consulta y cambia desde la cabecera de la ficha.</p>`;
-  ['dni','direccion','iban','talla_camiseta','talla_sudadera'].forEach(n=>mover(2,n));
+  ['dni','direccion','codigo_postal','poblacion','pais','iban','talla_camiseta','talla_sudadera'].forEach(n=>mover(2,n));
   grid.remove();
   const resumen=document.createElement('div');resumen.className='promo-note';resumen.setAttribute('aria-live','polite');flujo.cuerpos[3].append(resumen,acciones);
   form.querySelectorAll('.field').forEach((campo,i)=>{const el=campo.querySelector('input,select');const lab=campo.querySelector('label');if(el&&lab){el.id||=`rrEditarCampo${i}`;lab.htmlFor=el.id;}});
@@ -4280,10 +4332,12 @@ function rrEditarDatos(id) {
     h.addEventListener('input',sync);j.addEventListener('change',sync);sync();
   }
   rrEditarPasos(ov,t);
+  rrConectarIdentidadDireccion(ov);
   ov.querySelector("#fRRD").addEventListener("submit", async (e) => {
     e.preventDefault(); const fm = e.target;
     const data = { nombre: fm.nombre.value.trim(), puesto: fm.puesto.value.trim(), telefono: fm.telefono.value.trim(), email: fm.email.value.trim(), fecha_nac: fm.fecha_nac.value };
-    if (esDir) for (const k of ['dni','direccion','iban','talla_camiseta','talla_sudadera','tipo_jornada','tipo_contrato']) data[k] = fm.elements[k].value.trim();
+    if (esDir) for (const k of ['dni','direccion','codigo_postal','poblacion','pais','iban','talla_camiseta','talla_sudadera','tipo_jornada','tipo_contrato']) data[k] = fm.elements[k].value.trim();
+    if(esDir) data.documentos_identidad=fm.elements.documentos_identidad.value;
     if (esDir) { data.horas_semana = fm.elements.horas_semana.value; data.contrato_desde = fm.elements.contrato_desde.value; }
     try {
       const r = await apiSend("PUT", "/api/rrhh/trabajador/" + encodeURIComponent(id), data);
@@ -4594,7 +4648,7 @@ function rrAltaPasos(ov) {
 
   ['username','pin','pin_automatico'].forEach(n=>mover(2,n));
   const extra=document.createElement('details');extra.className='promo-help';extra.innerHTML='<summary>Documentación y datos administrativos (puedes completarlos después)</summary>';
-  for(const n of ['dni','direccion','iban','talla_camiseta','talla_sudadera']) {const el=form.querySelector(`[name="${n}"]`);if(el)extra.append(el.closest('.field'));}
+  for(const n of ['dni','direccion','codigo_postal','poblacion','pais','iban','talla_camiseta','talla_sudadera']) {const el=form.querySelector(`[name="${n}"]`);if(el)extra.append(el.closest('.field'));}
   if(extra.querySelector('input'))flujo.cuerpos[2].append(extra);
   const resumen=document.createElement('div');resumen.className='promo-note';resumen.setAttribute('aria-live','polite');flujo.cuerpos[3].append(resumen);
   // Las notas de acceso y del enlace de Ágora siguen visibles antes de confirmar.
@@ -4684,7 +4738,7 @@ function rrWorkerAdd(pre = {}) {
   const draftForm=ov.querySelector('#fWorker');
   if (draft?.campos) for (const [name,value] of Object.entries(draft.campos)) {
     const el=draftForm.elements.namedItem(name);
-    if(el && name!=='pin' && el.type!=='password') el.value=String(value);
+    if(el && name!=='pin' && el.type!=='password') el.value=name==='documentos_identidad'&&Array.isArray(value)?JSON.stringify(value):String(value);
   }
   if(draft?.campos?.username)draftForm.elements.username.dataset.tocado='1';
   ov.querySelectorAll('#altaRol .segm-b').forEach(b=>b.classList.toggle('on',b.dataset.rol===draftForm.elements.rol.value));
@@ -4707,6 +4761,7 @@ function rrWorkerAdd(pre = {}) {
   rrNacimientoSelector(ov.querySelector('[name="fecha_nac"]'));
   rrNacimientoSelector(ov.querySelector('[name="fecha_alta"]'), false);
   for(const [nombre,valores] of Object.entries(draft?.fechas || {})){const input=draftForm.elements.namedItem(nombre);const box=input?.closest('.field')?.querySelector('.rr-birth');if(box){box.querySelectorAll('select').forEach((el,i)=>el.value=valores[i] || '');box.querySelector('select').dispatchEvent(new Event('change',{bubbles:true}));}}
+  rrConectarIdentidadDireccion(ov);
   const jornadaAlta = ov.querySelector('[name=tipo_jornada]');
   const ajustarJornada = () => {
     const h=ov.querySelector('[name=horas_semana]'); if(!h)return;

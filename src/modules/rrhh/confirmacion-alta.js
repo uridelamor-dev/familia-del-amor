@@ -8,7 +8,7 @@ export const CONFIRMACION_SCHEMA = `CREATE TABLE IF NOT EXISTS rrhh_confirmacion
 CREATE UNIQUE INDEX IF NOT EXISTS rrhh_confirmacion_usuario_pendiente ON rrhh_confirmaciones ((datos->>'username')) WHERE estado IN ('pendiente','corregir');`;
 export const hashToken = token => createHash('sha256').update(token).digest('hex');
 export function resumenConfirmacion(d) {
- const campos={nombre:'Nombre completo',fecha_nac:'Nacimiento',telefono:'Teléfono',email:'Correo',local:'Local',puesto:'Categoría',fecha_alta:'Incorporación',tipo_jornada:'Jornada',tipo_contrato:'Contrato',horas_semana:'Horas semanales',direccion:'Dirección',talla_camiseta:'Camiseta',talla_sudadera:'Sudadera',username:'Usuario'};
+ const campos={nombre:'Nombre completo',fecha_nac:'Nacimiento',telefono:'Teléfono',email:'Correo',local:'Local',puesto:'Categoría',fecha_alta:'Incorporación',tipo_jornada:'Jornada',tipo_contrato:'Contrato',horas_semana:'Horas semanales',direccion:'Dirección',codigo_postal:'Código postal',poblacion:'Población',pais:'País',talla_camiseta:'Camiseta',talla_sudadera:'Sudadera',username:'Usuario'};
  const r=Object.entries(campos).map(([k,label])=>[label,d[k] || 'Pendiente']);
  for(const [k,label] of [['dni','DNI/NIE'],['iban','IBAN']]) r.push([label,d[k] ? '•••• '+String(d[k]).slice(-4) : 'Pendiente']);
  return r;
@@ -30,8 +30,14 @@ export function registrarConfirmaciones(app,{auth,pool,validar,crear,enviar,list
   const {rows}=await pool.query("SELECT id,datos,estado,respuesta,envio,vence_en FROM rrhh_confirmaciones WHERE estado IN ('pendiente','corregir') ORDER BY id DESC LIMIT 100");res.json({ok:true,data:rows});
  }));
  app.post('/api/rrhh/confirmaciones/:id/recuperar',auth,seguro(async(req,res)=>{
-  const {rows:[r]}=await pool.query("UPDATE rrhh_confirmaciones SET estado='cancelada' WHERE id=$1 AND estado IN ('pendiente','corregir') RETURNING datos",[req.params.id]);
-  if(!r)throw Error('Esta solicitud ya no está pendiente.');res.json({ok:true,datos:r.datos});
+  const c=await pool.connect();try{
+   await c.query('BEGIN');
+   const {rows:[r]}=await c.query("UPDATE rrhh_confirmaciones SET estado='cancelada' WHERE id=$1 AND estado IN ('pendiente','corregir') RETURNING datos,autor_id",[req.params.id]);
+   if(!r)throw Error('Esta solicitud ya no está pendiente.');
+   const ids=r.datos.documentos_identidad||[];
+   if(ids.length)await c.query('UPDATE rrhh_identidad_adjuntos SET autor_id=$1, creado_en=NOW() WHERE id=ANY($2::uuid[]) AND autor_id=$3 AND worker_id IS NULL',[req.user.id,ids,r.autor_id]);
+   await c.query('COMMIT');res.json({ok:true,datos:r.datos});
+  }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
  }));
  const tokenReq=req=>{const t=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(t))throw Error('Enlace no válido o caducado.');return hashToken(t);};
  app.post('/api/alta-personal/revisar',seguro(async(req,res)=>{

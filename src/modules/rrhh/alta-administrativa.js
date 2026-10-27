@@ -1,5 +1,5 @@
 // Datos administrativos: ninguna dependencia de correo ni de WhatsApp.
-export const CAMPOS_PRIVADOS = ['direccion', 'iban', 'tipo_jornada', 'tipo_contrato', 'talla_ropa', 'talla_camiseta', 'talla_sudadera'];
+export const CAMPOS_PRIVADOS = ['direccion', 'codigo_postal', 'poblacion', 'pais', 'iban', 'tipo_jornada', 'tipo_contrato', 'talla_ropa', 'talla_camiseta', 'talla_sudadera'];
 export const puedeVerPrivado = (rol) => ['rrhh', 'direccion'].includes(rol);
 export function fechaValida(v) {
   const d = new Date(v + 'T12:00:00Z');

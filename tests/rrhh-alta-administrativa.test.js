@@ -1,3 +1,4 @@
+import { adjuntarIdentidad } from '../src/modules/rrhh/documentos-identidad.js';
 import { generarPinProvisional } from '../src/modules/rrhh/pin-provisional.js';
 import { guardarHorasFicha } from '../src/modules/rrhh/horas-ficha.js';
 import { test } from 'node:test';
@@ -32,11 +33,11 @@ test('conversaciones conservan fecha, interlocutor, canal y acuerdos; fecha futu
 const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
 function altaService() {
   const queries=[];
-  const query=async(sql,args=[])=>{queries.push({sql,args}); return {rows:sql.includes('INSERT INTO users')?[{id:7}]:[]};};
-  const env={guardarPinVisible:()=>null,LLAVERO:{actual:null},generarPinProvisional,validarAlta,sanearDatosAlta,puedeVerPrivado,CAMPOS_PRIVADOS,validarFormatoPin,INV_LOCALES:['Local de prueba'],hoyISO:()=>hoy,rrhhPuedeLocal:()=>true,toPositional:x=>x,isoConOffset:()=>hoy,passwordInicial:x=>x,bcrypt:{hash:async x=>'hashed:'+x}};
+  const query=async(sql,args=[])=>{queries.push({sql,args}); return {rows:sql.includes('INSERT INTO users')?[{id:7}]:sql.includes('SELECT id,cara,worker_id')?[{id:args[0],cara:'frontal',worker_id:null}]:[]};};
+  const env={adjuntarIdentidad,guardarPinVisible:()=>null,LLAVERO:{actual:null},generarPinProvisional,validarAlta,sanearDatosAlta,puedeVerPrivado,CAMPOS_PRIVADOS,validarFormatoPin,INV_LOCALES:['Local de prueba'],hoyISO:()=>hoy,rrhhPuedeLocal:()=>true,toPositional:x=>x,isoConOffset:()=>hoy,passwordInicial:x=>x,bcrypt:{hash:async x=>'hashed:'+x}};
   const start=server.indexOf('async function rrhhCrearTrabajador('), end=server.indexOf('// Envuelve el servicio',start);
   vm.runInNewContext(server.slice(start,end),env);
-  return {queries,run:(data,rol='rrhh')=>env.rrhhCrearTrabajador({req:{user:{username:'rrhh',rol}},datos:{nombre:base.nombre,username:'persona',local:base.local,...data},client:{query}})};
+  return {queries,run:(data,rol='rrhh')=>env.rrhhCrearTrabajador({req:{user:{id:3,username:'rrhh',rol}},datos:{nombre:base.nombre,username:'persona',local:base.local,...data},client:{query}})};
 }
 test('alta real guarda los nuevos campos y PIN elegido hasheado en la misma transacción',async()=>{
   const a=altaService(); const r=await a.run({...base,telefono:'600000001',email:'prueba@example.org',direccion:'Calle de prueba',iban:'',talla_ropa:'M',pin:'4917',horas_semana:20});
@@ -146,4 +147,10 @@ test('camiseta y sudadera se guardan por separado y solo aceptan XS a XXL',async
  assert.ok(q.sql.includes('talla_camiseta'));assert.ok(q.sql.includes('talla_sudadera'));assert.ok(q.args.includes('S'));assert.ok(q.args.includes('XL'));
  assert.equal(sanearDatosAlta({talla_camiseta:'XXXL'},hoy).ok,false);
  assert.equal(sanearDatosAlta({talla_sudadera:'xs'},hoy).datos.talla_sudadera,'XS');
+});
+
+test('alta vincula el DNI privado junto con la ficha y conserva los componentes de dirección',async()=>{
+ const a=altaService();const r=await a.run({documentos_identidad:'["11111111-1111-4111-8111-111111111111"]',codigo_postal:'17300',poblacion:'Blanes',pais:'España'});
+ assert.equal(r.ok,true);const doc=a.queries.find(q=>q.sql.includes('INSERT INTO hr_documentos'));assert.equal(doc.args[0],7);
+ const datos=a.queries.find(q=>q.sql.includes('INSERT INTO rrhh_datos_alta'));for(const v of ['17300','Blanes','España'])assert.ok(datos.args.includes(v));
 });

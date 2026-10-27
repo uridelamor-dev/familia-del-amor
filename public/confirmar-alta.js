@@ -1,7 +1,7 @@
 (() => {
  const token=location.hash.slice(1);history.replaceState(null,'',location.pathname);
  const estado=document.querySelector('#estado'),form=document.querySelector('#respuesta'),datos=document.querySelector('#datos'),nota=document.querySelector('#nota');
- const grupos=[['Sobre ti',['Nombre completo','Nacimiento','Teléfono','Correo','Dirección','DNI/NIE']],['Tu incorporación',['Local','Categoría','Incorporación','Jornada','Contrato','Horas semanales']],['Uniforme y acceso',['Camiseta','Sudadera','Usuario','IBAN']]];
+ const grupos=[['Sobre ti',['Nombre completo','Nacimiento','Teléfono','Correo','Dirección','Código postal','Población','País','DNI/NIE']],['Tu incorporación',['Local','Categoría','Incorporación','Jornada','Contrato','Horas semanales']],['Uniforme y acceso',['Camiseta','Sudadera','Usuario','IBAN']]];
  const fechas=new Set(['Nacimiento','Incorporación']);
  function presentar(label,value){if(value==='Pendiente')return 'Pendiente de completar';if(fechas.has(label)&&/^\d{4}-\d{2}-\d{2}$/.test(value))return new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'long',year:'numeric'}).format(new Date(value+'T12:00:00'));return ({completa:'Completa',parcial:'Parcial',por_horas:'Por horas',indefinido:'Indefinido',temporal:'Temporal',fijo_discontinuo:'Fijo discontinuo'})[value]||value;}
  async function api(ruta,body={}){const r=await fetch('/api/alta-personal/'+ruta,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw Error(j.error||'No se pudo completar. Inténtalo de nuevo.');return j;}

@@ -1962,3 +1962,25 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 @media(max-width:540px){.rr-ficha-tabs{gap:0 14px}.rr-ficha-tabs button{font-size:12px;padding:10px 0}}
 
 .rr-aviso-item{width:100%;text-align:left;background:none;color:var(--ink);border:0;cursor:pointer;font:inherit}.rr-aviso-item .t2{display:block}.rr-aviso-item:hover{background:var(--surface2)}
+
+/* Identidad y dirección en el mismo formulario de alta y edición. */
+.rr-worker-modal .field:has(.rr-identidad),.rr-worker-modal .field:has(.rr-direcciones){grid-column:1/-1}
+.rr-identidad{margin-top:12px;padding:14px;border:1px solid var(--line,#e1ded2);border-radius:14px;background:var(--bg,#f5f4ee)}
+.rr-identidad p{font-size:12px;line-height:1.5;margin:7px 0 12px}
+.rr-dni-caras{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.rr-dni-caras label{min-width:0;font-size:12px;display:flex;flex-direction:column;gap:6px}
+.rr-worker-modal .rr-dni-caras input{width:100%;min-width:0;height:auto;font-size:12px;padding:8px}
+.rr-dni-propuesta{display:flex;align-items:center;gap:10px;margin:12px 0}
+.rr-worker-modal .rr-dni-propuesta input{width:18px;height:18px;flex:none}
+.rr-dni-propuesta strong{display:block;overflow-wrap:anywhere}
+.rr-direcciones:empty{display:none}
+.rr-direcciones{font-size:12px;border-radius:10px;overflow:hidden;margin-top:4px}
+.rr-direccion-opcion{display:block;text-align:left;width:100%;border:0;border-bottom:1px solid var(--line,#ddd);background:var(--card,#fff);color:inherit;padding:12px;cursor:pointer}
+.rr-direccion-opcion:hover,.rr-direccion-opcion:focus{background:var(--bg,#f1f0ea)}
+.rr-direcciones img{margin:8px;display:block;max-width:120px}
+@media(max-width:540px){.rr-dni-caras{grid-template-columns:1fr}}
+.rr-worker-modal .promo-help[open]{display:block}
+.rr-admin-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+.rr-worker-modal .rr-dni-caras input::file-selector-button{max-width:100%;white-space:normal;border:1px solid var(--line,#ddd);border-radius:8px;background:var(--card,#fff);padding:6px;font:inherit;color:inherit}
+@media(max-width:540px){.rr-admin-grid{grid-template-columns:minmax(0,1fr)}}
+.rr-identidad [hidden]{display:none!important}
