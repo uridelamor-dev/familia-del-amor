@@ -81,9 +81,12 @@ export async function aplicarUnion(q,p,autor) {
   // La tabla antigua se mantiene por compatibilidad con instalaciones anteriores.
   await q('DELETE FROM facturas_proveedor_pago WHERE prov_clave=ANY($1)',[todas]);
   if(p.pago) await q('INSERT INTO facturas_proveedor_pago(prov_clave,proveedor,dias,dia_pago,modo,meses_despues,domiciliado,actualizado_por,actualizado_en) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',[p.b,p.destino,p.pago.dias,p.pago.dia_pago,p.pago.modo,p.pago.meses_despues,p.pago.domiciliado,autor,stamp]);
-  for(const r of p.snapshot.facturas_proveedor_alias) await q('UPDATE facturas_proveedor_alias SET proveedor=$1 WHERE clave=$2',[p.destino,r.clave]);
+  for(const r of p.snapshot.facturas_proveedor_alias) {
+    if(p.nifElegido) await q('UPDATE facturas_proveedor_alias SET proveedor=$1,nif=$2 WHERE clave=$3',[p.destino,p.nifElegido,r.clave]);
+    else await q('UPDATE facturas_proveedor_alias SET proveedor=$1 WHERE clave=$2',[p.destino,r.clave]);
+  }
   // Con NIF contradictorios se aprende por nombre, sin extender la unión a otras empresas.
-  const anchor = p.nifs.length === 1 ? p.nifs[0] : null;
+  const anchor = p.nifElegido || (p.nifs.length === 1 ? p.nifs[0] : null);
   for(const key of new Set([...todas,...nombres.map(claveProveedor)])) await q(`INSERT INTO facturas_proveedor_alias(clave,nif,proveedor,autor,creado_en) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(clave) DO UPDATE SET proveedor=excluded.proveedor,nif=excluded.nif,autor=excluded.autor`,[key,anchor,p.destino,autor,stamp]);
   await q("INSERT INTO config(key,value) VALUES ('facturas_anuales_reintentar',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[stamp]);
   return resumenUnion(p);

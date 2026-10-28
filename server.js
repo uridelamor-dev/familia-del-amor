@@ -1,3 +1,9 @@
+import {agruparDesglose,gastoDesglosado} from './src/modules/dashboard/desglose.js';
+import {AVISOS_SCHEMA,registrarBandeja} from './src/modules/avisos/bandeja.js';
+import {cargarAvisosFuente} from './src/modules/avisos/fuentes.js';
+import {cargarProgresoFichajes} from './src/modules/horarios/progreso-fichajes.js';
+import {decisionAvisos,guardarDecisionAvisos,avisosAceptados,huellaRevision,reabrirHistoricoModificado} from './src/modules/facturas/avisos-memoria.js';
+import {prepararReglaLocal,guardarReglaLocal,registrarMemoria} from './src/modules/facturas/memoria.js';
 import {prepararUnionGrupo,resumenGrupo,ejecutarUnionGrupo} from './src/modules/facturas/unir-proveedores-grupo.js';
 import { filtroRevision, documentoEnAmbito } from './src/modules/facturas/ambito-revision.js';
 import { resolverDuplicado } from './src/modules/facturas/duplicados-decision.js';
@@ -838,6 +844,7 @@ async function initDB() {
     `);
 
     await client.query(GESTION_SCHEMA);
+    await client.query(AVISOS_SCHEMA);
 
     // Mantenimiento PREVENTIVO: lo que hay que hacer cada tanto («los filtros de aire de
     // Blanes, cada 3 meses»). Un plan NO es una incidencia: es la regla que, cuando toca,
@@ -3188,6 +3195,10 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
 });
 
 // Editar los campos de una factura (corregir lo que extrajo la IA). Re-proyecta a los Sheets.
+registrarMemoria(app,{auth:requireAuth(['direccion','contabilidad']),dbAll,dbGet,dbRun,
+ global:req=>!localesScope({...req,query:{}}).length,
+ locales:()=>dbAll('SELECT local,empresa,local_contable FROM facturas_locales')});
+
 app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const antes = await dbGet("SELECT * FROM facturas WHERE id = ?", [req.params.id]);
@@ -3201,6 +3212,15 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     }
     if(req.body.periodo_facturado && !/^\d{4}-(0[1-9]|1[0-2])$/.test(req.body.periodo_facturado)) return res.status(400).json({error:"Periodo no válido"});
     if(!antes)return res.status(404).json({error:'Factura no encontrada'});
+    if(!documentoEnAmbito(antes,localesScope({...req,query:{}})))return res.status(403).json({error:'Sin acceso a esta factura'});
+    if(req.body.local&&!documentoEnAmbito({local:req.body.local},localesScope({...req,query:{}})))return res.status(403).json({error:'Sin acceso al local de destino'});
+    let reglaLocal;
+    if(req.body.recordar_local===true){
+      if(localesScope({...req,query:{}}).length)return res.status(403).json({error:'Guardar reglas compartidas requiere acceso global.'});
+      const establecimientos=await dbAll('SELECT local,empresa,local_contable FROM facturas_locales');
+      try{reglaLocal=prepararReglaLocal({...antes,...req.body},establecimientos,req.user.nombre||req.user.username);}
+      catch(e){return res.status(400).json({error:e.message});}
+    }
     let ivaValidado;
     if(req.body.iva_desglose!==undefined) {
       ivaValidado=validarIva(req.body.iva_desglose,{...antes,...req.body});
@@ -3213,11 +3233,36 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     } else if(['base_imponible','cuota_iva','total'].some(k=>req.body[k]!==undefined && Number(req.body[k])!==Number(antes[k]))) {
       sets.push("iva_estado = 'revisar'", "iva_aviso = 'Importes modificados: revisa el desglose de IVA.'");
     }
+    if(!sets.length&&(reglaLocal||req.body.confirmar_avisos===true))sets.push('id=id');
     if (!sets.length) return res.json({ ok: true });
     if(req.body.pagado !== undefined) sets.push("pago_origen='manual'", "pago_automatico=0");
     if(req.body.periodo_facturado !== undefined) sets.push("periodo_origen='manual'");
     vals.push(req.params.id);
-    await dbRun(`UPDATE facturas SET ${sets.join(", ")}, sheet_synced = 0 WHERE id = ?`, vals);
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const bloqueada=(await client.query('SELECT * FROM facturas WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+      if(JSON.stringify(bloqueada)!==JSON.stringify(antes)){
+        await client.query('ROLLBACK');
+        return res.status(409).json({error:'La factura cambió mientras guardabas. Ábrela de nuevo para revisar los datos actuales.'});
+      }
+      const run=async(sql,p)=>(await client.query(toPositional(sql),p)).rows[0];
+      await run(`UPDATE facturas SET ${sets.join(", ")}, sheet_synced = 0 WHERE id = ?`,vals);
+      if(reglaLocal)await guardarReglaLocal(run,reglaLocal);
+      if(req.body.confirmar_avisos===true){
+        const actual=(await client.query('SELECT * FROM facturas WHERE id=$1',[req.params.id])).rows[0];
+        let avisos=[];try{avisos=JSON.parse(antes.revisar||'[]');}catch{}
+        if(!Array.isArray(avisos))avisos=[];
+        await guardarDecisionAvisos(run,actual.id,decisionAvisos(actual,avisos,req.user.nombre||req.user.username));
+        await run('UPDATE facturas SET revisar=NULL WHERE id=?',[actual.id]);
+      }
+      // Una decisión anterior solo se reabre si cambia lo que se comprobó.
+      const revisada=(await client.query('SELECT * FROM facturas WHERE id=$1',[req.params.id])).rows[0];
+      if(huellaRevision(antes)!==huellaRevision(revisada)){
+        await run("UPDATE facturas_repaso_documentos SET revision_humana=NULL,estado='revisar',resultado=jsonb_build_object('avisos',jsonb_build_array(jsonb_build_object('texto','Los datos han cambiado después de la revisión. Comprueba la corrección actual.'))) WHERE origen='factura' AND documento_id=? AND revision_humana IS NOT NULL",[req.params.id]);
+      }
+      await client.query('COMMIT');
+    }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
     await ficAuditar('facturas',req.params.id,'correccion',req.user.nombre||req.user.username,{local:antes?.local,detalle:{antes,campos:allowed.filter(k=>req.body[k]!==undefined),despues:await dbGet('SELECT * FROM facturas WHERE id = ?',[req.params.id])}});
     res.json({ ok: true });
     // Re-proyectar (fondo, no fatal): la pestaña vieja y la nueva si cambió local/fecha, + maestro.
@@ -3589,9 +3634,12 @@ app.post('/api/facturas/repaso-unico/iniciar',requireAuth(["direccion", "contabi
 });
 app.get('/api/facturas/repaso-unico/resultados',requireAuth(["direccion", "contabilidad"]),async(req,res,next)=>{
  try{
+  await reabrirHistoricoModificado(dbRun);
   const pagina=Math.max(0,Math.min(100000,parseInt(req.query.pagina)||0));
   const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa},{local:"CASE origen WHEN 'factura' THEN (SELECT f.local FROM facturas f WHERE f.id=documento_id) WHEN 'recepcion' THEN (SELECT r.local FROM facturas_recepciones r WHERE r.id=documento_id) END",empresa:"CASE origen WHEN 'factura' THEN (SELECT f.empresa FROM facturas f WHERE f.id=documento_id) WHEN 'pendiente' THEN (SELECT p.empresa_detectada FROM facturas_pendientes p WHERE p.id=documento_id) ELSE (SELECT COALESCE(r.resultado->'datos'->>'empresa',r.resultado->'datos'->>'empresa_detectada') FROM facturas_recepciones r WHERE r.id=documento_id) END"});
-  const filas=await dbAll(`SELECT origen,documento_id,guardado,estado,resultado,prioridad,revision_humana FROM facturas_repaso_documentos WHERE (estado IN ('revisar','error','sin_original') OR revision_humana IS NOT NULL OR (estado='sin_discrepancias' AND EXISTS(SELECT 1 FROM facturas_repaso_unico WHERE id=1 AND fase='muestra'))) ${ambito.sql} ORDER BY (revision_humana IS NOT NULL),prioridad,documento_id,origen LIMIT 51 OFFSET ?`,[...ambito.params,pagina*50]);
+  const resueltas=req.query.resueltas==='1';
+  const estadoRevision=resueltas?'revision_humana IS NOT NULL':"revision_humana IS NULL AND (estado IN ('revisar','error','sin_original') OR (estado='sin_discrepancias' AND EXISTS(SELECT 1 FROM facturas_repaso_unico WHERE id=1 AND fase='muestra')))";
+  const filas=await dbAll(`SELECT origen,documento_id,guardado,estado,resultado,prioridad,revision_humana FROM facturas_repaso_documentos WHERE ${estadoRevision} ${ambito.sql} ORDER BY (revision_humana IS NOT NULL),prioridad,documento_id,origen LIMIT 51 OFFSET ?`,[...ambito.params,pagina*50]);
   res.json({ok:true,data:filas.slice(0,50),siguiente:filas.length>50});
  }catch(e){next(e);}
 });
@@ -3604,6 +3652,7 @@ app.post('/api/facturas/repaso-unico/control',requireAuth(["direccion", "contabi
 });
 app.get('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direccion", "contabilidad"]),async(req,res,next)=>{
  try{
+  await reabrirHistoricoModificado(dbRun);
   const tablas={factura:'facturas',pendiente:'facturas_pendientes',recepcion:'facturas_recepciones'};
   const {origen,id}=req.params;if(!tablas[origen]||!/^\d+$/.test(id))return res.status(400).json({error:'Documento no válido'});
   const item=await dbGet('SELECT * FROM facturas_repaso_documentos WHERE origen=? AND documento_id=?',[origen,id]);
@@ -7491,8 +7540,11 @@ const REPASO_MAX = 20000;
 
 async function repasoCargar(scope,empresa="") {
   const ambito=filtroRevision({locales:Array.isArray(scope)?scope:scope?[scope]:[],empresa});
-  return dbAll(`SELECT ${REPASO_COLS} FROM facturas WHERE 1=1 ${ambito.sql}
+  const filas=await dbAll(`SELECT ${REPASO_COLS} FROM facturas WHERE 1=1 ${ambito.sql}
                 ORDER BY id LIMIT ${REPASO_MAX}`, ambito.params);
+  const decisiones=await dbAll("SELECT key,value FROM config WHERE key LIKE 'contabilidad_revision_%'");
+  const mapa=new Map(decisiones.flatMap(r=>{try{return [[r.key,JSON.parse(r.value)]];}catch{return [];}}));
+  return filas.map(f=>({...f,avisos_aceptados:avisosAceptados(f,mapa.get('contabilidad_revision_'+f.id))}));
 }
 
 // Mirar. No escribe nada: dice qué cambiaría y cuánto.
@@ -8491,6 +8543,17 @@ const addDaysISO = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUT
 
 // Métricas del dashboard por RANGO de fechas [from,to] (reservas + ventas). Las ventas se consultan
 // EN VIVO a Ágora (cualquier rango, sin tope de histórico); si el TPV está cerrado, usa ventas_diarias.
+app.get('/api/dashboard/gastos',requireAuth(['direccion','encargado','contabilidad']),async(req,res)=>{
+ try{
+  const {from,to}=req.query;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(from||'')||!/^\d{4}-\d{2}-\d{2}$/.test(to||'')||from>to)return res.status(400).json({error:'Rango inválido'});
+  const locales=localesScope(req),barras=[...new Set(locales.flatMap(l=>barrasDelCentro(l,'compras')))];
+  const base=await dbAll(`SELECT local,COALESCE(SUM(total),0)::float total FROM facturas WHERE ${SIN_ALBARANES} AND COALESCE(reparto,'') <> 'empresa' AND fecha >= ? AND fecha <= ?${barras.length?' AND local = ANY(?)':''} GROUP BY local`,[from,to,...(barras.length?[barras]:[])]);
+  const empresa=await gastoDeEmpresaPorLocal(from,to,{estricto:true});
+  res.json({ok:true,data:{from,to,...gastoDesglosado(base,empresa,locales)}});
+ }catch(e){res.status(500).json({error:'No se pudo cargar el gasto del periodo'});}
+});
+
 app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
   try {
     // Ámbito por local: un usuario con local asignado (y rol ≠ dirección) solo ve SU local.
@@ -8556,16 +8619,16 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
 // misma cuenta para todos, y hacerla dentro del bucle eran tres consultas más por local en la
 // pantalla que ya iba lenta. Devuelve null si no hay nada de empresa en el rango, y entonces no
 // se paga ninguna consulta extra.
-async function gastoDeEmpresaPorLocal(from, to) {
+async function gastoDeEmpresaPorLocal(from, to, {estricto=false} = {}) {
   const deEmpresa = await dbAll(
     `SELECT empresa, COALESCE(SUM(total),0)::float AS total FROM facturas
       WHERE ${SIN_ALBARANES} AND reparto = 'empresa' AND fecha >= ? AND fecha <= ? GROUP BY empresa`,
-    [from, to]).catch(() => []);
+    [from, to]).catch(e => {if(estricto)throw e;return [];});
   if (!deEmpresa.length) return null;
   const [locEmp, ventas] = await Promise.all([
-    dbAll(`SELECT local, empresa FROM facturas_locales`).catch(() => []),
+    dbAll(`SELECT local, empresa FROM facturas_locales`).catch(e => {if(estricto)throw e;return [];}),
     dbAll(`SELECT local, COALESCE(SUM(ventas),0)::float AS ventas FROM ventas_diarias
-            WHERE dia >= ? AND dia <= ? GROUP BY local`, [from, to]).catch(() => []),
+            WHERE dia >= ? AND dia <= ? GROUP BY local`, [from, to]).catch(e => {if(estricto)throw e;return [];}),
   ]);
   const r = imputarGastoEmpresa({ base: [], deEmpresa, locEmp, ventas });
   return {
@@ -8588,6 +8651,7 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
     const hoy = hoyISO();
     let ventasSerie = [], hoyEnVivo = false, fuenteVentas = "bd";
     let ventasParcial = false;
+    const seriesLocal=new Map();
     // Hoy, ayer y esta semana usan la MISMA instantánea por día y local.
     // No sumar copias del día de hoy persistidas en BD a su lectura en vivo.
     const inicioReciente = addDaysISO(hoy, -7);
@@ -8600,16 +8664,26 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
       const respaldo = await dbAll(`SELECT local, dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ? AND local = ANY(?)`, [recientesDesde, to, barras]);
       const recientes = ventasRecientes({ vivo, respaldo, locales: barras, from: recientesDesde, to, hoy });
       ventasSerie = recientes.serie;
+      for(const l of barras){const r=ventasRecientes({vivo,respaldo,locales:[l],from:recientesDesde,to,hoy});seriesLocal.set(l,{serie:r.serie,parcial:r.parcial});}
       ventasParcial = recientes.parcial;
       hoyEnVivo = recientes.hoyEnVivo;
       fuenteVentas = "live";
     }
     if (from < inicioReciente) {
       const finHistorico = to < inicioReciente ? to : addDaysISO(inicioReciente, -1);
-      const live = await ventasRangoLive(local, from, finHistorico);
-      const historico = live || await dbAll(`SELECT dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ?${lf} ORDER BY dia`, [from, finHistorico, ...lp]);
-      ventasSerie = [...historico, ...ventasSerie];
-      if (live) fuenteVentas = "live";
+      // Consultar cada barra una vez: el total y el desglose salen de las mismas lecturas.
+      const historicos=await Promise.all(barras.map(async l=>{
+       const live=await ventasRangoLive(l,from,finHistorico);
+       const rows=live||await dbAll('SELECT dia,ventas::float ventas,tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ? AND local = ? ORDER BY dia',[from,finHistorico,l]);
+       const previo=seriesLocal.get(l)||{serie:[],parcial:false};
+       seriesLocal.set(l,{serie:[...rows,...previo.serie],parcial:previo.parcial||!rows.length});
+       if(live)fuenteVentas='live';
+       return rows;
+      }));
+      const dias=new Map();for(const r of historicos.flat()){const d=dias.get(r.dia)||{dia:r.dia,ventas:0,tickets:0};d.ventas+=Number(r.ventas)||0;d.tickets+=Number(r.tickets)||0;dias.set(r.dia,d);}
+      ventasSerie=[...[...dias.values()].sort((a,b)=>String(a.dia).localeCompare(String(b.dia))),...ventasSerie];
+      ventasParcial ||= [...seriesLocal.values()].some(r=>r.parcial);
+
     }
     // Gastos (facturas) del MISMO rango, para cuadrar el resultado (ventas − gastos).
     //
@@ -8629,7 +8703,7 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
     return {
       from, to, hoy, hoyEnVivo,
       reservas: { total: reservasTotal, personas: personasTotal, serie: resRows },
-      ventas: { disponible: ventasSerie.length > 0, parcial: ventasParcial, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie, fuente: fuenteVentas },
+      ventas: { disponible: ventasSerie.length > 0, parcial: ventasParcial, total: Math.round(ventasTotal * 100) / 100, tickets: ticketsTotal, ticket_medio: ticketsTotal ? Math.round(ventasTotal / ticketsTotal * 100) / 100 : 0, serie: ventasSerie, fuente: fuenteVentas, porLocal: agruparDesglose([...seriesLocal].map(([local,r])=>({local,total:r.serie.reduce((s,d)=>s+(Number(d.ventas)||0),0),disponible:r.serie.length>0,parcial:r.parcial}))) },
       gastos: {
         // `disponible` mira también la parte imputada: un local puede no tener ninguna factura
         // propia en el rango y aun así cargar con su trozo de la gestoría.
@@ -9261,6 +9335,19 @@ registrarIdentidad(app,{
  }
 });
 
+// La campana no hereda todos los módulos visibles: cada rol tiene su propia bandeja.
+function localesAvisos(req,fuente){
+ if(req.user.rol==='direccion'||(req.user.rol==='rrhh'&&['rrhh','candidaturas'].includes(fuente)))return [];
+ const permitidos=localesDe(req.user);
+ const ambito=['rrhh','candidaturas'].includes(fuente)?'personal':['facturas','pendientes'].includes(fuente)?'compras':null;
+ return [...new Set(permitidos.flatMap(l=>ambito?barrasDelCentro(l,ambito):[l]))].sort();
+}
+registrarBandeja(app,{
+ auth:requireAuth(['direccion','rrhh','contabilidad','marketing','encargado']),pool,
+ ambito:(req,fuente)=>JSON.stringify(localesAvisos(req,fuente)),
+ cargar:(client,req,fuente)=>cargarAvisosFuente(client,fuente,{locales:localesAvisos(req,fuente),hoy:hoyISO(),whatsappConnected:isReady()})
+});
+
 app.get('/api/rrhh/avisos-datos',requireAuth(RRHH_ROLES),async(req,res)=>{
  try{
   res.set('Cache-Control','no-store');
@@ -9663,11 +9750,23 @@ app.get("/api/horarios/semana", requireAuth(HORARIOS_ROLES), async (req, res) =>
     const descansos = descansosPorDia({ dias, trabajadores: equipo, asignaciones, ausencias, areas });
     const contexto = await horContexto(local, lunes, dias);
     const operativa = resumenOperativo({ dias, equipo, asignaciones, areas, tramos, ...contexto });
-    res.json({ ok: true, local, lunes, dias, semana: semana || null, areas, tramos, equipo, asignaciones, ausencias, descansos, operativa });
+    const progreso=await cargarProgresoFichajes(dbAll,asignaciones,ficLocales(local));
+    res.json({ ok: true, local, lunes, dias, semana: semana || null, areas, tramos, equipo, asignaciones, ausencias, descansos, operativa, progreso });
   } catch (e) {
     console.error("[horarios] semana:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo cargar la semana" });
   }
+});
+
+// Lectura ligera para refrescar las barras sin reconstruir el cuadrante ni sus editores.
+app.get('/api/horarios/semana/:id/progreso',requireAuth(HORARIOS_ROLES),async(req,res)=>{
+ try{
+  const semana=await dbGet('SELECT id,local FROM hor_semanas WHERE id=?',[req.params.id]);
+  if(!semana)return res.status(404).json({error:'Semana no encontrada'});
+  if(!rrhhPuedeLocal(req,semana.local))return res.status(403).json({error:'Sin acceso a este establecimiento'});
+  const asignaciones=await dbAll('SELECT * FROM hor_asignaciones WHERE semana_id=?',[semana.id]);
+  res.json({ok:true,progreso:await cargarProgresoFichajes(dbAll,asignaciones,ficLocales(semana.local))});
+ }catch(e){res.status(500).json({error:'No se pudo actualizar el progreso de fichajes'});}
 });
 
 // Crea el borrador de una semana. Idempotente: si ya existe, lo devuelve.

@@ -1,3 +1,4 @@
+import {agruparDesglose} from '../src/modules/dashboard/desglose.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -84,7 +85,7 @@ for (const caso of [
       } }),
       hoyISO: () => fecha, addDaysISO: sumarDias,
       INV_LOCALES: ['Blanes'], LOCALES_SIN_PUBLICO: new Set(), barrasDelCentro: l => [l],
-      ventasRecientes, completarVentasRecientes,
+      ventasRecientes, completarVentasRecientes, agruparDesglose,
       ventasVivoData: async () => ({ hoy: fecha, locales: [{ local: 'Blanes', dias: filas.filter(f => f.dia >= inicioReciente) }] }),
       dbAll: async () => [], dbGet: async () => ({ n: 0, total: 0, base: 0 }),
       SIN_ALBARANES: 'TRUE', resultadoRegistrado: () => null,
@@ -94,6 +95,7 @@ for (const caso of [
     const mes = await ctx.periodoDeLocal({ from: inicio, to: hasta }, null);
     assert.equal(mes.ventas.total, filas.reduce((s, f) => s + f.ventas, 0));
     assert.equal(mes.ventas.parcial, false);
+    assert.equal(mes.ventas.porLocal.reduce((s,r)=>s+r.total,0),mes.ventas.total);
     assert.equal(mes.hoyEnVivo, hasta === fecha);
     assert.deepEqual(Array.from(mes.ventas.serie, f => f.dia), filas.map(f => f.dia));
     if (inicio < inicioReciente) assert.deepEqual(pedidos[0], [inicio, hasta < inicioReciente ? sumarDias(hasta, 1) : inicioReciente]);

@@ -1,3 +1,4 @@
+import {reabrirHistoricoModificado} from '../../src/modules/facturas/avisos-memoria.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {conEsquema,disponible,motivoSalto} from '../helpers/pgtmp.js';
@@ -85,6 +86,7 @@ test('Rutas de avisos ejecutan SQL real y filtran empresa/local actuales',async 
  CREATE TABLE facturas_locales(cif TEXT);
  CREATE TABLE facturas_repaso_documentos(origen TEXT,documento_id INT,guardado JSONB,estado TEXT,resultado JSONB,prioridad INT,revision_humana JSONB);
  CREATE TABLE facturas_repaso_unico(id INT,fase TEXT);
+ CREATE TABLE facturas_repaso_decisiones(id INT,despues JSONB);
  INSERT INTO facturas VALUES(1,'Lloret','A','Uno','B12345678',100,NULL),(2,'Girona','A','Dos','B12345678',200,NULL),(3,'Lloret','B','Tres','B12345678',300,NULL);
  INSERT INTO facturas_repaso_documentos SELECT 'factura',id,'{"local":"Obsoleto"}','revisar',NULL,1,NULL FROM facturas;`);
  const invoke=async(path,query)=>{
@@ -92,12 +94,33 @@ test('Rutas de avisos ejecutan SQL real y filtran empresa/local actuales',async 
   const marker=server.includes(`app.get('${path}'`)?`app.get('${path}'`:`app.get("${path}"`;
   const a=server.indexOf(marker),b=server.indexOf('\n});',a)+4;
   assert.ok(a>=0);
-  runInNewContext(server.slice(a,b),{app:{get:(_p,_a,h)=>handler=h},requireAuth:()=>()=>{},filtroRevision,localesScope:r=>r.query.locales?.split(',')||[],dbAll:db.all,dbGet:db.get,gruposDuplicados:filas=>filas,console});
+  runInNewContext(server.slice(a,b),{app:{get:(_p,_a,h)=>handler=h},requireAuth:()=>()=>{},filtroRevision,localesScope:r=>r.query.locales?.split(',')||[],dbAll:db.all,dbGet:db.get,dbRun:db.run,reabrirHistoricoModificado,gruposDuplicados:filas=>filas,console});
   await handler({query,user:{rol:'contabilidad'}},{json:j=>out=j,status:()=>({json:j=>{throw Error(JSON.stringify(j));}})},e=>{throw e;});return out;
  };
  const r=await invoke('/api/facturas/repaso-unico/resultados',{empresa:'A',locales:'Lloret'});
  assert.deepEqual(r.data.map(r=>Number(r.documento_id)),[1],'usa el local actual, no la instantánea antigua');
+ await db.run(`UPDATE facturas_repaso_documentos SET revision_humana='{"autor":"Silvia"}' WHERE documento_id=1`);
+ assert.deepEqual((await invoke('/api/facturas/repaso-unico/resultados',{empresa:'A',locales:'Lloret'})).data,[],'la revisión resuelta desaparece de pendientes');
+ assert.deepEqual((await invoke('/api/facturas/repaso-unico/resultados',{empresa:'A',locales:'Lloret',resueltas:'1'})).data.map(r=>Number(r.documento_id)),[1],'se conserva en resueltas');
  const proveedores=await invoke('/api/facturas/proveedores-duplicados',{empresa:'A',locales:'Lloret'});
  assert.deepEqual(proveedores.grupos.map(p=>p.proveedor),['Uno']);
+ }finally{await db.fin();}
+});
+
+test('Unir exige escoger CIF y lo recuerda sin reescribir documentos originales',async t=>{
+ if(!await disponible())return t.skip(motivoSalto());const {db,q}=await setup();
+ try{
+ const nombres=['Primero','Segundo'];
+ await q("INSERT INTO facturas(proveedor,nif,total) VALUES('Primero','B12345678',10),('Segundo','B87654321',20)");
+ await q("INSERT INTO facturas_proveedor_alias(clave,nif,proveedor) VALUES('otra lectura','B12345678','Primero')");
+ const p=await prepararUnionGrupo(q,nombres);
+ assert.ok(p.faltan.includes('nif'));assert.equal(p.campos[1].id,'nif');
+ for(const nif of [undefined,'B99999999']){
+  await q('BEGIN');await assert.rejects(()=>ejecutarUnionGrupo(q,{nombres,revision:p.revision,elecciones:{nombre:'Segundo',nif}},'Silvia'),/Elige/);await q('ROLLBACK');
+ }
+ await q('BEGIN');await ejecutarUnionGrupo(q,{nombres,revision:p.revision,elecciones:{nombre:'Segundo',nif:'B87654321'}},'Silvia');await q('COMMIT');
+ const alias=(await q('SELECT * FROM facturas_proveedor_alias')).rows;
+ assert.ok(alias.every(a=>a.proveedor==='Segundo'&&a.nif==='B87654321'));
+ assert.deepEqual((await q('SELECT nif FROM facturas ORDER BY id')).rows.map(r=>r.nif),['B12345678','B87654321']);
  }finally{await db.fin();}
 });

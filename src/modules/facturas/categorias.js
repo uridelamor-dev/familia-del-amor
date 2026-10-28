@@ -167,14 +167,20 @@ const norm = (s) => String(s || "").trim().toLowerCase().normalize("NFD").replac
  */
 export function nombreCanonico({ proveedor, nif } = {}, alias = []) {
   const n = normNifProv(nif);
+  const unico = filas => {
+    const destinos = new Set(filas.map(a => claveProveedor(a.proveedor)));
+    return destinos.size === 1 ? filas[0].proveedor : null;
+  };
   if (n) {
-    const porNif = alias.find((a) => normNifProv(a.nif) && normNifProv(a.nif) === n);
-    if (porNif) return porNif.proveedor;
+    const porNif = alias.filter(a => normNifProv(a.nif) === n);
+    if (porNif.length) return unico(porNif);
   }
   const k = claveProveedor(proveedor);
   if (!k) return null;
-  const porNombre = alias.find((a) => a.clave === k);
-  return porNombre ? porNombre.proveedor : null;
+  const porNombre = alias.filter(a => a.clave === k);
+  // Un nombre conocido no debe ocultar un CIF nuevo o contradictorio.
+  if (n && porNombre.some(a => normNifProv(a.nif) && normNifProv(a.nif) !== n)) return null;
+  return unico(porNombre);
 }
 
 const normNifProv = (s) => String(s || "").replace(/[\s.\-/]/g, "").toUpperCase();

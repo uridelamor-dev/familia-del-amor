@@ -254,6 +254,15 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .horchip.desc.aus{border-style:solid;background:var(--warning-soft);border-color:transparent;color:var(--warning)}
 .horchip.desc.aus .hf{color:inherit;opacity:.75}
 .horslot.nodrop{min-height:44px;background:repeating-linear-gradient(135deg,transparent,transparent 7px,var(--surface2) 7px,var(--surface2) 8px)}
+/* Descansos: lectura compacta, manteniendo las mismas columnas del cuadrante. */
+.hortramo.desc{margin-bottom:12px}
+.hortramo.desc .hortramo-t{font-size:11px;letter-spacing:.03em;margin-bottom:4px}
+.hortramo.desc .horcell{padding:3px 6px}
+.hortramo.desc .horhead .dwd,.hortramo.desc .horhead .dnum{display:inline;font-size:11px;line-height:1.4}
+.hortramo.desc .horhead .dnum{margin-left:4px}
+.hortramo.desc .horslot{min-height:22px;gap:1px;background:var(--surface)}
+.hortramo.desc .horchip.desc{padding:0 3px;border:0;border-radius:3px;line-height:1.45;white-space:normal;overflow-wrap:anywhere}
+.hortramo.desc .horarea{font-size:10.5px;letter-spacing:.02em}
 /* El botón de añadir solo aparece al pasar por encima: si no, la rejilla se llena de "+" */
 .hormas{position:absolute;right:4px;bottom:4px;width:22px;height:22px;border-radius:7px;background:var(--surface2);color:var(--ink3);font-size:15px;line-height:1;opacity:0;transition:.12s}
 .horslot:hover .hormas{opacity:1}
@@ -280,6 +289,13 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
   .hord-et{flex:0 0 62px;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink3);font-weight:600;padding-top:5px}
   .hord-gente{display:flex;flex-wrap:wrap;gap:5px;flex:1}
   .hord-gente .horchip{min-height:32px;display:inline-flex;align-items:center}
+  .hord-tramo.desc{margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
+  .hord-tramo.desc .hord-th{margin-bottom:3px;font-size:11px}
+  .hord-tramo.desc .hord-area{margin-bottom:2px}
+  .hord-tramo.desc .hord-et{padding-top:1px}
+  .hord-tramo.desc .hord-gente{gap:2px 6px}
+  .hord-tramo.desc .horchip.desc{min-height:0;padding:1px 3px;border:0;border-radius:3px;white-space:normal;overflow-wrap:anywhere}
+
 }
 
 /* ── Fichajes ──────────────────────────────────────────────────────────────
@@ -2057,3 +2073,87 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 
 .ficha .fic-datos{display:block;min-width:0}
 .modal .prov-union-option{display:flex;align-items:flex-start;gap:10px}
+
+/* El fondo de cada turno avanza con el reloj; el nombre mantiene su contraste. */
+.horchip:has(.hor-progreso-host){position:relative;isolation:isolate}
+.hor-progreso-host{display:contents}
+.hor-progreso-fill{position:absolute;inset:0 auto 0 0;background:currentColor;opacity:.16;z-index:-1;pointer-events:none;transition:width .3s ease}
+.hor-progreso-pct{float:right;margin-left:6px;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums}
+.hord-gente .hor-progreso-pct{float:none;margin-left:6px}
+
+.avisos-nota{margin-top:0;line-height:1.5}
+.avisos-grupo{border:1px solid var(--border);border-radius:12px;margin-top:12px;overflow:hidden}
+.avisos-grupo>summary{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--surface2);font-weight:650;cursor:pointer}
+.avisos-grupo .rr-aviso-item{width:100%;text-align:left;white-space:normal;gap:12px}
+.avisos-grupo .grow{min-width:0;overflow-wrap:anywhere}
+.avisos-motivo{display:block;font-size:11px;color:var(--ink3);margin-top:5px}
+.avisos-motivo.crit,.avisos-error{color:var(--danger)}
+.avisos-vacio{padding:24px 12px;text-align:center}
+
+/* Entrada de documentos masivos: selección clara y revisión antes de guardar. */
+.modal.doc-upload-modal{width:620px;max-width:calc(100vw - 24px)}
+.doc-upload-modal .modal-b{padding:24px}
+.doc-upload-intro p{font-size:19px;font-weight:650;margin:0 0 8px}
+.doc-upload-intro>.mut{display:block;font-size:13px;line-height:1.6}
+.doc-upload-steps{list-style:none;display:flex;justify-content:space-between;gap:8px;padding:0;margin:22px 0;color:var(--mut);font-size:12px}
+.doc-upload-steps li{display:flex;align-items:center;gap:7px}
+.doc-upload-steps li>span{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--bg);border:1px solid var(--border);flex-shrink:0}
+.doc-upload-steps [aria-current]{color:var(--primary,#294c40);font-weight:650}
+.doc-upload-steps [aria-current]>span{background:#294c40;border-color:#294c40;color:white}
+.doc-upload-zone{position:relative;display:flex;align-items:center;flex-direction:column;gap:8px;padding:24px 16px;border:1px dashed #a6b7ac;border-radius:14px;background:rgba(41,76,64,.035);cursor:pointer;text-align:center}
+.doc-upload-zone:hover,.doc-upload-zone:focus-within{background:rgba(41,76,64,.07);border-color:#294c40}
+.doc-upload-zone:focus-within{outline:2px solid #294c40;outline-offset:3px}
+.doc-upload-zone input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.doc-upload-icon{display:grid;place-items:center;width:48px;height:48px;border-radius:12px;background:#e4ece6;color:#294c40;margin-bottom:4px}
+.doc-upload-icon svg{width:27px;height:27px}
+.doc-upload-zone strong{font-size:15px}
+.doc-upload-zone .mut{font-size:12px}
+.doc-upload-pick{margin-top:6px;pointer-events:none}
+.doc-upload-limits{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 14px;font-size:11px;color:var(--mut);line-height:1.5;margin:12px 0 22px}
+.doc-upload-limits b{font-weight:600}
+.doc-upload-footer{border-top:1px solid var(--border);padding-top:18px;display:flex;align-items:center;gap:20px;justify-content:space-between}
+.doc-upload-footer>.mut{font-size:12px;line-height:1.5;max-width:240px}
+.doc-upload-footer button{flex-shrink:0}
+.doc-upload-files:empty,.doc-upload-modal .doc-error:empty{display:none}
+.doc-upload-files{font-size:12px;margin-top:16px}
+.doc-upload-files ul{list-style:none;padding:0;margin:8px 0;max-height:140px;overflow:auto}
+.doc-upload-files li{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border)}
+.doc-upload-files li span{min-width:0;overflow-wrap:anywhere}
+.doc-upload-files small{white-space:nowrap;color:var(--mut)}
+.doc-upload-modal #docLotesPendientes:not(:empty){border-top:1px solid var(--border);margin-top:22px;padding-top:12px}
+@media(max-width:540px){.doc-upload-modal .modal-b{padding:18px}.doc-upload-steps{font-size:11px;gap:4px}.doc-upload-steps li{gap:4px}.doc-upload-footer{flex-direction:column;align-items:stretch;gap:12px}.doc-upload-footer>.mut{max-width:none}.doc-upload-zone{padding:20px 12px}}
+
+/* Dos caras del DNI con el mismo lenguaje visual que la subida de documentos. */
+.rr-identidad{padding:16px;background:transparent;border-color:var(--border)}
+.rr-dni-heading{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:6px 12px}
+.rr-dni-heading b{font-size:13px;color:var(--ink)}
+.rr-dni-format{font-size:10px;color:var(--mut)}
+.rr-dni-card{min-width:0;border:1px dashed #a6b7ac;border-radius:12px;background:rgba(41,76,64,.025);overflow:hidden}
+.rr-dni-card.adjunto{border-style:solid;border-color:#93b29e;background:rgba(41,76,64,.055)}
+.rr-dni-caras .rr-dni-pick{position:relative;align-items:center;text-align:center;gap:8px;padding:16px 10px 10px;cursor:pointer;color:var(--ink)}
+.rr-dni-pick svg{width:48px;height:34px;color:#537562;margin-bottom:3px}
+.rr-dni-pick strong{font-size:12px;font-weight:600}
+.rr-dni-pick-text{font-size:11px;color:#294c40;background:var(--card,#fff);border:1px solid var(--border);padding:5px 10px;border-radius:7px}
+.rr-dni-pick:hover{background:rgba(41,76,64,.05)}
+.rr-dni-pick:focus-within{outline:2px solid #294c40;outline-offset:-3px;border-radius:10px}
+.rr-worker-modal .rr-dni-pick input,.rr-dni-pick input{position:absolute;inset:0;opacity:0;width:100%;height:100%;padding:0;cursor:pointer}
+.rr-dni-file{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:4px 8px;padding:0 10px 12px;text-align:center;min-height:24px}
+.rr-dni-file small{font-size:10px;color:var(--mut);overflow-wrap:anywhere;max-width:100%}
+.rr-dni-file .linkbtn{font-size:11px;padding:0}
+.rr-dni-read{border-top:1px solid var(--border);padding-top:12px}
+.rr-dni-read p{margin:8px 0 0;font-size:11px;line-height:1.5}
+@media(max-width:540px){.rr-identidad{padding:12px}.rr-dni-caras{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.rr-dni-caras .rr-dni-pick{padding:12px 6px 8px}.rr-dni-read>.btn{width:100%}}
+
+.modal.rr-dni-modal{width:560px;max-width:calc(100vw - 24px)}
+.rr-dni-modal-intro{font-size:13px;line-height:1.6;margin:0 0 18px}
+.rr-dni-modal .rr-identidad{margin:0}
+.rr-dni-modal-footer{display:flex;justify-content:flex-end;margin-top:18px}
+.rr-dni-modal .rr-dni-propuesta input{width:18px;height:18px;flex:none}
+
+.dash-local-breakdown .rows{margin-top:10px}
+.dash-local-breakdown .row{padding:9px 0;border-top:0;gap:10px;font-size:12px}
+.dash-local-breakdown .grow{min-width:0;overflow-wrap:anywhere}
+.dash-local-breakdown .grow small{display:block;font-size:10px}
+.dash-local-breakdown .tnum{white-space:nowrap;font-size:12px}
+.dash-sales-breakdown{border-top:1px solid var(--border);padding-top:14px;margin-top:18px}
+.dash-sales-breakdown h4{font-size:12px;margin:0 0 12px}

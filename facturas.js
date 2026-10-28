@@ -1,3 +1,4 @@
+import {reglasLocales,aplicarReglaLocal} from './src/modules/facturas/memoria.js';
 import { prepararContraste, camposParaRelectura, elegirLecturaContrastada, nifComprobable } from './src/modules/facturas/contraste-dirigido.js';
 import { controlesLectura, compararLecturas, RevisionDocumento } from './src/modules/facturas/validacion-lectura.js';
 import { completarNifConocido } from './src/modules/facturas/nif-conocido.js';
@@ -899,7 +900,7 @@ function normalizarNif(nif) {
  */
 async function aplicarNombreProveedor(datos, dbAll) {
   try {
-    if (!datos || !dbAll || !datos.proveedor) return;
+    if (!datos || !dbAll || (!datos.proveedor && !datos.nif_proveedor)) return;
     const alias = await dbAll(`SELECT clave, nif, proveedor FROM facturas_proveedor_alias`).catch(() => []);
     if (!alias.length) return;
     const bueno = nombreCanonico({ proveedor: datos.proveedor, nif: datos.nif_proveedor }, alias);
@@ -1036,6 +1037,11 @@ export async function procesarFacturaSinLocal({ buffer, mimeType, filename, orig
       console.log(`[Facturas] NIF ${datos.nif_receptor} → empresa detectada: ${empresa} (local ambiguo)`);
     }
   }
+
+  // Las decisiones explícitas de Contabilidad prevalecen sobre el historial inferido.
+  const localesMemoria=await dbAll('SELECT local,empresa,local_contable FROM facturas_locales');
+  const aprendido=aplicarReglaLocal(datos,empresa,await reglasLocales(dbAll),localesMemoria);
+  if(aprendido)localAutodetectado=aprendido;
 
   // 3-bis. Si el CIF no bastó, intentar por empresa receptora única o proveedor habitual
   // (mismos criterios "muy claros" que hacía el usuario a mano). Solo autoasigna con confianza ALTA.

@@ -153,9 +153,9 @@ describe("el «Repasar» que ya existe encuentra las que están mal guardadas", 
     assert.match(rep, /vencimientoDelPapel: f\.vencimiento_origen === "factura"/);
   });
 
-  test("las que traen propuesta salen aparte, para poder ofrecer el botón", () => {
+  test("las propuestas no aceptadas salen aparte, para poder ofrecer el botón", () => {
     const rep = readFileSync(new URL("../src/modules/facturas/repaso.js", import.meta.url), "utf8");
-    assert.match(rep, /if \(rf\.anioProbable\) \{/);
+    assert.match(rep, /if \(rf\.anioProbable && textosDe\(rf\.avisos\)\.some\(t=>textos\.includes\(t\)\)\) \{/);
     assert.match(rep, /return \{ revisiones, sospechas, fechas \}/);
     assert.match(server, /fechasDudosas: r\.fechas\.slice\(0, 25\)/);
   });

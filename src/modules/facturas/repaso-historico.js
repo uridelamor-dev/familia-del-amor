@@ -26,10 +26,10 @@ CREATE INDEX IF NOT EXISTS facturas_repaso_cola ON facturas_repaso_documentos(es
 export function crearRepasoHistorico({db,lock,leer,original}) {
  async function estado(){
   const trabajo=await db.get('SELECT * FROM facturas_repaso_unico WHERE id=1');
-  const filas=await db.all('SELECT estado,COUNT(*)::int AS n FROM facturas_repaso_documentos GROUP BY estado');
+  const filas=await db.all(`SELECT estado,COUNT(*)::int AS n,COUNT(*) FILTER(WHERE revision_humana IS NULL AND estado IN ('revisar','error','sin_original'))::int AS pendientes FROM facturas_repaso_documentos GROUP BY estado`);
   const contadores=Object.fromEntries(filas.map(f=>[f.estado,f.n]));
   const revisadas=await db.get('SELECT COUNT(*)::int AS n FROM facturas_repaso_documentos WHERE revision_humana IS NOT NULL');
-  return {...trabajo,contadores,revisadas:revisadas.n,total:filas.reduce((n,f)=>n+Number(f.n),0)};
+  return {...trabajo,contadores,porRevisar:filas.reduce((n,f)=>n+Number(f.pendientes||0),0),revisadas:revisadas.n,total:filas.reduce((n,f)=>n+Number(f.n),0)};
  }
  async function visto(){return !!await db.run('UPDATE facturas_repaso_unico SET visto=NOW() WHERE id=1 AND visto IS NULL RETURNING id');}
  async function iniciar(autor){

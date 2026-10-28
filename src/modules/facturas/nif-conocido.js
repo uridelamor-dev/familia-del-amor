@@ -7,6 +7,9 @@ export function nifConocido(datos, alias = [], historial = []) {
   if (String(datos?.nif_proveedor || '').trim() || !nombre(datos?.proveedor)) return null;
   const aprendidos = alias.filter(a => nombre(a.proveedor) === nombre(datos.proveedor)
     || a.clave === claveProveedor(datos.proveedor)).map(a => normalizar(a.nif)).filter(Boolean);
+  const confirmados=[...new Set(aprendidos)];
+  if(confirmados.length===1&&nifValido(confirmados[0]))return confirmados[0];
+  if(confirmados.length>1)return null;
   const previos = historial.map(f => normalizar(f.nif)).filter(Boolean);
   const todos = [...new Set([...aprendidos, ...previos])];
   if (todos.length !== 1 || !nifValido(todos[0])) return null;

@@ -166,7 +166,7 @@ export function repasarLote(filas = [], { ventanaDias = 10, maxHistorial = 40, h
       vencimientoDelPapel: f.vencimiento_origen === "factura",
       historial,
     });
-    const textos = [...textosDe(r.avisos), ...textosDe(rf.avisos)];
+    const textos = [...textosDe(r.avisos), ...textosDe(rf.avisos)].filter(t=>!(f.avisos_aceptados||[]).includes(t));
     const antes = avisosGuardados(f);
     if (!mismosTextos(antes, textos)) {
       revisiones.push({ id: f.id, local: f.local, proveedor: f.proveedor, fecha: f.fecha,
@@ -174,7 +174,7 @@ export function repasarLote(filas = [], { ventanaDias = 10, maxHistorial = 40, h
     }
     // Las que traen una PROPUESTA van aparte: un aviso se lee, una propuesta se aplica, y la
     // pantalla necesita poder ofrecer el botón.
-    if (rf.anioProbable) {
+    if (rf.anioProbable && textosDe(rf.avisos).some(t=>textos.includes(t))) {
       fechas.push({ id: f.id, local: f.local, proveedor: f.proveedor, numero_factura: f.numero_factura,
         total: f.total, drive_url: f.drive_url, fecha: f.fecha,
         anioProbable: rf.anioProbable, propuesta: rf.propuesta,

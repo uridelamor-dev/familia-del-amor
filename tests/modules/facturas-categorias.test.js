@@ -208,3 +208,15 @@ describe("aprender el nombre bueno de un proveedor", () => {
     assert.equal(nombreCanonico({}, []), null);
   });
 });
+
+ describe('Memoria fiscal sin ambigüedades',()=>{
+ test('no elige arbitrariamente entre dos proveedores con el mismo CIF',()=>{
+  assert.equal(nombreCanonico({nif:'B12345678'},[{clave:'a',nif:'B12345678',proveedor:'A'},{clave:'b',nif:'B12345678',proveedor:'B'}]),null);
+ });
+ test('un nombre aprendido no oculta un CIF contradictorio',()=>{
+  const alias=[{clave:claveProveedor('Acme'),nif:'B12345678',proveedor:'Acme SL'}];
+  assert.equal(nombreCanonico({proveedor:'Acme',nif:'B87654321'},alias),null);
+  assert.equal(nombreCanonico({proveedor:'Acme'},alias),'Acme SL');
+  assert.equal(nombreCanonico({nif:'B12345678'},alias),'Acme SL');
+ });
+ });

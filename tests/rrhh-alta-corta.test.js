@@ -11,7 +11,8 @@ const modal = app.slice(app.indexOf("function rrWorkerAdd("), app.indexOf("// �
 
 describe("el alta pregunta solo lo que hace falta", () => {
   test("pide el puesto para preparar el alta en gestoría", () => {
-    assert.match(modal, /name="puesto"/);
+    assert.match(modal, /rrCategoriaSelect\(\)/);
+    assert.match(app, /function rrCategoriaSelect\(value = '', attrs = 'name="puesto"'\)/);
   });
 
   test("pide la fecha de incorporación para gestoría", () => {
@@ -32,22 +33,16 @@ describe("el alta pregunta solo lo que hace falta", () => {
   });
 });
 
-describe("el establecimiento sale de la barra de arriba", () => {
-  test("si hay uno puesto, no se vuelve a preguntar", () => {
-    // Se está mirando su equipo: dar de alta ahí es lo único que tiene sentido. Preguntarlo
-    // otra vez es pedir dos veces lo mismo y abrir la puerta a que no coincidan.
-    assert.match(modal, /const localBarra = enc \? \(USER\.local \|\| ""\) : \(localActualFE\(\) \|\| ""\)/);
-    assert.match(modal, /localBarra\s*\n?\s*\? `<input type="hidden" name="local"/);
-  });
-
-  test("pero con «todos» puestos sí, porque entonces no hay respuesta", () => {
-    assert.match(modal, /: `<div class="field"><label>Local<\/label><select name="local">/);
-  });
-
-  test("y se dice en cuál se está dando de alta", () => {
-    // Un campo que desaparece sin decir qué valor ha tomado es peor que el campo.
-    assert.match(modal, /en <b>\$\{esc\(nombreCortoLocal\(localBarra\)\)\}<\/b>/);
-  });
+describe("el establecimiento se puede elegir dentro del alta", () => {
+ test("el local de la barra se preselecciona, sin ocultar el selector",()=>{
+  assert.match(modal,/select name="local" required/);
+  assert.match(modal,/l===localBarra\?'selected'/);
+  assert.doesNotMatch(modal,/<input type="hidden" name="local"/);
+ });
+ test("el encargado conserva el local permitido por el servidor",()=>{
+  assert.match(modal,/const localesAlta = enc \? \[localBarra\]/);
+  assert.match(modal,/addEventListener\("change", cargarAreas\)/);
+ });
 });
 
 describe("el usuario es el nombre, no el nombre y el local", () => {

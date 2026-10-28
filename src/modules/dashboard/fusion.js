@@ -20,6 +20,7 @@
 // todos los establecimientos). De esas se coge solo la fila del local de cada parte, que además
 // deja de enseñarle a un encargado el gasto de locales que no lleva.
 
+import {agruparDesglose} from "./desglose.js";
 import { resultadoRegistrado } from "./resultado.js";
 import { buildAgenda, buildTitular } from "./dashboard.service.js";
 
@@ -72,6 +73,7 @@ export function fusionarPeriodo(partes = []) {
       serie: serie((p) => p.reservas?.serie || [], ["n", "personas"]),
     },
     ventas: {
+      porLocal: agruparDesglose(buenas.flatMap(p=>p.ventas?.porLocal||[])),
       disponible: hayVentas, parcial: !buenas.every((p) => p.ventas?.disponible && !p.ventas?.parcial), total: red(ventasTotal), tickets,
       ticket_medio: tickets ? red(ventasTotal / tickets) : 0,
       serie: serie((p) => p.ventas?.serie || [], ["ventas", "tickets"]),
