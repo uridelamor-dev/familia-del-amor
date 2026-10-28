@@ -1,3 +1,8 @@
+import {rutasPaginas} from './src/modules/facturas/paginas-rutas.js';
+import {PAGINAS_SCHEMA,crearPaginas} from './src/modules/facturas/paginas.js';
+import {compararFotos} from './src/modules/facturas/paginas-clasificacion.js';
+import {crearCompletarPaginas} from './src/modules/facturas/paginas-completar.js';
+import {referenciasAlbaran,estadoAlbaran} from './src/modules/facturas/albaranes.js';
 import {filtrosLineas} from './src/modules/facturas/filtros-lineas.js';
 import { crearCachePeriodo } from './src/modules/dashboard/cache-periodo.js';
 import {agruparDesglose,gastoDesglosado} from './src/modules/dashboard/desglose.js';
@@ -83,7 +88,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setAtencionEntrada, recuperarEntradaSinAtender, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, setGrupoFacturasPermitido, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
+import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, archivarPaginasFactura, guardarLineas, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -427,8 +432,22 @@ configurarBloqueoSheets(async (fn) => {
     c.release();
   }
 });
+async function transaccionPaginas(fn){
+ const c=await pool.connect();
+ const q=(sql,p=[])=>c.query(toPositional(sql),p);
+ const db={get:async(s,p)=>(await q(s,p)).rows[0],run:async(s,p)=>(await q(s,p)).rows[0],all:async(s,p)=>(await q(s,p)).rows};
+ try{await c.query('BEGIN');const r=await fn(db);await c.query('COMMIT');return r;}
+ catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
+}
+const paginasFacturas=crearPaginas({db:{get:dbGet,all:dbAll,run:dbRun},transaccion:transaccionPaginas,
+ comparar:compararFotos,combinar:combinarArchivosEnPdf,
+ completar:crearCompletarPaginas({db:{get:dbGet,all:dbAll,run:dbRun},transaccion:transaccionPaginas,
+  leer:(buffer,mime)=>leerDocumentoVerificado(buffer,mime,{dbAll}),
+  archivar:(f,buffer)=>archivarPaginasFactura(f,buffer,getDriveAccessToken),guardarLineas})
+});
 // Una sola lectura externa a la vez; el original ya está guardado si el trabajador está ocupado.
 const recepcionFacturas = crearRecepcion({
+  antesProcesar: f=>paginasFacturas.antes(f),
   db: {get:dbGet,run:dbRun,all:dbAll},
   lock: async (_hash, fn) => {
     const c = await pool.connect();
@@ -2235,6 +2254,7 @@ async function initDB() {
     }
 
     await client.query(RECEPCION_SCHEMA);
+    await client.query(PAGINAS_SCHEMA);
     await client.query(TANDAS_SCHEMA);
     await client.query(TANDAS_RESULTADO_SCHEMA);
     await client.query(REPASO_HISTORICO_SCHEMA);
@@ -3680,15 +3700,20 @@ app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direcc
   }
  }catch(e){res.status(e.status||500).json({ok:false,error:e.status?e.message:'No se pudo guardar la revisión; vuelve a consultar el documento.'});}
 });
+rutasPaginas(app,{auth:requireAuth(["direccion","contabilidad"]),db:{get:dbGet,all:dbAll,run:dbRun},puedeAccederLocal,
+ conBloqueo:fn=>recepcionFacturas.conBloqueo(fn),paginas:paginasFacturas});
 app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
     const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
     const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa,tipo:req.query.tipo},{tipo:"resultado->'datos'->>'tipo'",local:"local",empresa:"COALESCE(resultado->'datos'->>'empresa',resultado->'datos'->>'empresa_detectada')"});
     const filtro=ambito.sql; const params=ambito.params;
-    const filas = await dbAll(`SELECT id,canal,local,nombre,estado,intentos,error,creado,original IS NOT NULL AS tiene_original FROM facturas_recepciones
+    const filas = await dbAll(`SELECT id,canal,local,nombre,estado,intentos,error,creado,original IS NOT NULL AS tiene_original,(SELECT p.id FROM facturas_paginas p WHERE p.estado='revision' AND facturas_recepciones.id IN (p.primera,p.segunda) ORDER BY p.id DESC LIMIT 1) AS paginas_id FROM facturas_recepciones
       WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
-    const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado IN ('error','revision')) AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro}`,params);
-    res.json({ok:true,data:filas.slice(0,50),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
+    const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado IN ('error','revision','paginas')) AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro}`,params);
+    const propuestas=await dbAll(`SELECT p.id,p.estado,p.pruebas->>'motivo' AS motivo FROM facturas_paginas p
+      WHERE (p.estado='revision' OR (p.estado='unidas' AND p.creado>NOW()-INTERVAL '7 days'))
+      AND EXISTS(SELECT 1 FROM facturas_recepciones WHERE id IN (p.primera,p.segunda) ${filtro}) ORDER BY (p.estado='revision') DESC,p.id DESC LIMIT 50`,params);
+    res.json({ok:true,propuestas,data:filas.slice(0,50),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
   } catch(e) { next(e); }
 });
 app.get("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
@@ -7250,9 +7275,10 @@ app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilid
  */
 async function recalcularCuadre(facturaId, baseImponible) {
   const lineas = await dbAll(`SELECT importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ?`, [facturaId]);
-  const v = validarSuma(lineas, baseImponible);
+  const documento=await dbGet("SELECT tipo FROM facturas WHERE id=?",[facturaId]);
+  const v = validarSuma(lineas, baseImponible,documento?.tipo);
   await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ? WHERE id = ?`,
-    [v.cuadra ? "ok" : "descuadre", mensajeValidacion(v), facturaId]);
+    [v.motivo === "sin_valorar" ? "sin_valorar" : v.cuadra ? "ok" : "descuadre", mensajeValidacion(v), facturaId]);
   return v;
 }
 
@@ -7389,7 +7415,7 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
 async function releerTanda({ tanda = REL_TANDA, scope = null } = {}) {
   const n = Math.min(Math.max(Number(tanda) || REL_TANDA, 1), 40);
   const filas = await dbAll(
-    `SELECT id, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url,
+    `SELECT id, tipo, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url,
             COALESCE(lineas_intentos,0)::int AS intentos
        FROM facturas
       WHERE lineas_estado IS NULL AND drive_url IS NOT NULL ${scope ? "AND local = ?" : ""}
@@ -7670,7 +7696,7 @@ app.post("/api/facturas/repaso/lineas", requireAuth(["direccion", "contabilidad"
     if (scope) { cond.push("local = ?"); par.push(scope); }
     if (saltar.length) { cond.push(`NOT (id = ANY(?))`); par.push(saltar); }
     const filas = await dbAll(
-      `SELECT id, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url
+      `SELECT id, tipo, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url
          FROM facturas WHERE ${cond.join(" AND ")}
         ORDER BY fecha DESC NULLS LAST, id DESC LIMIT ?`, [...par, tanda]);
 
@@ -7712,18 +7738,19 @@ app.post("/api/facturas/repaso/lineas", requireAuth(["direccion", "contabilidad"
 // El detalle de una factura concreta, para poder mirarlo cuando algo no cuadra.
 app.get("/api/facturas/:id/lineas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const f = await dbGet(`SELECT id, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible,
+    const f = await dbGet(`SELECT id, local, tipo, empresa, nif, total, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible,
                                   lineas_estado, lineas_aviso, drive_url FROM facturas WHERE id = ?`, [Number(req.params.id)]);
     if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
     const scope = localScope(req);
     if (scope && f.local !== scope) return res.status(403).json({ ok: false, error: "Sin acceso" });
     const lineas = await dbAll(
-      `SELECT id AS linea_id, orden, descripcion, cantidad::float AS cantidad, unidad, precio_unitario::float AS precio_unitario,
+      `SELECT id AS linea_id, clave, factor_unidad, orden, descripcion, cantidad::float AS cantidad, unidad, precio_unitario::float AS precio_unitario,
               importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ? ORDER BY orden`, [f.id]);
     // La suma de las líneas, calculada aquí: es lo que hay que poner al lado de la base para
     // que «descuadre» deje de ser una etiqueta y pase a ser un número que se puede perseguir.
     const suma = Math.round(lineas.reduce((s2, l) => s2 + (Number(l.importe) || 0), 0) * 100) / 100;
-    res.json({ ok: true, factura: f, lineas, suma,
+    const valoradas=await referenciasAlbaran(dbAll,f,lineas);
+    res.json({ ok: true, factura: estadoAlbaran(f), lineas:valoradas, suma:lineas.some(l=>l.importe!=null)?suma:null,
       diferencia: f.base_imponible != null ? Math.round((suma - Number(f.base_imponible)) * 100) / 100 : null });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el detalle" }); }
 });
@@ -26102,13 +26129,14 @@ const server = app.listen(PORT, async () => {
     const grupo = await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid]);
     if (!grupo) return;
 
-    const local = canonizarLocal(grupo.local) || grupo.local;
+    const local = localCentro(canonizarLocal(grupo.local) || grupo.local,"compras");
     console.log(`[Facturas] Documento recibido en grupo ${local} de ${senderJid}`);
 
     try {
       // Guardar el original y su referencia antes de cualquier lectura.
       const result = await procesarFactura({
         buffer, mimeType, filename, local, caption,
+        contexto:{grupo:groupJid,remitente:senderJid,mensaje:mensajeId},
         onDocumentoGuardado: async id => {
           if(mensajeId && citado) await tandasFacturas.registrar({grupo:groupJid,mensaje:mensajeId,recepcionId:id,citado,respondeA});
         },

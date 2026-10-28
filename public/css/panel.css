@@ -209,6 +209,7 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}a{colo
 .linkbtn.provlink{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   display:inline-block;vertical-align:bottom;color:var(--ink2);font-weight:500}
 .linkbtn.provlink:hover{color:var(--brand);text-decoration:underline;text-underline-offset:2px}
+.linkbtn[data-act="fac-prov-ficha"]{color:var(--ink)}
 /* Los módulos de un usuario, plegados: doce píldoras hacen tres líneas por fila. */
 .modsfold>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
 .modsfold>summary::-webkit-details-marker{display:none}
@@ -2211,3 +2212,53 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 @media(max-width:600px){.modal.doc-review-modal,.modal.doc-preview-modal{width:100%}.doc-review-modal .doc-bulk-row{grid-template-columns:20px minmax(0,1fr);gap:8px}}
 
 .doc-review-modal .modal-h,.doc-preview-modal .modal-h{position:sticky;top:0;z-index:2;background:var(--surface)}
+
+/* Revisión de documentos: una fila por PDF y un solo selector con búsqueda. */
+.doc-review-step{font-size:12px;color:var(--ink2);margin-bottom:10px}
+.doc-review-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.doc-review-summary>span,.doc-review-summary>button{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-radius:10px;background:var(--surface2)}
+.doc-review-summary>span:nth-child(2){background:#e5f1e9;color:#285c45}.doc-review-summary>button{background:#fff1d6;color:#845d20}
+.doc-review-summary small{font-size:12px}.doc-review-summary b{font-size:22px;font-variant-numeric:tabular-nums}
+.doc-review-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.doc-review-toolbar label{display:flex;align-items:center;gap:8px;font-size:12px}.doc-review-toolbar input{width:160px}.doc-review-toolbar>span{font-size:12px}
+.doc-review-help{font-size:12px;color:var(--ink2);margin:10px 0}.doc-review-notice{font-size:12px;color:var(--brand);margin:8px 0}.doc-review-notice:empty{display:none}
+.doc-review-columns,.doc-review-row{display:grid;grid-template-columns:20px minmax(180px,1.4fr) 42px 80px minmax(200px,1fr) 108px 48px;align-items:center;gap:10px}
+.doc-review-columns{font-size:11px;color:var(--ink2);padding:10px 0}.doc-review-row{padding:9px 0;border-top:1px solid var(--border);font-size:12px}.doc-review-row>*{min-width:0}.doc-review-row>input[type=checkbox]{width:16px;height:16px;margin:0}.doc-review-row input:not([type=checkbox]),.doc-review-row select{width:100%;min-width:0;padding:8px;font-size:12px;box-sizing:border-box}.doc-review-row .pill{font-size:10px;padding:4px 7px;justify-self:start}.doc-review-pages{font-variant-numeric:tabular-nums;color:var(--ink2)}
+.doc-review-file>small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink2);font-size:10px;margin:4px 2px 0}.doc-review-file input{background:transparent}
+.doc-worker-picker{position:relative}.doc-worker-options{position:absolute;top:calc(100% + 4px);left:0;right:0;min-width:220px;z-index:5;max-height:210px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px #0002;padding:4px}.doc-worker-options[hidden]{display:none}.doc-worker-options button{display:flex;flex-direction:column;gap:2px;width:100%;border:0;border-radius:6px;background:transparent;text-align:left;padding:8px;color:var(--ink);cursor:pointer;font:inherit}.doc-worker-options small{color:var(--ink2);font-size:11px}.doc-worker-options button:hover,.doc-worker-options button.active{background:var(--surface2)}.doc-worker-options p{padding:8px;font-size:12px}
+.doc-review-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;position:sticky;bottom:-20px;padding:14px 0;background:var(--surface);border-top:1px solid var(--border);z-index:2}.doc-review-footer>span{margin-right:auto;font-size:12px}.doc-review-footer>#docVolver{margin-right:auto}
+@media(max-width:900px){.doc-review-columns{display:none}.doc-review-row{grid-template-columns:20px minmax(0,1fr) 90px 48px;gap:8px}.doc-review-file{grid-column:2/5}.doc-review-pages{grid-column:1;font-size:10px}.doc-review-row>.pill{grid-column:2}.doc-worker-picker{grid-column:2/5;grid-row:auto}.doc-review-row>select{grid-column:2/4}.doc-review-row>[data-preview]{grid-column:4}.doc-worker-options{min-width:0}.doc-review-summary>span,.doc-review-summary>button{padding:10px;align-items:flex-start;flex-direction:column;gap:3px}.doc-review-summary{gap:6px}.doc-review-summary small{font-size:11px}.doc-review-footer{flex-wrap:wrap;bottom:-14px}.doc-review-footer>span{flex-basis:100%}}
+.doc-review-row .doc-field-invalid{background:#fceeed;border-color:#d9a39d;box-shadow:0 0 0 1px #d9a39d}.doc-row-error{grid-column:2/-1;color:#994c43;font-size:11px;line-height:1.4}
+
+.doc-review-summary>button{font:inherit;text-align:left;border:1px solid transparent;cursor:pointer}.doc-review-summary>button[aria-pressed=true]{border-color:#bf9444;box-shadow:0 0 0 1px #bf9444}.doc-review-summary>button:disabled{cursor:default}.doc-review-filter{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;margin:8px 0}
+.doc-bulk-row.doc-field-invalid{background:#fceeed;border:1px solid #d9a39d;border-radius:8px;padding:12px}
+
+/* Revisión de páginas de factura: originales juntos en escritorio, apilados en móvil. */
+.fac-paginas-modal{width:min(1100px,96vw)!important;max-width:1100px!important}
+.fac-paginas-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.fac-paginas-grid h3{font-size:14px;overflow-wrap:anywhere;margin:0 0 10px}
+.fac-pagina-original{background:var(--bg);border:1px solid var(--border);border-radius:10px;min-height:160px;overflow:hidden}
+.fac-pagina-original img{display:block;width:100%;height:auto;max-height:52vh;object-fit:contain;background:#fff}
+.fac-pagina-original iframe{display:block;width:100%;height:440px;border:0}
+.fac-paginas-acciones{position:sticky;bottom:0;background:var(--surface);padding:12px 0;display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.fac-paginas-estado{overflow-wrap:anywhere}
+@media(max-width:700px){.fac-paginas-grid{grid-template-columns:1fr}.fac-pagina-original iframe{height:340px}.fac-paginas-acciones .btn{flex:1}}
+
+/* Cabeceras uniformes del panel, también las que envuelven título y descripción.
+   Se limita a cabeceras con h1 para no alterar las miniaturas .thumb.ph. */
+#view .ph:has(h1){flex-direction:row;align-items:center;justify-content:flex-start;gap:4px 16px;margin-bottom:16px}
+#view .ph:has(h1) .eyebrow{display:none}
+#view .ph:has(h1) h1{font-size:24px;line-height:1.25;margin:0;letter-spacing:-.02em}
+#view .ph:has(h1)>h1,
+#view .ph:has(h1)>.cont-heading,
+#view .ph:has(h1)>.cli-heading{margin-right:auto;min-width:0}
+#view .ph:has(h1)>.acts{margin-left:auto;gap:8px;max-width:100%}
+#view .ph:has(h1)>.sub,
+#view .ph:has(h1)>p.mut{order:2;flex:0 0 100%;min-width:0;max-width:100%;padding:0;margin:0;color:var(--ink2);font-size:13px;line-height:1.4}
+#view .ph:has(h1)>div:has(>h1):not(.cont-heading):not(.cli-heading){min-width:0;flex:1}
+#view .ph:has(h1)>div>.sub,
+#view .ph:has(h1)>div>p.mut{margin:4px 0 0;font-size:13px;line-height:1.4}
+@media(max-width:700px){
+ #view .ph:has(h1){gap:6px 12px;margin-bottom:12px}
+ #view .ph:has(h1) h1{font-size:22px}
+ #view .ph:has(h1)>.acts{flex:0 1 auto;justify-content:flex-start}
+}

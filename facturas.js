@@ -189,7 +189,7 @@ export async function releerLineasFactura({ factura, getToken, dbRun }) {
   // están revisados y puede que corregidos a mano. Solo interesan las líneas, y se
   // contrastan contra la base imponible que ya está guardada, no contra la releída.
   await dbRun("DELETE FROM factura_lineas WHERE factura_id = ?", [factura.id]);
-  return guardarLineas(dbRun, factura.id, { lineas: datos.lineas, base_imponible: factura.base_imponible }, new Date().toISOString());
+  return guardarLineas(dbRun, factura.id, { lineas: datos.lineas, base_imponible: factura.base_imponible, tipo: factura.tipo }, new Date().toISOString());
 }
 
 /**
@@ -277,8 +277,8 @@ export async function condicionesDePago(dbGet, proveedor, empresa = "") {
 // Guarda el detalle de una factura y deja escrito si cuadra. NO es fatal: si algo falla
 // aquí, la factura ya está guardada y lo que se pierde es el detalle, no el gasto.
 export async function guardarLineas(dbRun, facturaId, datos, ahora, extra = {}) {
-  const lineas = normalizarLineas(datos.lineas);
-  const v = validarSuma(lineas, datos.base_imponible);
+  const lineas = normalizarLineas(datos.lineas, datos.tipo);
+  const v = validarSuma(lineas, datos.base_imponible, datos.tipo);
   const aviso = mensajeValidacion(v);
 
   // ¿Nos están cobrando algo más caro de lo normal? Se mira ANTES de guardar las líneas, que
@@ -301,7 +301,7 @@ export async function guardarLineas(dbRun, facturaId, datos, ahora, extra = {}) 
   // se leyó con la de antes, en vez de volver a pasar por el modelo facturas que ya están al
   // día. Ver src/modules/facturas/repaso.js.
   await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ?, lineas_leidas_en = ?, lineas_version = ? WHERE id = ?`,
-    [v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", aviso, ahora, VERSION_LINEAS, facturaId]);
+    [v.motivo === "sin_valorar" && !v.dudosas ? "sin_valorar" : v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", aviso, ahora, VERSION_LINEAS, facturaId]);
 
   // Los avisos de precio van a `revisar`, con los de coherencia: es la misma pregunta —«esto
   // no cuadra, míralo antes de pagar»— y tenerlos en dos sitios sería tener dos bandejas.
@@ -804,6 +804,15 @@ export async function procesarFactura({ buffer, mimeType, filename, local, capti
   }); // withHashLock
 }
 
+// Nueva copia conjunta: nunca sobrescribir ni enviar a la papelera los originales.
+export async function archivarPaginasFactura(f,buffer,getToken){
+ const id=idDeDriveUrl(f.drive_url);if(!id)throw new Error('La factura no tiene original archivado');
+ const token=await getToken();
+ const meta=await (await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=parents`,{headers:{Authorization:`Bearer ${token}`}})).json();
+ if(!meta.parents?.[0])throw new Error('No se pudo localizar la carpeta del original');
+ return (await driveSubirArchivo(token,meta.parents[0],nombreArchivo(f,'.pdf'),buffer,'application/pdf')).url;
+}
+
 // ── Migración retroactiva a estructura Raíz→Empresa→Local→Mes ──────────────
 
 function extractDriveFileId(url) {
@@ -1178,7 +1187,7 @@ export async function asignarFacturaPendiente({ pendiente, local, reparto = null
       if (!(await proveedorConLineas(dbGet, pendiente.proveedor))) {
         await dbRun(`UPDATE facturas SET lineas_estado = 'no_aplica', lineas_leidas_en = ? WHERE id = ?`, [new Date().toISOString(), facturaId]);
       } else {
-        const r = await guardarLineas(dbRun, facturaId, { lineas: JSON.parse(pendiente.lineas_json), base_imponible: pendiente.base_imponible }, new Date().toISOString());
+        const r = await guardarLineas(dbRun, facturaId, { lineas: JSON.parse(pendiente.lineas_json), base_imponible: pendiente.base_imponible, tipo: pendiente.tipo }, new Date().toISOString());
         if (r.aviso) console.warn(`[Facturas] #${facturaId} detalle: ${r.aviso}`);
       }
     }

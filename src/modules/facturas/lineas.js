@@ -49,7 +49,7 @@ const n = (v) => {
  * Aquí manda SIEMPRE lo que se paga de verdad. El bruto y el descuento se guardan aparte,
  * porque saber que te hacen un 48 % también vale (si un mes deja de aplicarse, se ve).
  */
-export function normalizarLinea(cruda = {}, orden = 0) {
+export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
   const descripcion = String(cruda.descripcion ?? "").trim().slice(0, 300);
   const cantidad = n(cruda.cantidad);
   const precioBruto = n(cruda.precio_unitario);
@@ -109,22 +109,23 @@ export function normalizarLinea(cruda = {}, orden = 0) {
     importe_bruto: bruto != null && neto != null && Math.abs(bruto - neto) > 0.01 ? bruto : null,
     descuento_pct: dto != null && dto > 0 && dto <= 100 ? dto : null,
     // Una línea es dudosa si le falta lo mínimo para servir de algo.
-    dudosa: !descripcion || neto == null || cantidadFinal == null || cantidadFinal === 0 || incoherente,
+    dudosa: !descripcion || (neto == null && tipo !== "albaran") || cantidadFinal == null || cantidadFinal === 0 || incoherente,
   };
 }
 
-export function normalizarLineas(crudas) {
+export function normalizarLineas(crudas, tipo = "factura") {
   if (!Array.isArray(crudas)) return [];
-  return crudas.map((l, i) => normalizarLinea(l, i)).filter((l) => l.descripcion || l.importe != null);
+  return crudas.map((l, i) => normalizarLinea(l, i, tipo)).filter((l) => l.descripcion || l.importe != null);
 }
 
 // ¿Cuadran las líneas con la base imponible de la cabecera?
-export function validarSuma(lineas = [], baseImponible) {
+export function validarSuma(lineas = [], baseImponible, tipo = "factura") {
   const base = n(baseImponible);
   const conImporte = lineas.filter((l) => l.importe != null);
   const suma = Math.round(conImporte.reduce((s, l) => s + l.importe, 0) * 100) / 100;
 
   if (!lineas.length) return { cuadra: false, motivo: "sin_lineas", suma: 0, base, diferencia: null };
+  if (base == null && tipo === "albaran") return {cuadra:true,motivo:"sin_valorar",suma:conImporte.length?suma:null,base:null,diferencia:null,dudosas:lineas.filter(l=>l.dudosa).length};
   if (base == null) return { cuadra: false, motivo: "sin_base", suma, base: null, diferencia: null };
 
   const tolerancia = Math.max(TOLERANCIA_MIN, lineas.length * TOLERANCIA_ABS, Math.abs(base) * TOLERANCIA_PCT);

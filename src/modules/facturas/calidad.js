@@ -1,3 +1,4 @@
+import {estadoAlbaran} from './albaranes.js';
 // Señales de revisión, nunca correcciones automáticas ni una prueba de duplicidad.
 const limpio = v => String(v ?? '').normalize('NFKC').trim().toLocaleLowerCase('es');
 export function fechaValida(value) {
@@ -12,12 +13,14 @@ export function revisarFacturas(rows, hoy) {
     return JSON.stringify([proveedor,numero,limpio(f.local),String(f.fecha).slice(0,4),f.tipo || 'factura']);
   };
   for(const f of rows) { const k=clave(f); if(k) grupos.set(k,(grupos.get(k)||0)+1); }
-  return rows.map(f=> {
+  return rows.map(original=> {
+    const f=estadoAlbaran(original);
     const avisos=[];
     if(!fechaValida(f.fecha)) avisos.push('Fecha pendiente de verificar');
     else if(String(f.fecha).slice(0,10)>hoy) avisos.push('Fecha futura');
     if(!limpio(f.local)) avisos.push('Falta asignar local');
-    if(f.total===null || f.total===undefined || f.total==='' || !Number.isFinite(Number(f.total))) avisos.push('Importe no disponible');
+    if(f.tipo==='albaran'&&(f.total==null||f.total==='')) {}
+    else if(f.total===null || f.total===undefined || f.total==='' || !Number.isFinite(Number(f.total))) avisos.push('Importe no disponible');
     else if(Number(f.total)===0) avisos.push('Importe cero: comprobar original');
     if(f.lineas_estado==='descuadre' || f.revisar) avisos.push('Lectura pendiente de revisión');
     if((grupos.get(clave(f)) || 0)>1) avisos.push('Mismo proveedor y número en esta lista');

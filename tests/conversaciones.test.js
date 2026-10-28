@@ -30,3 +30,13 @@ test('control manual y envío automático se serializan y el candado se libera t
  await iniciado;const b=conTurno('uno',async()=>pasos.push(3));liberar();await Promise.all([a,b]);assert.deepEqual(pasos,[1,2,3]);
  await assert.rejects(conTurno('uno',()=>{throw Error('fallo');}));assert.equal(await conTurno('uno',()=>4),4);
 });
+
+test('pendientes coherentes: mensaje sin respuesta, pausa manual y cierre anterior',async()=>{
+ const {conversacionPendiente}=await import('../src/modules/messaging/conversaciones.js');
+ const c={tipo:'recibido',creado_en:'2026-10-28T12:00:00Z',respuesta:null};
+ assert.equal(conversacionPendiente(c,null),true);
+ assert.equal(conversacionPendiente(c,{estado:'resuelta',cerrada_en:'2026-10-28T13:00:00Z'}),false);
+ assert.equal(conversacionPendiente(c,{estado:'resuelta',cerrada_en:'2026-10-27T13:00:00Z'}),true);
+ assert.equal(conversacionPendiente({...c,tipo:'saliente',respuesta:'Hola'},null),false);
+ assert.equal(conversacionPendiente({...c,estado_ia:'pausada'},{estado:'resuelta'}),true);
+});

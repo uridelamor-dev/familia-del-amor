@@ -13,7 +13,7 @@ export function controlesLectura(d = {}) {
   if (d.tipo === 'factura' && !d.nif_proveedor) aviso('nif_proveedor','Falta el NIF del proveedor.');
   if (d.nif_proveedor && !nifValido(d.nif_proveedor)) aviso('nif_proveedor','Revisa el identificador fiscal del proveedor (puede ser extranjero).');
   for (const campo of ['total', ...(d.tipo === 'factura' ? ['base_imponible','cuota_iva'] : [])]) {
-    if (d.tipo === 'albaran' && d[campo] == null) continue; // Un albarán puede no estar valorado.
+    if (d.tipo === 'albaran' && (d[campo] == null || d[campo] === '')) continue; // Un albarán puede no estar valorado.
     if (numero(d[campo]) == null || !Number.isFinite(numero(d[campo]))) aviso(campo,`Falta un importe válido: ${campo.replaceAll('_',' ')}.`);
   }
   if (Array.isArray(d.iva_desglose) && d.iva_desglose.length) {
@@ -25,7 +25,10 @@ export function controlesLectura(d = {}) {
   if (numero(d.porcentaje_iva) === 0 && numero(d.cuota_iva) != null && Math.abs(numero(d.cuota_iva)) > 0.05) aviso('porcentaje_iva','El tipo figura como 0 % pero hay una cuota de IVA. Comprueba el resumen fiscal.');
   if (d._lecturaIncompleta) aviso('lineas','La respuesta se cortó: puede faltar parte del documento.');
   if (d.calidad_imagen === 'ilegible' || d.calidad_imagen === 'recortada') aviso('imagen','Hay partes ilegibles o recortadas. Comprueba el original antes de pedir otra foto.');
-  for (const campo of (Array.isArray(d.campos_dudosos) ? d.campos_dudosos : [])) aviso(String(campo).slice(0,60),'La lectura señala dudas en este campo.');
+  for (const campo of (Array.isArray(d.campos_dudosos) ? d.campos_dudosos : [])) {
+    if(d.tipo==='albaran'&&['total','base_imponible','cuota_iva','porcentaje_iva'].includes(campo)&&(d[campo]==null||d[campo]===''))continue;
+    aviso(String(campo).slice(0,60),'La lectura señala dudas en este campo.');
+  }
   for (const a of revisarCoherencia(d).avisos) aviso(a.clave,a.texto);
   return avisos;
 }

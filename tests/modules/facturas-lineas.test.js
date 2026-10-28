@@ -485,7 +485,7 @@ describe("corregir a mano la lectura de una compra", () => {
     // El recálculo vive en `recalcularCuadre`, que comparten corregir y borrar: tenerlo dos
     // veces garantizaría que un día una de las dos se quedara sin actualizar el estado.
     assert.match(fn, /const v = await recalcularCuadre\(l\.factura_id, l\.base_imponible\);/);
-    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible\)[\s\S]{0,400}v\.cuadra \? "ok" : "descuadre"/);
+    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible\)[\s\S]{0,800}v\.motivo === "sin_valorar" \? "sin_valorar" : v\.cuadra \? "ok" : "descuadre"/);
   });
 
   test("y solo en los establecimientos que esa persona puede tocar", () => {

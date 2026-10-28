@@ -18,3 +18,10 @@ test('iniciales o nombres incompletos proponen candidatos sin asignar ni ignorar
  assert.deepEqual(asociarTrabajador({nombre:'APELLIDO SEGUNDO, ANA M.',dni:'12345678Z',hayTexto:true},[{...w[0],dni:'87654321X'}]).candidatos,[]);
  assert.equal(asociarTrabajador({nombre:'Mª Dolores Prueba',hayTexto:true},[{id:3,nombre:'Maria Dolores Prueba'}]).worker_id,3);
 });
+test('permite dos documentos separados del mismo empleado incluso con igual nombre y tipo',()=>{
+ const documentos=['a','b'].map(id=>({paginas:[id],worker_id:1,tipo:'nomina',nombre:'Octubre 2026 - Ana Prueba.pdf'}));
+ const resultado=validarReparto(documentos,[{id:'a',huella:'distinta-a'},{id:'b',huella:'distinta-b'}],[{id:1,nombre:'Ana Prueba'}]);
+ assert.equal(resultado.length,2);
+ assert.deepEqual(resultado.map(d=>d.worker.id),[1,1]);
+ assert.deepEqual(resultado.map(d=>d.paginas[0].id),['a','b']);
+});

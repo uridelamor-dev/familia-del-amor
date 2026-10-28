@@ -97,7 +97,9 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
    await abrir(jid,'manual','Conversación tomada desde el panel');
    await pool.query("UPDATE wa_atencion SET estado='en_curso',responsable=$2,actualizada_en=now() WHERE jid=$1",[jid,usuario]);
   } else if(accion==='resolver') {
-   await pool.query("UPDATE wa_atencion SET estado='resuelta',cerrada_en=now(),actualizada_en=now() WHERE jid=$1",[jid]);
+   await pool.query(`INSERT INTO wa_atencion(jid,estado,motivo,responsable,cerrada_en)
+    VALUES($1,'resuelta','manual',$2,now()) ON CONFLICT(jid) DO UPDATE
+    SET estado='resuelta',cerrada_en=now(),actualizada_en=now()`,[jid,usuario]);
   }
  }
  async function entrada(jid,texto,fecha=new Date()) {

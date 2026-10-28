@@ -4001,6 +4001,7 @@ async function rrFirmaPanel(id){
  }catch(e){toast(e.message);}
 }
 async function rrDocumentosMasivos(){
+ const {nombreLote:nombre,buscarTrabajadores,renombrarLote,erroresRevision,validarArchivosLote,leerRespuestaLote}=await import('/panel/documentos-lote.mjs');
  const ov=modal('Subida masiva de documentos',`<div class="doc-upload-intro"><p>Añade los documentos del equipo</p><span class="mut">Separaremos las páginas de tus PDF para que revises a quién corresponde cada documento.</span></div><ol class="doc-upload-steps" aria-label="Pasos de la subida"><li aria-current="step"><span>1</span> Subir PDF</li><li><span>2</span> Revisar</li><li><span>3</span> Preparar firmas</li></ol><form id="docLoteForm"><label class="doc-upload-zone"><span class="doc-upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M12 17v-5m-3 3 3-3 3 3"/></svg></span><strong>Selecciona tus archivos PDF</strong><span class="mut">Puedes añadir varios archivos a la vez</span><span class="btn doc-upload-pick" aria-hidden="true">Elegir archivos</span><input type="file" name="archivos" aria-label="Seleccionar archivos PDF" accept="application/pdf,.pdf" multiple required aria-describedby="docUploadLimits"></label><div class="doc-upload-files" aria-live="polite"></div><div class="doc-upload-limits" id="docUploadLimits"><span>Hasta <b>10 archivos</b></span><span><b>150 páginas</b> en total</span><span><b>50 MB</b> en total · 15 MB por archivo</span></div><div class="doc-upload-footer"><span class="mut">Podrás revisar las asignaciones antes de guardar.</span><button class="btn primary" type="submit">Analizar documentos</button></div></form><div id="docLotesPendientes"></div><p class="doc-error" role="alert"></p>`);
  ov.querySelector('.modal').classList.add('doc-upload-modal');
  ov.querySelector('[name="archivos"]').onchange=e=>{
@@ -4008,34 +4009,79 @@ async function rrDocumentosMasivos(){
   ov.querySelector('.doc-upload-files').innerHTML=files.length?`<b>${files.length} ${files.length===1?'archivo seleccionado':'archivos seleccionados'}</b><ul>${files.map(f=>`<li><span>${esc(f.name)}</span><small>${(f.size/1024/1024).toLocaleString('es-ES',{maximumFractionDigits:1})} MB</small></li>`).join('')}</ul>`:'';
  };
 
- let lote=null,docs=[],paso=1,ocupado=false;
- const error=e=>{ov.querySelector('.doc-error').textContent=e.message;};
+ let lote=null,docs=[],paso=1,ocupado=false,mesElegido='',aviso='',erroresVisibles=false,soloPendientes=false;
+ const error=e=>{
+  const contexto=[e.etapa?`Fase: ${e.etapa}`:'',e.archivo?`Archivo: ${e.archivo}`:'',e.pagina?`Página: ${e.pagina}`:''].filter(Boolean).join(' · ');
+  const msg=[e.message,contexto].filter(Boolean).join('\n');ov.querySelector('.doc-error').textContent=msg;
+  if(Number.isInteger(e.documento)){
+   const d=docs.filter(d=>d.seleccionado)[e.documento],i=docs.indexOf(d);if(i<0)return;
+   const row=ov.querySelector(`[data-doc-row="${i}"]`);if(!row)return;
+   const field=e.campo==='trabajador'?row.querySelector('[data-worker-search]'):e.campo==='nombre'?row.querySelector('[data-nombre]'):e.campo==='tipo'?row.querySelector('[data-tipo]'):row;
+   field?.classList.add('doc-field-invalid');field?.setAttribute('aria-invalid','true');
+   const detalle=document.createElement('small');detalle.className='doc-row-error';detalle.textContent=msg;row.append(detalle);row.scrollIntoView({block:'center',behavior:'smooth'});
+  }
+ };
+ async function enviarLote(url,body){
+  let r;try{r=await fetch(url,{method:'POST',headers:{Authorization:'Bearer '+token(),...(body instanceof FormData?{}:{'Content-Type':'application/json'})},body:body instanceof FormData?body:JSON.stringify(body)});}catch{throw Error('Se ha interrumpido la conexión. Conserva esta ventana y vuelve a intentarlo. Si estabas guardando, revisa antes los documentos del trabajador para comprobar si llegaron.');}
+  if(await fueraDeSesion(r))throw Error('La sesión ha caducado. Vuelve a iniciar sesión y abre el lote pendiente.');
+  return leerRespuestaLote(r);
+ };
+
+ async function accionLote(b,texto,fn){
+  if(ocupado)return;ocupado=true;const anterior=b.textContent;b.disabled=true;b.textContent=texto;b.setAttribute('aria-busy','true');ov.querySelector('.doc-error').textContent='';
+  ov.querySelector('.doc-review-notice').textContent=texto;
+  try{await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));fn();toast(aviso);}
+  catch(e){ov.querySelector('.doc-review-notice').textContent='';error(e);toast(e.message);}
+  finally{ocupado=false;if(b.isConnected){b.disabled=false;b.textContent=anterior;b.removeAttribute('aria-busy');}}
+ }
+
  async function abrir(id){try{const r=await apiRaw('/api/rrhh/documentos-masivos/'+id);preparar(r);}catch(e){error(e);}}
- function preparar(r){lote=r;docs=r.paginas.map(p=>({paginas:[p.id],worker_id:p.propuesta.worker_id||'',tipo:'nomina',nombre:p.propuesta.mes&&p.propuesta.worker_id?nombre(p.propuesta.mes,r.trabajadores.find(w=>w.id===p.propuesta.worker_id)?.nombre):p.archivo,mes:p.propuesta.mes||'',seleccionado:true,firma:null,motivo:p.propuesta.motivo,nombre_detectado:p.propuesta.nombre_detectado,candidatos:p.propuesta.candidatos||[]}));paso=1;pintar();}
- function nombre(mes,n){if(!mes||!n)return '';const [y,m]=mes.split('-');return `${['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][Number(m)-1]} ${y} - ${n}.pdf`;}
+ function preparar(r){lote=r;docs=r.paginas.map(p=>{const w=r.trabajadores.find(w=>String(w.id)===String(p.propuesta.worker_id));return {paginas:[p.id],worker_id:w?.id||'',tipo:'nomina',nombre:p.propuesta.mes&&w?nombre(p.propuesta.mes,w.nombre):p.archivo,mes:p.propuesta.mes||'',autoNombre:!!(p.propuesta.mes&&w),seleccionado:true,firma:null,motivo:p.propuesta.motivo,nombre_detectado:p.propuesta.nombre_detectado,candidatos:p.propuesta.candidatos||[]};});mesElegido=docs.find(d=>d.mes)?.mes||todayStr().slice(0,7);aviso='';paso=1;pintar();}
  const worker=d=>lote.trabajadores.find(w=>Number(w.id)===Number(d.worker_id));
  const paginas=d=>d.paginas.map(id=>lote.paginas.find(p=>p.id===id));
+ function marcarErrores(enfocar=false){
+  const errores=erroresRevision(docs,lote.trabajadores);
+  ov.querySelectorAll('.doc-field-invalid').forEach(el=>{el.classList.remove('doc-field-invalid');el.removeAttribute('aria-invalid');el.removeAttribute('aria-describedby');});
+  ov.querySelectorAll('.doc-row-error').forEach(el=>el.remove());
+  if(!erroresVisibles)return errores;
+  errores.forEach(({i,campo,mensaje})=>{const row=ov.querySelector(`[data-doc-row="${i}"]`),field=ov.querySelector(campo==='trabajador'?`[data-worker-search="${i}"]`:`[data-nombre="${i}"]`);if(!row||!field)return;const id=`docError${i}_${campo}`;field.classList.add('doc-field-invalid');field.setAttribute('aria-invalid','true');field.setAttribute('aria-describedby',id);const text=document.createElement('small');text.id=id;text.className='doc-row-error';text.textContent=mensaje;row.append(text);});
+  const alerta=ov.querySelector('.doc-error');if(alerta)alerta.textContent=errores.length?`Revisa los campos marcados en ${new Set(errores.map(e=>e.i)).size} documentos, o desmárcalos para continuar sin ellos.`:'';
+  if(enfocar&&errores.length){const e=errores[0],field=ov.querySelector(e.campo==='trabajador'?`[data-worker-search="${e.i}"]`:`[data-nombre="${e.i}"]`);field?.focus();field?.scrollIntoView({block:'center',behavior:'smooth'});}
+  return errores;
+ }
  function pintar(){
   ov.querySelector('.modal').classList.remove('doc-upload-modal');
   ov.querySelector('.modal').classList.add('doc-review-modal');
-  const asociados=docs.filter(d=>worker(d)).length,seleccion=docs.filter(d=>d.seleccionado),mes=docs.find(d=>d.mes)?.mes||new Date().toISOString().slice(0,7);
-  ov.querySelector('.modal-b').innerHTML=`<p class="mut">${paso===1?'1. Revisar y asociar':'2. Preparar firmas y guardar'}</p><div class="doc-bulk-summary"><span>${docs.length} documentos</span><span>${asociados} asociados</span><span class="pending">${docs.length-asociados} pendientes</span></div>${paso===1?`<div class="doc-bulk-actions"><label>Mes <input type="month" id="docMes" value="${esc(mes)}"></label><button class="btn" id="docRenombrar">Renombrar: MES - Nombre</button><button class="btn" id="docCombinar">Unir seleccionados</button></div><p class="mut">Revisa las coincidencias. Busca y selecciona manualmente al trabajador cuando haga falta. Puedes desmarcar documentos para dejarlos pendientes.</p>`:'<p>Marca la posición de firma de cada documento que deba firmarse. Los demás se guardarán únicamente en su carpeta.</p>'}
-  <div>${docs.map((d,i)=>paso===2&&!d.seleccionado?'':`<div class="doc-bulk-row"><input type="checkbox" data-seleccion="${i}" ${d.seleccionado?'checked':''} ${paso===2?'disabled':''} aria-label="Seleccionar documento ${i+1}"><div><div class="doc-bulk-status">${esc(paginas(d).map(p=>`${p.archivo} · pág. ${p.pagina}`).join(' / '))}</div>${d.nombre_detectado?`<p class="doc-detected">Nombre en el documento: <strong>${esc(d.nombre_detectado)}</strong></p>`:''}${paso===1?`<div class="doc-bulk-fields"><label>Buscar trabajador<input type="search" data-buscar="${i}" placeholder="Escribe un nombre…"></label><label>Trabajador<select data-worker="${i}" aria-label="Trabajador del documento ${i+1}"><option value="">Seleccionar trabajador</option>${opciones(d)}</select></label><label>Tipo<select data-tipo="${i}">${Object.entries(RR_DOC_TIPOS).map(([k,v])=>`<option value="${k}" ${d.tipo===k?'selected':''}>${esc(v)}</option>`).join('')}</select></label><label>Nombre del archivo<input data-nombre="${i}" value="${esc(d.nombre)}" maxlength="220"></label></div><small>${esc(d.motivo||'Asociación manual')}</small>`:`<strong>${esc(d.nombre)}</strong><p>${esc(worker(d)?.nombre||'Sin trabajador')} · ${esc(RR_DOC_TIPOS[d.tipo])}</p>`}<div class="doc-bulk-actions"><button class="btn sm" data-preview="${i}">Ver documento</button>${paso===2?`<button class="btn sm" data-firma="${i}">${d.firma?'Cambiar posición de firma':'Añadir firma'}</button>${d.firma?`<span class="pill ok">Firma · página ${d.firma.pagina}</span><button class="linkbtn" data-quitar-firma="${i}">Quitar firma</button>`:''}`:''}</div></div></div>`).join('')}</div><p class="doc-error" role="alert"></p><div class="doc-bulk-actions">${paso===2?'<button class="btn" id="docVolver">Volver</button>':''}<button class="btn primary" id="docContinuar">${paso===1?'Continuar':'Guardar y solicitar las firmas'}</button><button class="btn" data-close>Cerrar</button></div>`;
-  ov.querySelectorAll('[data-seleccion]').forEach(b=>b.onchange=()=>{docs[Number(b.dataset.seleccion)].seleccionado=b.checked;});
-  ov.querySelectorAll('[data-worker]').forEach(b=>b.onchange=()=>{docs[Number(b.dataset.worker)].worker_id=b.value;docs[Number(b.dataset.worker)].motivo='Asociación revisada manualmente';});
+  const visibles=paso===2?docs.filter(d=>d.seleccionado):docs,asociados=visibles.filter(d=>worker(d)).length;
+  ov.querySelector('.modal-b').innerHTML=`<div class="doc-review-step">${paso===1?'Revisar y asociar':'Preparar firmas'}</div><div class="doc-review-summary" aria-live="polite"><span><small>Documentos</small><b>${visibles.length}</b></span><span><small>Asociados</small><b data-total-asociados>${asociados}</b></span><button type="button" id="docFiltroPendientes" aria-pressed="${soloPendientes}" ${paso===2?'disabled':''}><small>Pendientes</small><b data-total-pendientes>${visibles.length-asociados}</b></button></div>${paso===1?`<div class="doc-review-toolbar"><label>Mes <input type="month" id="docMes" value="${esc(mesElegido)}"></label><button class="btn sm" id="docRenombrar" title="Renombrar los documentos seleccionados como MES - Nombre">Renombrar</button><span class="mut">MES - Nombre</span><button class="btn sm" id="docExcluir">Excluir pendientes</button></div><p class="doc-review-help">Las coincidencias seguras ya están asociadas. Selecciona un trabajador en las pendientes.</p>`:'<p class="doc-review-help">Añade una firma a los documentos que la necesiten. El resto se guardará en su carpeta.</p>'}
+  <p class="doc-review-notice" role="status">${esc(aviso)}</p>${paso===1&&soloPendientes?'<div class="doc-review-filter"><span>Mostrando solo pendientes</span><button class="btn sm" id="docVerTodos">Ver todos</button></div>':''}
+  ${paso===1?'<div class="doc-review-columns" aria-hidden="true"><span></span><span>Documento</span><span>Pág.</span><span>Estado</span><span>Trabajador</span><span>Tipo</span><span></span></div>':''}
+  <div class="doc-review-list">${paso===1&&soloPendientes&&asociados===docs.length?'<p class="mut">Todos los documentos están asociados.</p>':''}${docs.map((d,i)=>(paso===2&&!d.seleccionado)||(paso===1&&soloPendientes&&worker(d))?'':paso===1?`<div class="doc-review-row" data-doc-row="${i}"><input type="checkbox" data-seleccion="${i}" ${d.seleccionado?'checked':''} aria-label="Seleccionar documento ${i+1}"><div class="doc-review-file"><input data-nombre="${i}" aria-label="Nombre del documento ${i+1}" value="${esc(d.nombre)}" maxlength="220" title="${esc(d.nombre)}"><small title="${esc(paginas(d).map(p=>p.archivo).join(' / '))}">${esc(d.nombre_detectado||paginas(d)[0].archivo)}</small></div><span class="doc-review-pages" title="Páginas del archivo original">${esc(paginas(d).map(p=>p.pagina).join(', '))}</span><span class="pill ${worker(d)?'ok':'warn'}" data-estado="${i}" title="${esc(d.motivo||'')}">${worker(d)?'Asociado':'Pendiente'}</span><div class="doc-worker-picker"><input role="combobox" aria-label="Trabajador del documento ${i+1}" aria-autocomplete="list" aria-expanded="false" aria-controls="docOpciones${i}" autocomplete="off" data-worker-search="${i}" value="${esc(worker(d)?.nombre||'')}" placeholder="Seleccionar o buscar…"><div class="doc-worker-options" id="docOpciones${i}" role="listbox" aria-label="Trabajadores" hidden></div></div><select data-tipo="${i}" aria-label="Tipo del documento ${i+1}">${Object.entries(RR_DOC_TIPOS).map(([k,v])=>`<option value="${k}" ${d.tipo===k?'selected':''}>${esc(v)}</option>`).join('')}</select><button class="btn sm" data-preview="${i}" aria-label="Ver documento ${i+1}">Ver</button></div>`:`<div class="doc-bulk-row" data-doc-row="${i}"><input type="checkbox" checked disabled aria-label="Documento ${i+1}"><div><strong>${esc(d.nombre)}</strong><p>${esc(worker(d)?.nombre||'Sin trabajador')} · ${esc(RR_DOC_TIPOS[d.tipo])}</p><div class="doc-bulk-actions"><button class="btn sm" data-preview="${i}">Ver documento</button><button class="btn sm" data-firma="${i}">${d.firma?'Cambiar posición de firma':'Añadir firma'}</button>${d.firma?`<span class="pill ok">Firma · página ${d.firma.pagina}</span><button class="linkbtn" data-quitar-firma="${i}">Quitar firma</button>`:''}</div></div></div>`).join('')}</div><p class="doc-error" role="alert"></p><div class="doc-review-footer">${paso===2?'<button class="btn" id="docVolver">Volver</button>':'<span class="mut">Desmarca los documentos que quieras dejar pendientes.</span>'}<button class="btn" data-close>Cerrar</button><button class="btn primary" id="docContinuar">${paso===1?'Continuar':'Guardar y solicitar las firmas'}</button></div>`;
+  ov.querySelector('#docFiltroPendientes').onclick=()=>{soloPendientes=!soloPendientes;pintar();};
+  ov.querySelector('#docVerTodos')?.addEventListener('click',()=>{soloPendientes=false;pintar();});
+  ov.querySelectorAll('[data-seleccion]').forEach(b=>b.onchange=()=>{docs[Number(b.dataset.seleccion)].seleccionado=b.checked;marcarErrores();});
   ov.querySelectorAll('[data-tipo]').forEach(b=>b.onchange=()=>docs[Number(b.dataset.tipo)].tipo=b.value);
-  ov.querySelectorAll('[data-nombre]').forEach(b=>b.oninput=()=>docs[Number(b.dataset.nombre)].nombre=b.value);
-  ov.querySelectorAll('[data-buscar]').forEach(b=>b.oninput=()=>{const i=Number(b.dataset.buscar),sel=ov.querySelector(`[data-worker="${i}"]`);sel.innerHTML='<option value="">Seleccionar trabajador</option>'+opciones(docs[i],b.value);});
-  ov.querySelector('#docRenombrar')?.addEventListener('click',()=>{const m=ov.querySelector('#docMes').value;if(!/^20\d\d-(0[1-9]|1[0-2])$/.test(m)){error(Error('Selecciona el mes y año.'));return;}docs.filter(d=>d.seleccionado&&worker(d)).forEach(d=>{d.mes=m;d.nombre=nombre(m,worker(d).nombre);});pintar();});
-  ov.querySelector('#docCombinar')?.addEventListener('click',()=>{const selected=docs.filter(d=>d.seleccionado);if(selected.length<2){error(Error('Selecciona al menos dos páginas para unirlas.'));return;}if(!worker(selected[0])||selected.some(d=>String(d.worker_id)!==String(selected[0].worker_id))){error(Error('Asocia primero todas las páginas seleccionadas al mismo trabajador.'));return;}const first=selected[0];first.paginas=selected.flatMap(d=>d.paginas);first.firma=null;docs=docs.filter(d=>!d.seleccionado||d===first);pintar();});
+  ov.querySelectorAll('[data-nombre]').forEach(b=>b.oninput=()=>{const d=docs[Number(b.dataset.nombre)];d.nombre=b.value;d.autoNombre=false;b.title=b.value;marcarErrores();});
+  ov.querySelector('#docMes')?.addEventListener('change',e=>mesElegido=e.target.value);
+  ov.querySelectorAll('[data-worker-search]').forEach(input=>{
+   const i=Number(input.dataset.workerSearch),d=docs[i],list=ov.querySelector(`#docOpciones${i}`);let active=-1,results=[];
+   const cerrar=()=>{list.hidden=true;input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');input.value=worker(d)?.nombre||'';};
+   const elegir=id=>{d.worker_id=id;d.motivo='Asociación revisada manualmente';if(d.autoNombre&&worker(d)){d.nombre=nombre(d.mes,worker(d).nombre);const field=ov.querySelector(`[data-nombre="${i}"]`);field.value=d.nombre;field.title=d.nombre;}cerrar();const st=ov.querySelector(`[data-estado="${i}"]`);st.textContent=worker(d)?'Asociado':'Pendiente';st.className='pill '+(worker(d)?'ok':'warn');st.title=d.motivo;const count=docs.filter(x=>worker(x)).length;ov.querySelector('[data-total-asociados]').textContent=count;ov.querySelector('[data-total-pendientes]').textContent=docs.length-count;marcarErrores();if(soloPendientes)pintar();};
+   const mostrar=query=>{results=[{id:'',nombre:'Sin asignar',local:''},...buscarTrabajadores(lote.trabajadores,query,d.candidatos)];active=-1;input.removeAttribute('aria-activedescendant');list.innerHTML=results.map((w,n)=>`<button type="button" role="option" id="docOpcion${i}_${n}" aria-selected="${String(d.worker_id)===String(w.id)}"><strong>${esc(w.nombre)}</strong>${w.local?`<small>${esc(w.local)}</small>`:''}</button>`).join('')+(results.length===1?'<p class="mut">No hay coincidencias</p>':'');list.hidden=false;input.setAttribute('aria-expanded','true');list.querySelectorAll('button').forEach((b,n)=>{b.onpointerdown=e=>e.preventDefault();b.onclick=()=>elegir(results[n].id);});};
+   input.onfocus=()=>mostrar('');input.onclick=()=>{if(list.hidden)mostrar('');};input.oninput=()=>mostrar(input.value);
+   input.onblur=()=>cerrar();
+   input.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();cerrar();return;}if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();if(list.hidden)mostrar('');active=Math.max(0,Math.min(results.length-1,active+(e.key==='ArrowDown'?1:-1)));list.querySelectorAll('button').forEach((b,n)=>{b.classList.toggle('active',n===active);if(n===active){input.setAttribute('aria-activedescendant',b.id);b.scrollIntoView({block:'nearest'});}});}else if(e.key==='Enter'&&!list.hidden&&active>=0){e.preventDefault();elegir(results[active].id);}};
+  });
+  ov.querySelector('#docRenombrar')?.addEventListener('click',e=>accionLote(e.currentTarget,'Renombrando…',()=>{if(!docs.some(d=>d.seleccionado))throw Error('Selecciona algún documento para renombrarlo.');const r=renombrarLote(docs,lote.trabajadores,mesElegido);aviso=`${r.cambiados} documentos renombrados.${r.pendientes?` ${r.pendientes} se renombrarán al seleccionar su trabajador.`:''}`;pintar();}));
+  ov.querySelector('#docExcluir')?.addEventListener('click',()=>{const pendientes=docs.filter(d=>!worker(d));pendientes.forEach(d=>d.seleccionado=false);aviso=`${pendientes.length} pendientes excluidos. Continuarás con ${docs.filter(d=>d.seleccionado).length} documentos seleccionados.`;pintar();});
   ov.querySelectorAll('[data-preview]').forEach(b=>b.onclick=async()=>{const d=docs[Number(b.dataset.preview)],view=modal('Revisar documento','<div id="docVista"></div><p class="doc-error"></p>');view.querySelector('.modal').classList.add('doc-preview-modal');let visor;try{const m=await import('/panel/pdf-firma.js');const pages=paginas(d);if(pages.length>1){const select=document.createElement('select');select.innerHTML=pages.map((p,i)=>`<option value="${i}">Página ${i+1}</option>`).join('');view.querySelector('.modal-b').prepend(select);select.onchange=()=>load(Number(select.value));}async function load(i){visor?.destroy();visor=await m.visorPdf(view.querySelector('#docVista'),await rrPdfBytes(`/api/rrhh/documentos-masivos/${lote.id}/pagina/${pages[i].id}`));}await load(0);const ob=new MutationObserver(()=>{if(!view.isConnected){visor?.destroy();ob.disconnect();}});ob.observe(document.body,{childList:true});}catch(e){view.querySelector('.doc-error').textContent=e.message;}});
   ov.querySelectorAll('[data-firma]').forEach(b=>b.onclick=async()=>{const d=docs[Number(b.dataset.firma)],pos=await rrColocarFirma(d.paginas.map(id=>`/api/rrhh/documentos-masivos/${lote.id}/pagina/${id}`),d.firma);if(pos){d.firma=pos;pintar();}});
   ov.querySelectorAll('[data-quitar-firma]').forEach(b=>b.onclick=()=>{docs[Number(b.dataset.quitarFirma)].firma=null;pintar();});
   ov.querySelector('#docVolver')?.addEventListener('click',()=>{paso=1;pintar();});
-  ov.querySelector('#docContinuar').onclick=async e=>{if(ocupado)return;const list=docs.filter(d=>d.seleccionado);if(!list.length||list.some(d=>!worker(d))){error(Error('Selecciona documentos y asigna un trabajador a cada uno antes de continuar.'));return;}if(list.some(d=>!d.nombre.trim().toLowerCase().endsWith('.pdf'))){error(Error('Cada nombre debe terminar en .pdf.'));return;}if(paso===1){paso=2;pintar();return;}ocupado=true;e.target.disabled=true;try{const r=await apiSend('POST',`/api/rrhh/documentos-masivos/${lote.id}/guardar`,{documentos:list.map(({paginas,worker_id,tipo,nombre,firma})=>({paginas,worker_id,tipo,nombre,firma}))});ov.remove();toast(`${r.guardados||0} guardados · ${r.duplicados||0} ya existentes · ${r.pendientes||0} páginas pendientes`);if(RRSEG.sel)rrSelWorker(RRSEG.sel.id);}catch(err){error(err);e.target.disabled=false;}finally{ocupado=false;}};
+  ov.querySelector('#docContinuar').onclick=async e=>{if(ocupado)return;const list=docs.filter(d=>d.seleccionado);if(!list.length){error(Error('Selecciona al menos un documento para continuar.'));return;}erroresVisibles=true;if(soloPendientes&&erroresRevision(docs,lote.trabajadores).length){soloPendientes=false;pintar();}const errores=marcarErrores(true);if(errores.length){error(Error(`Revisa los campos marcados en ${new Set(errores.map(e=>e.i)).size} documentos, o desmárcalos para continuar sin ellos.`));return;}if(paso===1){paso=2;pintar();return;}ocupado=true;e.target.disabled=true;try{const r=await enviarLote(`/api/rrhh/documentos-masivos/${lote.id}/guardar`,{documentos:list.map(({paginas,worker_id,tipo,nombre,firma})=>({paginas,worker_id,tipo,nombre,firma}))});ov.remove();toast(`${r.guardados||0} guardados · ${r.duplicados||0} ya existentes · ${r.pendientes||0} páginas pendientes`);if(RRSEG.sel)rrSelWorker(RRSEG.sel.id);}catch(err){error(err);e.target.disabled=false;}finally{ocupado=false;}};
+  marcarErrores();
  }
- function opciones(d,query=''){const norm=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();return lote.trabajadores.filter(w=>String(w.id)===String(d.worker_id)||norm(query).split(/\s+/).every(t=>norm(w.nombre).includes(t))).sort((a,b)=>Number(d.candidatos?.includes(b.id))-Number(d.candidatos?.includes(a.id))).map(w=>`<option value="${w.id}" ${String(w.id)===String(d.worker_id)?'selected':''}>${d.candidatos?.includes(w.id)?'Posible coincidencia · ':''}${esc(w.nombre)} · ${esc(w.local||'')}</option>`).join('');}
- ov.querySelector('#docLoteForm').onsubmit=async e=>{e.preventDefault();const btn=e.target.querySelector('button');btn.disabled=true;btn.textContent='Analizando…';try{const fd=new FormData();for(const file of e.target.archivos.files)fd.append('archivos',file);const r=await fetch('/api/rrhh/documentos-masivos',{method:'POST',headers:{Authorization:'Bearer '+token()},body:fd});if(await fueraDeSesion(r))return;const j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'No se pudo analizar');preparar(j);}catch(err){error(err);btn.disabled=false;btn.textContent='Analizar documentos';}};
+ ov.querySelector('#docLoteForm').onsubmit=async e=>{e.preventDefault();const btn=e.target.querySelector('button');btn.disabled=true;btn.textContent='Analizando…';try{const files=Array.from(e.target.archivos.files);validarArchivosLote(files);const fd=new FormData();for(const file of files)fd.append('archivos',file);const j=await enviarLote('/api/rrhh/documentos-masivos',fd);preparar(j);}catch(err){error(err);btn.disabled=false;btn.textContent='Analizar documentos';}};
  try{const j=await apiRaw('/api/rrhh/documentos-masivos');if(!ov.querySelector('#docLotesPendientes'))return;ov.querySelector('#docLotesPendientes').innerHTML=j.data.length?`<h3>Lotes pendientes</h3><p class="mut">Se conservan durante 7 días. Las asociaciones sin guardar se vuelven a proponer al abrir.</p>${j.data.map(l=>`<div class="doc-bulk-actions"><button class="btn sm" data-lote="${l.id}">Continuar lote · ${esc(String(l.creado_en).slice(0,16).replace('T',' '))}</button><button class="linkbtn" data-descartar="${l.id}">Descartar lote</button></div>`).join('')}`:'';ov.querySelectorAll('[data-lote]').forEach(b=>b.onclick=()=>abrir(b.dataset.lote));ov.querySelectorAll('[data-descartar]').forEach(b=>b.onclick=async()=>{try{await apiSend('POST',`/api/rrhh/documentos-masivos/${b.dataset.descartar}/descartar`,{});b.parentElement.remove();}catch(e){error(e);}});}catch(e){error(e);}
 }
 
@@ -5556,8 +5602,7 @@ setInterval(horRefrescarProgreso,30000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')horRefrescarProgreso();});
 
 function horPh() {
-  const amb = HOR.local ? ` · <b>${esc(nombreCortoLocal(HOR.local))}</b>` : "";
-  return `<div class="ph"><div class="eyebrow">Personas</div><h1>Horarios</h1><div class="sub">Horarios del equipo${amb}</div></div>`;
+  return `<div class="ph rr-ph-compact"><h1>Horarios</h1></div>`;
 }
 // Espejo de franjaCorta() de tiempo.js. Medianoche como FINAL se escribe 24, no 0: un
 // turno de 16:00 a 00:00 salía «16-0», que parece una errata.
@@ -7146,12 +7191,12 @@ async function loadFichajes() {
   FIC.local = amb;
   // Sin local no se pide NADA: quién está dentro, la bolsa y las tablets son de un sitio.
   if (!amb) {
-    view.innerHTML = `<div class="ph"><div class="eyebrow">Personas</div><h1>Fichajes</h1><div class="sub">Registro de jornada</div></div>`
+    view.innerHTML = `<div class="ph rr-ph-compact"><h1>Fichajes</h1></div>`
       + pideEstablecimiento("Elige un establecimiento", "Trabajando ahora, la bolsa de horas y las tablets son de un local concreto.");
     return;
   }
 
-  view.innerHTML = `<div class="ph"><div class="eyebrow">Personas</div><h1>Fichajes</h1><div class="sub">Registro de jornada${amb ? ` · <b>${esc(nombreCortoLocal(amb))}</b>` : ""}</div></div>
+  view.innerHTML = `<div class="ph rr-ph-compact"><h1>Fichajes</h1></div>
     <div class="toolbar tabstrip" style="margin-bottom:12px" id="ficTabs">
       <button class="btn ${FIC.tab === "hoy" ? "primary" : ""}" data-fictab="hoy">Trabajando ahora</button>
       <button class="btn ${FIC.tab === "revision" ? "primary" : ""}" data-fictab="revision">Revisión</button>
@@ -9702,7 +9747,7 @@ function facFicha(id) {
       <summary><h3>Productos y costes leídos</h3><span class="foldr"><span class="pill ${["dudas","descuadre"].includes(f.lineas_estado) ? "bad" : ""}" id="ficNLin">${["dudas","descuadre"].includes(f.lineas_estado) ? "Por revisar" : "Ver detalle"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
       <div id="ficLinCuerpo"><p class="mut" style="margin:0">Cargando…</p></div>
     </details>
-    ${f.revisar&&f.revisar!=='[]'?'<p><label><input type="checkbox" id="ficConfirmarAvisos"> He comprobado los avisos de lectura con el original y doy por buenos los datos</label></p><p class="mut">Estos avisos quedarán resueltos para esta factura. Si cambian sus datos, se comprobarán de nuevo. El IVA y las líneas pendientes se revisan por separado.</p>':''}
+    ${f.revisar&&f.revisar!=='[]'?'<p><label><input type="checkbox" id="ficConfirmarAvisos"> Aceptar como correcto: he comprobado estos avisos con el original</label></p><p class="mut">Estos avisos quedarán resueltos para esta factura. Si cambian sus datos, se comprobarán de nuevo. El IVA y las líneas pendientes se revisan por separado.</p>':''}
     <p><label><input type="checkbox" id="ficRecordarLocal"> Recordar este local para próximas facturas de este CIF y esta empresa</label></p><p class="mut">Márcalo solo si todas las compras de este proveedor para esa empresa deben ir al mismo local. Puedes cambiar o desactivar la regla en «Reglas aprendidas».</p>
     <div class="fic-pie">
       <button class="linkbtn danger" id="ficDel">Eliminar factura</button>
@@ -9759,7 +9804,7 @@ function facFicha(id) {
       // suman las líneas, cuánto dice la factura ni de cuánto va la cosa. Sin eso no se puede
       // perseguir, y una factura marcada que no se puede revisar acaba ignorándose.
       const dif = j.diferencia;
-      const cuadre = dif == null ? ""
+      const cuadre = j.factura.sin_valorar ? '<p class="mut">Albarán sin valorar. Los precios de referencia son orientativos y no cuentan como gasto facturado.</p>' : dif == null ? ""
         : Math.abs(dif) <= 0.02
           ? `<p class="fic-suma" id="ficCuadre"><span class="ok">✓ Las líneas suman la base imponible (${esc(eur2(j.suma))})</span></p>`
           : `<p class="fic-nota" id="ficCuadre" style="margin:0 0 10px"><b>No cuadra por ${esc(eur2(Math.abs(dif)))}.</b>
@@ -9776,7 +9821,7 @@ function facFicha(id) {
            <tbody>${ls.map((l) => `<tr class="${l.dudosa ? "dudosa" : ""}" data-lin="${l.linea_id}">
              <td>${esc(l.descripcion || "—")}${l.dudosa ? ' <span class="pill warn" style="font-size:9.5px" title="No se leyó del todo: sus cantidades pueden no ser exactas">dudosa</span>' : ""}</td>
              <td class="r"><input class="lincel" data-campo="cantidad" data-id="${l.linea_id}" value="${esc(l.cantidad != null ? num(l.cantidad) : "")}" inputmode="decimal">${l.unidad ? ` <span class="mut" style="font-size:11px">${esc(l.unidad)}</span>` : ""}</td>
-             <td class="r"><input class="lincel" data-campo="precio_unitario" data-id="${l.linea_id}" value="${esc(l.precio_unitario != null ? String(l.precio_unitario).replace(".", ",") : "")}" inputmode="decimal"></td>
+             <td class="r"><input class="lincel" data-campo="precio_unitario" data-id="${l.linea_id}" value="${esc(l.precio_unitario != null ? String(l.precio_unitario).replace(".", ",") : "")}" inputmode="decimal">${precioReferenciaHtml(l)}</td>
              <td class="r"><input class="lincel" data-campo="importe" data-id="${l.linea_id}" value="${esc(l.importe != null ? String(l.importe).replace(".", ",") : "")}" inputmode="decimal"></td>
              ${/* Los SUBTOTALES se cuelan como si fueran un producto: «Cooperativa 128 €» que
                    en realidad es la suma de las de arriba. Contada como producto infla el
@@ -10173,10 +10218,19 @@ async function facCargarRecepciones(antes = null, navegacion = "primera") {
   if (navegacion === "prev") FAC_RECEPCIONES_HIST.pop();
   if (navegacion === "primera") FAC_RECEPCIONES_HIST = [];
   FAC_RECEPCIONES_ANTES = antes;
-  if (!filas.length && !antes) { caja.innerHTML = ""; return; }
+  if (!filas.length && !antes && !pagina.propuestas?.length) { caja.innerHTML = ""; return; }
   const errores = Number(pagina.errores) || 0;
-  const estados = {pendiente:'Pendiente de lectura',leyendo:'Leyendo',error:'Error de lectura',revision:'Comprobar datos'};
-  caja.innerHTML = `<details class="card fold p0" ${estaba ? "open" : ""} style="margin-bottom:12px"><summary style="padding:16px"><h3>Documentos recibidos</h3><span class="foldr"><span class="pill ${errores ? 'bad' : ''}">${errores ? `${errores} por revisar` : `${pagina.total} en curso`}</span><span class="car">${ic('chev',16)}</span></span></summary><p class="mut" style="padding:0 16px">Recepción de tus establecimientos · ${pagina.total} documentos en curso. Los fallos de conexión se reintentan. Los documentos con datos dudosos no entran en los totales hasta que los revises.</p><div class="rows">${filas.map(f => `<div class="row"><div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(!f.nombre || f.nombre === "noname" ? "Adjunto sin nombre · #" + f.id : f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · ${esc(estados[f.estado] || f.estado)} · ${Number(f.intentos || 0)} intentos</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : ''}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.estado==='revision' ? `<button class="btn primary sm" data-act="fac-recepcion-revision" data-id="${esc(f.id)}">Revisar datos</button>` : ''}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`).join('')}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div></details>`;
+  const estados = {pendiente:'Pendiente de lectura',leyendo:'Leyendo',error:'Error de lectura',revision:'Comprobar datos',paginas:'Comprobar páginas'};
+  caja.innerHTML = `<details class="card fold p0" ${estaba ? "open" : ""} style="margin-bottom:12px"><summary style="padding:16px"><h3>Documentos recibidos</h3><span class="foldr"><span class="pill ${errores ? 'bad' : ''}">${errores ? `${errores} por revisar` : `${pagina.total} en curso`}</span><span class="car">${ic('chev',16)}</span></span></summary><p class="mut" style="padding:0 16px">Recepción de tus establecimientos · ${pagina.total} documentos en curso. Los fallos de conexión se reintentan. Los documentos con datos dudosos no entran en los totales hasta que los revises.</p>${(pagina.propuestas||[]).map(p=>`<div class="row"><div class="grow"><div class="t1">${p.estado==='unidas'?'Páginas unidas':'Posibles páginas del mismo documento'}</div><div class="t2">${esc(p.motivo||'Comprueba los originales juntos')}</div></div><button class="btn sm" data-act="fac-paginas" data-id="${esc(p.id)}">${p.estado==='unidas'?'Ver unión':'Revisar páginas'}</button></div>`).join('')}<div class="rows">${filas.map(f => `<div class="row">${f.tiene_original!==false&&['pendiente','revision','error'].includes(f.estado)?`<input type="checkbox" class="fac-pagina-elegida" value="${esc(f.id)}" aria-label="Seleccionar documento ${esc(f.id)}">`:''}<div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(!f.nombre || f.nombre === "noname" ? "Adjunto sin nombre · #" + f.id : f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · ${esc(estados[f.estado] || f.estado)} · ${Number(f.intentos || 0)} intentos</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : ''}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.paginas_id?`<button class="btn primary sm" data-act="fac-paginas" data-id="${esc(f.paginas_id)}">Revisar páginas</button>`:''}${f.estado==='revision' ? `<button class="btn primary sm" data-act="fac-recepcion-revision" data-id="${esc(f.id)}">Revisar datos</button>` : ''}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`).join('')}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-paginas-seleccion">Unir dos documentos como páginas</button><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div></details>`;
+}
+async function facPaginas(id){
+ try{const {abrirPaginas}=await import('./paginas.mjs');await abrirPaginas(id,{apiRaw,apiSend,modal,token,esc,toast,actualizar:facCargarRecepciones});}
+ catch(e){toast(e.message);}
+}
+async function facPaginasSeleccion(){
+ const ids=[...document.querySelectorAll('#facRecepciones .fac-pagina-elegida:checked')].map(e=>Number(e.value));
+ if(ids.length!==2)return toast('Selecciona dos documentos para comprobar sus páginas');
+ try{const j=await apiSend('POST','/api/facturas/paginas',{ids});await facCargarRecepciones();await facPaginas(j.id);}catch(e){toast(e.message);}
 }
 async function facOriginalRecepcion(id,nombre) {
   try {
@@ -11721,7 +11775,7 @@ async function refrescarCompras() {
           <td>${esc(l.descripcion)}${l.dudosa ? ' <span class="fic-tag aviso">sin leer del todo</span>' : ""}</td>
           <td class="mut">${esc(l.proveedor || "")}</td>
           <td style="text-align:right">${l.cantidad != null ? esc(num(l.cantidad)) + (l.unidad ? " " + esc(l.unidad) : "") : "—"}</td>
-          <td style="text-align:right">${l.precio_unitario != null ? esc(eur2(l.precio_unitario)) : "—"}</td>
+          <td style="text-align:right">${l.precio_unitario != null ? esc(eur2(l.precio_unitario)) : "—"}${precioReferenciaHtml(l)}</td>
           <td style="text-align:right">${l.importe != null ? esc(eur2(l.importe)) : "—"}</td>
           <td style="text-align:right"><button class="btn sm" data-compfac="${l.factura_id}">Ver factura</button></td>
         </tr>`).join("")}</tbody></table></div></details>` : "";
@@ -11780,12 +11834,15 @@ async function comprasReleer() {
   refrescarCompras();
 }
 
+function precioReferenciaHtml(l){
+ return l.precio_referencia!=null?`<small class="mut" style="display:block;min-width:120px">Referencia: ${esc(eur2(l.precio_referencia))}${l.unidad?'/'+esc(l.unidad):''}<br>${esc(fechaCorta(l.fecha_referencia))} · factura #${esc(l.factura_referencia)}${l.importe_referencia!=null?`<br>Valor estimado: ${esc(eur2(l.importe_referencia))}`:''}</small>`:l.sin_valorar?'<small class="mut">Sin valorar</small>':'';
+}
 async function comprasVerFactura(id) {
   let j;
   try { j = await apiRaw("/api/facturas/" + id + "/lineas"); } catch (e) { return toast(e.message); }
   const f = j.factura;
   modal(`${f.proveedor || "Factura"} · ${f.numero_factura || "s/n"}`, `
-    <p class="mut" style="margin:0 0 12px">${esc(f.fecha || "")} · ${esc(nombreCortoLocal(f.local))} · base ${esc(eur(f.base_imponible || 0))}</p>
+    <p class="mut" style="margin:0 0 12px">${esc(f.fecha || "")} · ${esc(nombreCortoLocal(f.local))} · ${f.sin_valorar?"Sin valorar":`base ${f.base_imponible==null?"—":esc(eur(f.base_imponible))}`}</p>
     ${(() => { const av = facRevisarTxt(f); return av.length
       ? `<p class="fic-nota"><b>Revisa lo leído.</b> ${av.map(esc).join(" ")}</p>` : ""; })()}
     ${f.lineas_aviso ? `<p class="fic-nota">${esc(f.lineas_aviso)}</p>` : ""}
@@ -11794,7 +11851,7 @@ async function comprasVerFactura(id) {
       <tbody>${j.lineas.map((l) => `<tr${l.dudosa ? ' class="mut"' : ""}>
         <td>${esc(l.descripcion)}</td>
         <td style="text-align:right">${l.cantidad != null ? esc(num(l.cantidad)) + (l.unidad ? " " + esc(l.unidad) : "") : "—"}</td>
-        <td style="text-align:right">${l.precio_unitario != null ? esc(eur2(l.precio_unitario)) : "—"}</td>
+        <td style="text-align:right">${l.precio_unitario != null ? esc(eur2(l.precio_unitario)) : "—"}${precioReferenciaHtml(l)}</td>
         <td style="text-align:right">${l.importe != null ? esc(eur2(l.importe)) : "—"}</td></tr>`).join("")}</tbody></table></div>`
       : '<p class="mut" style="margin:0">Esta factura no tiene el detalle leído.</p>'}
     ${f.drive_url ? `<p style="margin:14px 0 0"><a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener">Ver el original</a></p>` : ""}
@@ -18230,6 +18287,8 @@ document.addEventListener("click", (e) => {
   else if (act === "fac-recepcion-anterior") facCargarRecepciones(FAC_RECEPCIONES_HIST.at(-1) || null, "prev");
   else if (act === "fac-recepcion-siguiente") facCargarRecepciones(t.dataset.cursor, "next");
   else if (act === "fac-recepcion-original") facOriginalRecepcion(t.getAttribute("data-id"),t.getAttribute("data-nombre"));
+  else if (act === "fac-paginas") facPaginas(t.getAttribute("data-id"));
+  else if (act === "fac-paginas-seleccion") facPaginasSeleccion();
   else if (act === "fac-recepcion-revision") facRevisionRecepcion(t.getAttribute("data-id"));
   else if (act === "fac-recepcion-reintentar") facReintentarRecepcion(t.getAttribute("data-id"));
   else if (act === "fac-tab") facTab(t.getAttribute("data-tab"));

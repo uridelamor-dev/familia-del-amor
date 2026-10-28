@@ -13,7 +13,7 @@ function detalleDocumento(f) {
  const fecha=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d.fecha || ''));
  const importe=d.total !== null && d.total !== undefined && String(d.total).trim() !== '' && Number.isFinite(Number(d.total))
    ? new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR'}).format(Number(d.total)) : 'Sin confirmar';
- const titulo=({registrado:'✅ Documento digitalizado',duplicado:'↪️ Documento ya registrado',revision:'🔎 Documento pendiente de revisión',error:'⚠️ Lectura pendiente',descartado:'Documento descartado: no es una compra',sustituido:'Documento sustituido por la nueva foto'})[f.estado] || '⏳ Documento recibido · en cola';
+ const titulo=({registrado:'✅ Documento digitalizado',duplicado:'↪️ Documento ya registrado',revision:'🔎 Documento pendiente de revisión',error:'⚠️ Lectura pendiente',descartado:'Documento descartado: no es una compra',paginas:'🔎 Posibles páginas del mismo documento',sustituido:f.resultado?.paginas?'Páginas incorporadas a otro documento':'Documento sustituido por la nueva foto'})[f.estado] || '⏳ Documento recibido · en cola';
  const lineas=[`*${titulo} · #${f.recepcion_id || f.id}*`];
  if(['registrado','revision'].includes(f.estado)) {
   lineas.push(`Proveedor: ${texto(d.proveedor) || 'Sin confirmar'}`,`Importe: ${importe}`,`Fecha: ${fecha ? `${fecha[3]}/${fecha[2]}/${fecha[1]}` : 'Sin confirmar'}`);
@@ -26,7 +26,8 @@ function detalleDocumento(f) {
  return lineas.join('\n');
 }
 export function resumenTanda(filas) {
- return filas.map(detalleDocumento).join('\n\n');
+ const vistos=new Set();
+ return filas.filter(f=>{const id=f.recepcion_id;if(!id)return true;if(vistos.has(String(id)))return false;vistos.add(String(id));return true;}).map(detalleDocumento).join('\n\n');
 }
 export function crearTandas({db,enviar,lock,permitido=async()=>true}) {
  async function registrar({grupo,mensaje,recepcionId,citado,respondeA}) {

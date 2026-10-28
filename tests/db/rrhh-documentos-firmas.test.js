@@ -15,4 +15,14 @@ describe('lotes y firma real en PostgreSQL aislado',{skip:await disponible()?fal
  test('volver a subir el mismo PDF para el mismo trabajador no duplica el archivo',async()=>{const otro=(await upload()).data;const r=await call('POST','/api/rrhh/documentos-masivos/:id/guardar',{params:{id:otro.id},body:{documentos:[{paginas:[otro.paginas[0].id],worker_id:1,tipo:'nomina',nombre:'Otro nombre.pdf'}]}});assert.equal(r.data.duplicados,1);assert.equal((await db.raw('SELECT * FROM hr_documentos')).rows.length,1);});
  test('solo el trabajador propietario puede descargar y firmar',async()=>{assert.equal((await call('GET','/api/mis-documentos/:id/archivo',{params:{id:documento.id},user:{id:2}})).status,404);const r=await call('GET','/api/mis-documentos',{user:{id:2}});assert.equal(r.data.data.length,0);const own=await call('GET','/api/mis-documentos/:id/archivo',{params:{id:documento.id},user:{id:1}});assert.ok(Buffer.isBuffer(own.data));});
  test('requiere consentimiento, firma una vez y protege original e historial',async()=>{const body={consentimiento:true,trazos:[[[0,.5],[.2,.1],[.4,.8],[.6,.2],[1,.5]]]};assert.equal((await call('POST','/api/mis-documentos/:id/firmar',{params:{id:documento.id},user:{id:2},body})).status,404);assert.equal((await call('POST','/api/mis-documentos/:id/firmar',{params:{id:documento.id},user:{id:1},body:{...body,consentimiento:false}})).status,400);const a=await call('POST','/api/mis-documentos/:id/firmar',{params:{id:documento.id},user:{id:1},body});assert.equal(a.data.ok,true);const b=await call('POST','/api/mis-documentos/:id/firmar',{params:{id:documento.id},user:{id:1},body});assert.equal(b.data.repetido,true);const s=(await db.raw('SELECT * FROM rrhh_firmas_panel')).rows[0];assert.equal(s.estado,'firmado');assert.deepEqual(s.original,firma.original);assert.equal(s.firmado_por,1);await assert.rejects(db.raw('DELETE FROM hr_documentos WHERE id=$1',[documento.id]),/foreign key/);});
+ test('guarda dos páginas distintas como documentos separados del mismo trabajador',async()=>{
+  const pdf=await PDFDocument.create();pdf.addPage([400,600]);pdf.addPage([500,700]);const buffer=Buffer.from(await pdf.save());
+  const nuevo=(await call('POST','/api/rrhh/documentos-masivos',{files:[{originalname:'NOMINES 112026.pdf',size:buffer.length,buffer}]})).data;
+  const before=(await db.raw('SELECT COUNT(*)::int AS n FROM hr_documentos WHERE worker_id=1')).rows[0].n;
+  const r=await call('POST','/api/rrhh/documentos-masivos/:id/guardar',{params:{id:nuevo.id},body:{documentos:nuevo.paginas.map(p=>({paginas:[p.id],worker_id:1,tipo:'nomina',nombre:'Noviembre 2026 - Persona Prueba.pdf'}))}});
+  assert.equal(r.status,200);assert.equal(r.data.guardados,2);assert.equal(r.data.duplicados,0);
+  const after=(await db.raw('SELECT COUNT(*)::int AS n FROM hr_documentos WHERE worker_id=1')).rows[0].n;
+  assert.equal(after-before,2);
+ });
+
 });

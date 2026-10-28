@@ -4,6 +4,11 @@ import { IDENTIDAD_CTE, telefonoContacto } from './contacto-conversacion.js';
 export const CLIENTE_SQL = `w.jid ~ '^[0-9]+@(s[.]whatsapp[.]net|lid)$'
  AND NOT EXISTS (SELECT 1 FROM whatsapp_messages i WHERE i.jid=w.jid AND i.tipo='interno')`;
 export function jidValido(jid) { return /^\d+@(s\.whatsapp\.net|lid)$/.test(String(jid || '')); }
+export function conversacionPendiente(cliente,tarea){
+ if(['pendiente','en_curso'].includes(tarea?.estado)||cliente.estado_ia==='pausada')return true;
+ const nuevo=!tarea?.cerrada_en||new Date(tarea.cerrada_en)<new Date(cliente.creado_en);
+ return nuevo&&['intercambio','recibido'].includes(cliente.tipo)&&(!cliente.respuesta||cliente.respuesta==='(sin respuesta registrada)');
+}
 export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquear, olvidar, resolverTelefono,atencion}) {
  const permiso=auth(['direccion','marketing']);
  const ruta='/api/conversaciones';
@@ -41,7 +46,8 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
    FROM identidades w LEFT JOIN wa_atencion a ON a.jid=w.jid
    WHERE ${visibleSQL} AND ($2='' OR w.nombre ILIKE '%'||$2||'%' OR COALESCE(w.telefono_visible,'') ILIKE '%'||$2||'%')
    AND ($3::boolean=false OR a.estado IN ('pendiente','en_curso') OR w.estado_ia='pausada' OR ((a.cerrada_en IS NULL OR a.cerrada_en<w.creado_en::timestamptz) AND w.tipo IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)')))
-   ORDER BY COALESCE(w.fijado,0) DESC,w.creado_en::timestamptz DESC NULLS LAST,w.jid LIMIT 51 OFFSET $4`,[req.user?.rol==='direccion',q,req.query.pendientes==='1',offset]);
+   AND ($5='todos' OR ($5='clientes' AND NOT w.interno AND w.jid NOT LIKE '%@g.us') OR ($5='internas' AND (w.interno OR w.jid LIKE '%@g.us')))
+   ORDER BY COALESCE(w.fijado,0) DESC,w.creado_en::timestamptz DESC NULLS LAST,w.jid LIMIT 51 OFFSET $4`,[req.user?.rol==='direccion',q,req.query.pendientes==='1',offset,['clientes','internas'].includes(req.query.tipo)?req.query.tipo:'todos']);
   const sync=await pool.query('SELECT actualizado_en,estado FROM wa_bandeja_sync WHERE id=1');
   res.json({ok:true,data:r.rows.slice(0,50),mas:r.rows.length>50,total:r.rows[0]?.total||0,sync:sync.rows[0]||null,connected:listo()});
  }));
@@ -57,7 +63,8 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
   if(cursor&&(!Array.isArray(cursor)||cursor.length!==2||!Number.isFinite(Date.parse(cursor[0]))))return res.status(400).json({ok:false,error:'Página no válida'});
   const r=await pool.query(`WITH ${ARCHIVO_CTE} SELECT clave AS id,mensaje,respuesta,tipo,fecha AS creado_en,adjuntos FROM eventos WHERE jid=$1 AND ($2::timestamptz IS NULL OR (fecha,clave)<($2::timestamptz,$3::text)) ORDER BY fecha DESC,clave DESC LIMIT 101`,[jid,cursor?.[0]||null,cursor?.[1]||'']);
   const datos=r.rows.slice(0,100).reverse();
-  res.json({ok:true,data:datos,mas:r.rows.length>100,cursor:datos.length?[datos[0].creado_en,datos[0].id]:null,cliente:c.rows[0],atencion:(await pool.query('SELECT * FROM wa_atencion WHERE jid=$1',[jid])).rows[0]||null,connected:listo()});
+  const tarea=(await pool.query('SELECT * FROM wa_atencion WHERE jid=$1',[jid])).rows[0]||null;
+  res.json({ok:true,pendiente:conversacionPendiente(c.rows[0],tarea),data:datos,mas:r.rows.length>100,cursor:datos.length?[datos[0].creado_en,datos[0].id]:null,cliente:c.rows[0],atencion:tarea,connected:listo()});
  }));
  app.get(ruta+'/contactos',permiso,wrap(async(req,res)=>{
   const q=String(req.query.q||'').trim().slice(0,100);
