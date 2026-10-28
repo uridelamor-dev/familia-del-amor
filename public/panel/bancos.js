@@ -1,5 +1,5 @@
 /* Bancos: importación guiada. Los datos quedan en la base privada, nunca en uploads públicos. */
-let BANCO={empresa:'',cuenta:'',mes:'',config:null,datos:[],version:0};
+let BANCO={empresa:'',cuenta:'',mes:'',config:null,datos:[],version:0,lectura:0,pendientes:false};
 const banEuro=n=>((Number(n)||0)/100).toLocaleString('es-ES',{style:'currency',currency:'EUR'});
 const banMesAnterior=()=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');};
 function banPeriodo(id,valor){
@@ -19,7 +19,7 @@ async function loadBancos(){
   BANCO.datos=[];
   view.innerHTML=`<div class="ph"><div class="eyebrow">Contabilidad</div><h1>Bancos</h1><p class="sub">Sube el extracto del mes y revisa qué cobros y pagos están justificados.</p></div>
    <div class="toolbar"><button class="btn primary" id="banSubir">Subir extracto</button><button class="btn" id="banCuentaNueva">Añadir cuenta</button></div>
-   <div class="card ban-card"><div class="toolbar"><label>Empresa o titular fiscal<select id="banEmpresa"><option value="">Elige el titular fiscal</option>${c.empresas.map(e=>`<option value="${esc(e)}" ${e===BANCO.empresa?'selected':''}>${esc(e)}</option>`).join('')}</select></label><label>Cuenta<select id="banCuenta" ${!cuentas.length?'disabled':''}>${!cuentas.length?'<option>Sin cuentas para este titular</option>':''}${cuentas.map(x=>`<option value="${x.id}" ${String(x.id)===String(BANCO.cuenta)?'selected':''}>${esc(x.nombre)} · ${esc(x.empresa)} · •••• ${esc(x.ultimos4)}</option>`).join('')}</select></label>${banPeriodo('banFiltro',BANCO.mes)}<label><input type="checkbox" id="banPend"> Mostrar solo movimientos pendientes</label></div><p class="mut">Importes en euros. Las entradas y salidas de banco no equivalen al beneficio. La cuenta bancaria distingue las cuentas del mismo titular (por ejemplo, Sabadell y CaixaBank). El filtro de pendientes oculta los movimientos ya clasificados o conciliados.</p><div id="banResumen"></div></div>
+   <div class="card ban-card"><div class="toolbar"><label>Empresa o titular fiscal<select id="banEmpresa"><option value="">Elige el titular fiscal</option>${c.empresas.map(e=>`<option value="${esc(e)}" ${e===BANCO.empresa?'selected':''}>${esc(e)}</option>`).join('')}</select></label><label>Cuenta<select id="banCuenta" ${!cuentas.length?'disabled':''}>${!cuentas.length?'<option>Sin cuentas para este titular</option>':''}${cuentas.map(x=>`<option value="${x.id}" ${String(x.id)===String(BANCO.cuenta)?'selected':''}>${esc(x.nombre)} · ${esc(x.empresa)} · •••• ${esc(x.ultimos4)}</option>`).join('')}</select></label>${banPeriodo('banFiltro',BANCO.mes)}<label><input type="checkbox" id="banPend" ${BANCO.pendientes?'checked':''}> Mostrar solo movimientos pendientes</label></div><p class="mut">Importes en euros. Las entradas y salidas de banco no equivalen al beneficio. La cuenta bancaria distingue las cuentas del mismo titular (por ejemplo, Sabadell y CaixaBank). El filtro de pendientes oculta los movimientos ya clasificados o conciliados.</p><div id="banResumen"></div></div>
    <div id="banMovimientos"></div><details class="card ban-card"><summary>Importaciones y ayuda</summary><div id="banHistorial"></div><p>Descarga Excel (.xlsx o .xls) o CSV de tu banco con los movimientos de un mes. No se admite PDF ni Norma 43.</p><p>Se comprueban coincidencias por fecha, concepto, importe, saldo y referencia. Revisa la vista previa si hay operaciones idénticas o exportaciones con un formato distinto.</p><p>Silvia recibirá un recordatorio mensual por WhatsApp a partir de las 10:00 del día 1. Si WhatsApp está desconectado, se intentará al reconectar. ${c.recordatorio?'Último estado: '+esc(c.recordatorio.mes)+' · '+esc(c.recordatorio.estado)+'.':''}</p></details>`;
   document.getElementById('banEmpresa').onchange=async e=>{BANCO.empresa=e.target.value;BANCO.cuenta='';await loadBancos();};
   document.getElementById('banCuentaNueva').onclick=()=>banCrearCuenta();
@@ -33,18 +33,21 @@ async function loadBancos(){
 async function banCargar(){
  if(!BANCO.cuenta){document.getElementById('banMovimientos').innerHTML='<div class="card ban-card">Selecciona el titular fiscal y añade una de sus cuentas para empezar. Nunca pedimos claves del banco.</div>';return;}
  if(!BANCO.mes)return;
- const cuenta=BANCO.cuenta,mes=BANCO.mes;try{
+ const lectura=++BANCO.lectura,version=BANCO.version,cuenta=BANCO.cuenta,mes=BANCO.mes;
+ BANCO.datos=[];document.getElementById('banResumen').innerHTML='';document.getElementById('banMovimientos').innerHTML='<p class="mut">Cargando movimientos…</p>';document.getElementById('banHistorial').innerHTML='';
+ try{
  const r=await apiRaw('/api/bancos/movimientos?cuenta='+cuenta+'&mes='+encodeURIComponent(mes));
- if(CURRENT!=='bancos'||cuenta!==BANCO.cuenta||mes!==BANCO.mes)return;
+ if(CURRENT!=='bancos'||lectura!==BANCO.lectura||version!==BANCO.version||cuenta!==BANCO.cuenta||mes!==BANCO.mes)return;
  BANCO.datos=r.data;banPintar();
  document.getElementById('banHistorial').innerHTML=r.importaciones.map(i=>`<p>${esc(i.archivo)} · ${Number(i.nuevos)} nuevos · ${Number(i.duplicados)} coincidencias omitidas${i.completo?' · Declarado completo':''} · ${esc(i.estado)} ${i.estado==='confirmada'?`<button class="btn sm" data-anular-importacion="${i.id}">Anular importación</button>`:''}</p>`).join('')||'<p>Sin extractos confirmados para este mes.</p>';
  document.querySelectorAll('[data-anular-importacion]').forEach(b=>b.onclick=async()=>{if(!await confirmModal('¿Anular los movimientos nuevos de esta importación? Se conservará el historial. Si hay facturas conciliadas, primero deberás desvincularlas.'))return;b.disabled=true;try{await apiSend('POST','/api/bancos/anular-importacion',{id:b.dataset.anularImportacion});await banCargar();}catch(e){toast(e.message);b.disabled=false;}});
  }catch(e){toast(e.message);}
 }
 function banPintar(){
- const datos=BANCO.datos,entradas=datos.filter(m=>Number(m.importe)>0).reduce((a,m)=>a+Number(m.importe),0),salidas=-datos.filter(m=>Number(m.importe)<0).reduce((a,m)=>a+Number(m.importe),0);
- document.getElementById('banResumen').innerHTML=`<div class="ban-totales"><div>Entradas<strong>${banEuro(entradas)}</strong></div><div>Salidas<strong>${banEuro(salidas)}</strong></div><div>Por revisar<strong>${datos.filter(m=>!m.revisado).length}</strong></div></div><p class="mut">${datos.length} movimientos importados. Diferencia de entradas y salidas: ${banEuro(entradas-salidas)}; no es el saldo de la cuenta.</p>`;
- const filas=document.getElementById('banPend').checked?datos.filter(m=>!m.revisado):datos;
+ BANCO.pendientes=document.getElementById('banPend').checked;
+ const datos=BANCO.pendientes?BANCO.datos.filter(m=>!m.revisado):BANCO.datos,entradas=datos.filter(m=>Number(m.importe)>0).reduce((a,m)=>a+Number(m.importe),0),salidas=-datos.filter(m=>Number(m.importe)<0).reduce((a,m)=>a+Number(m.importe),0);
+ document.getElementById('banResumen').innerHTML=`<div class="ban-totales"><div>Entradas<strong>${banEuro(entradas)}</strong></div><div>Salidas<strong>${banEuro(salidas)}</strong></div><div>Por revisar<strong>${datos.filter(m=>!m.revisado).length}</strong></div></div><p class="mut">${datos.length} movimientos ${BANCO.pendientes?'pendientes mostrados':'mostrados'}. Diferencia de entradas y salidas: ${banEuro(entradas-salidas)}; no es el saldo de la cuenta.</p>`;
+ const filas=datos;
  document.getElementById('banMovimientos').innerHTML=filas.length?`<div class="card ban-card"><div class="ban-scroll"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Importe</th><th>Estado</th><th>Acción</th></tr></thead><tbody>${filas.map(m=>`<tr><td>${esc(m.fecha)}</td><td>${esc(m.concepto)}</td><td class="ban-num">${banEuro(m.importe)}</td><td>${m.factura_id?'Factura #'+Number(m.factura_id):esc(m.categoria)}</td><td><button class="btn sm" data-ban="${m.id}">Revisar</button></td></tr>`).join('')}</tbody></table></div></div>`:'<p class="mut">No hay movimientos con estos filtros.</p>';
  document.querySelectorAll('[data-ban]').forEach(b=>b.onclick=()=>banRevisar(BANCO.datos.find(m=>String(m.id)===b.dataset.ban)));
 }

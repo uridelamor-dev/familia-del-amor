@@ -74,6 +74,7 @@ export function locationNamesDeLocal(localERP, names) {
  */
 export function buildManageQuery(f = {}) {
   const cond = [], params = [];
+  if (f.id) { cond.push("id = ?"); params.push(String(f.id)); }
   if (f.rating) { cond.push("rating = ?"); params.push(parseInt(f.rating)); }
   if (f.estado === "pendientes") {
     cond.push("COALESCE(google_reply, '') = ''");

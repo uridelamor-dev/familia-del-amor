@@ -50,7 +50,7 @@ test('Fuentes SQL reales: locales, campos privados, IVA, duplicados y reseñas a
 });
 test('La API de campana no consulta fuentes de otros departamentos',async()=>{
  let handler;const cargadas=[];
- registrarBandeja({get:(ruta,auth,h)=>handler=h},{auth:()=>{},pool:{connect:async()=>({query:async sql=>({rows:[]}),release(){}})},ambito:()=> '[]',cargar:async(c,r,f)=>{cargadas.push(f);return [];}});
+ registrarBandeja({post(){},get:(ruta,auth,h)=>handler=h},{auth:()=>{},pool:{connect:async()=>({query:async sql=>({rows:[]}),release(){}})},ambito:()=> '[]',cargar:async(c,r,f)=>{cargadas.push(f);return [];}});
  let respuesta;
  await handler({user:{rol:'contabilidad'}},{set(){},json:r=>respuesta=r,status(){return this;}});
  assert.deepEqual(cargadas,['facturas','pendientes']);assert.equal(respuesta.total,0);
@@ -58,11 +58,11 @@ test('La API de campana no consulta fuentes de otros departamentos',async()=>{
 
 test('Una fuente fallida no oculta los avisos de las demás',async()=>{
  let handler,respuesta;let liberadas=0;
- registrarBandeja({get:(ruta,auth,h)=>handler=h},{auth:()=>{},pool:{connect:async()=>({query:async()=>({rows:[]}),release(){liberadas++;}})},ambito:()=> '[]',cargar:async(c,r,f)=>{
+ registrarBandeja({post(){},get:(ruta,auth,h)=>handler=h},{auth:()=>{},pool:{connect:async()=>({query:async()=>({rows:[]}),release(){liberadas++;}})},ambito:()=> '[]',cargar:async(c,r,f)=>{
   if(f==='facturas')throw Error('fallo temporal');
   return [{id:'pendiente:1',titulo:'Asignar documento',sev:'imp'}];
  }});
  await handler({user:{rol:'contabilidad'}},{set(){},json:r=>respuesta=r,status(){return this;}});
  assert.deepEqual(respuesta.fallidas,['facturas']);assert.equal(respuesta.total,1);
- assert.equal(respuesta.data[0].fuente,'pendientes');assert.equal(liberadas,2);
+ assert.equal(respuesta.data[0].fuente,'pendientes');assert.equal(liberadas,3);
 });

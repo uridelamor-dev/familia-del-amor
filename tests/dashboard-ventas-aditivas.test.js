@@ -84,7 +84,7 @@ for (const caso of [
         return filas.filter(f => f.dia >= a && f.dia < b);
       } }),
       hoyISO: () => fecha, addDaysISO: sumarDias,
-      INV_LOCALES: ['Blanes'], LOCALES_SIN_PUBLICO: new Set(), barrasDelCentro: l => [l],
+      INV_LOCALES: ['Blanes'], LOCALES_SIN_PUBLICO: new Set(), fuentesVentas: l => [l],
       ventasRecientes, completarVentasRecientes, normalizarVentasRango, agruparDesglose,
       _ventasVivoCache:{ts:Date.now(),data:{hoy:fecha,locales:[{local:'Blanes',dias:filas.filter(f=>f.dia>=inicioReciente)}]}},
       dbAll: async () => [], dbGet: async () => ({ n: 0, total: 0, base: 0 }),
@@ -145,7 +145,7 @@ test('las recuperaciones de locales avanzan simultaneamente',async()=>{
 test('historico sin ventas confirmado queda completo; respaldo con huecos queda parcial',async()=>{
  const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
  const ctx=vm.createContext({hoyISO:()=>hoy,addDaysISO:(s,n)=>{const d=new Date(s+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);},
- INV_LOCALES:['A'],LOCALES_SIN_PUBLICO:new Set(),barrasDelCentro:l=>[l],normalizarVentasRango,agruparDesglose,
+ INV_LOCALES:['A'],LOCALES_SIN_PUBLICO:new Set(),fuentesVentas:l=>[l],normalizarVentasRango,agruparDesglose,
  ventasRangoLive:async()=>[],dbAll:async()=>[],dbGet:async()=>({n:0,total:0,base:0}),SIN_ALBARANES:'TRUE',resultadoRegistrado:()=>null});
  vm.runInContext(source.slice(source.indexOf('async function periodoDeLocal('),source.indexOf('// Estado de la integración por local (NUNCA expone el token).')),ctx);
  const q={from:'2026-09-01',to:'2026-09-03'};
@@ -169,4 +169,17 @@ test('lectura en vivo paralela: local sin ventas completo y local caido distingu
  const vivo=await tarea;
  assert.equal(vivo.locales[0].dias.length,8);assert.equal(vivo.locales[0].error,null);
  assert.equal(vivo.locales[1].error,'offline');
+});
+
+test('el histórico empieza mientras la lectura reciente sigue pendiente',async()=>{
+ const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ let soltar;const puerta=new Promise(r=>soltar=r);const pedidos=[];
+ const ctx=vm.createContext({hoyISO:()=>hoy,addDaysISO:(s,n)=>{const d=new Date(s+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);},
+ INV_LOCALES:['A'],LOCALES_SIN_PUBLICO:new Set(),fuentesVentas:l=>[l],normalizarVentasRango,agruparDesglose,ventasRecientes,completarVentasRecientes,
+ _ventasVivoCache:{ts:0},ventasRangoLive:async(l,from)=>{pedidos.push(from);if(from!=='2026-09-01')await puerta;return [];},
+ dbAll:async()=>[],dbGet:async()=>({n:0,total:0,base:0}),SIN_ALBARANES:'TRUE',resultadoRegistrado:()=>null});
+ vm.runInContext(source.slice(source.indexOf('async function periodoDeLocal('),source.indexOf('// Estado de la integración por local (NUNCA expone el token).')),ctx);
+ const tarea=ctx.periodoDeLocal({from:'2026-09-01',to:hoy},null);
+ await new Promise(r=>setImmediate(r));assert.equal(pedidos.length,2);assert.ok(pedidos.includes('2026-09-01'));
+ soltar();const per=await tarea;assert.equal(per.ventas.parcial,false);
 });

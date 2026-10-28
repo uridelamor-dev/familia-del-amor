@@ -7,11 +7,16 @@ export const MASIVOS_SCHEMA=`CREATE TABLE IF NOT EXISTS rrhh_doc_lotes(id UUID P
 CREATE TABLE IF NOT EXISTS rrhh_doc_paginas(id UUID PRIMARY KEY,lote_id UUID NOT NULL REFERENCES rrhh_doc_lotes(id) ON DELETE CASCADE,archivo TEXT NOT NULL,pagina INTEGER NOT NULL,huella TEXT NOT NULL,contenido BYTEA NOT NULL,propuesta JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS rrhh_doc_archivos(id UUID PRIMARY KEY,worker_id INTEGER NOT NULL,huella TEXT NOT NULL,contenido BYTEA NOT NULL,UNIQUE(worker_id,huella));`;
 const meses=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-const normal=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(Boolean).sort().join(' ');
+const normal=s=>String(s||'').replace(/M[ªº]/gi,'Maria').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(Boolean).sort().join(' ');
 const nif=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
 export function detectarNomina(texto,archivo=''){
  const lineas=String(texto||'').split('\n'),i=lineas.findIndex(l=>/TRABAJADOR/.test(l));
- const nombre=i>=0?String(lineas[i+1]||'').slice(lineas[i].indexOf('TRABAJADOR')).trim().replace(/\s+/g,' ').slice(0,160):'';
+ // La posición de la cabecera y el nombre puede diferir varios caracteres.
+ const fila=i>=0?String(lineas[i+1]||''):'';
+ const columna=i>=0?lineas[i].indexOf('TRABAJADOR'):0;
+ const bloques=[...fila.matchAll(/\S(?:.*?\S)?(?= {3,}|$)/g)];
+ const inicio=bloques.find(b=>b.index>=Math.max(0,columna-5))?.index??columna;
+ const nombre=fila.slice(inicio).trim().replace(/\s+/g,' ').slice(0,160);
  const linea=lineas.find(l=>/N\.I\.F/.test(l)),bruto=linea?nif(linea.split('N.I.F')[1]):'';
  const candidato=bruto.match(/(?:[XYZ]\d{7}|\d{8})[A-Z]/)?.[0]||'';
  const dni=limpiarLectura({dni:candidato}).dni;
@@ -22,7 +27,15 @@ export function asociarTrabajador(datos,workers){
  if(datos.dni){const matches=workers.filter(w=>nif(w.dni)===datos.dni);if(matches.length===1)return {worker_id:matches[0].id,motivo:'DNI/NIE coincidente'};if(matches.length>1)return {worker_id:null,motivo:'DNI/NIE duplicado: revisar'};}
  const n=normal(datos.nombre),matches=n?workers.filter(w=>normal(w.nombre)===n):[];
  if(matches.length===1&&(!datos.dni||!matches[0].dni||nif(matches[0].dni)===datos.dni))return {worker_id:matches[0].id,motivo:'Nombre completo coincidente'};
- return {worker_id:null,motivo:datos.hayTexto?'Pendiente de asociar':'Sin texto legible: asociar manualmente'};
+ // Los nombres abreviados de las nóminas son propuestas para revisión,
+ // nunca asignaciones automáticas por parecido ni por un nombre de pila único.
+ const tokens=n.split(' ').filter(t=>t.length>1);
+ const candidatos=workers.filter(w=>{
+  if(datos.dni&&w.dni&&nif(w.dni)!==datos.dni)return false;
+  const otros=normal(w.nombre).split(' ').filter(t=>t.length>1);
+  return tokens.length>=2&&otros.filter(t=>tokens.includes(t)).length>=2;
+ }).map(w=>w.id);
+ return {worker_id:null,candidatos,motivo:matches.length>1?'Varios trabajadores con el mismo nombre: revisar':candidatos.length?'Posible coincidencia: selecciona y confirma al trabajador':datos.hayTexto?'Sin coincidencia segura: comprueba el nombre completo y el DNI de la ficha':'Sin texto legible: asociar manualmente'};
 }
 export function nombreDocumento(mes,nombre){
  if(!/^20\d{2}-(0[1-9]|1[0-2])$/.test(mes))throw Error('Selecciona el mes y año de los documentos.');
@@ -72,8 +85,8 @@ export function registrarDocumentosMasivos(app,{auth,pool,upload,trabajadores}){
  }));
  app.get('/api/rrhh/documentos-masivos',auth,safe(async(req,res)=>{const {rows}=await pool.query("SELECT id,creado_en FROM rrhh_doc_lotes WHERE autor_id=$1 AND estado='revision' AND creado_en>NOW()-INTERVAL '7 days' ORDER BY creado_en DESC",[req.user.id]);res.json({ok:true,data:rows});}));
  app.get('/api/rrhh/documentos-masivos/:id',auth,safe(async(req,res)=>{
-  const {rows}=await pool.query("SELECT p.id,p.archivo,p.pagina,p.propuesta FROM rrhh_doc_paginas p JOIN rrhh_doc_lotes l ON l.id=p.lote_id WHERE l.id=$1 AND l.autor_id=$2 AND l.estado='revision' AND l.creado_en>NOW()-INTERVAL '7 days' ORDER BY p.archivo,p.pagina",[req.params.id,req.user.id]);
-  if(!rows.length)throw fallo('Lote no disponible.');const workers=await trabajadores(req);res.json({ok:true,id:req.params.id,paginas:rows,trabajadores:workers.map(({id,nombre,local})=>({id,nombre,local}))});
+  const {rows}=await pool.query("SELECT p.id,p.archivo,p.pagina,p.propuesta,p.contenido FROM rrhh_doc_paginas p JOIN rrhh_doc_lotes l ON l.id=p.lote_id WHERE l.id=$1 AND l.autor_id=$2 AND l.estado='revision' AND l.creado_en>NOW()-INTERVAL '7 days' ORDER BY p.archivo,p.pagina",[req.params.id,req.user.id]);
+  if(!rows.length)throw fallo('Lote no disponible.');const workers=await trabajadores(req);res.json({ok:true,id:req.params.id,paginas:rows.map(({contenido,...p})=>{const d=detectarNomina(extraerTextoPdf(contenido,{maxPaginas:1,maxChars:20000}).texto,p.archivo);return {...p,propuesta:{nombre_detectado:d.nombre,mes:d.mes,...asociarTrabajador(d,workers)}};}),trabajadores:workers.map(({id,nombre,local})=>({id,nombre,local}))});
  }));
  app.get('/api/rrhh/documentos-masivos/:id/pagina/:pagina',auth,safe(async(req,res)=>{
   const {rows:[p]}=await pool.query("SELECT p.contenido FROM rrhh_doc_paginas p JOIN rrhh_doc_lotes l ON l.id=p.lote_id WHERE l.id=$1 AND l.autor_id=$2 AND p.id=$3 AND l.estado='revision' AND l.creado_en>NOW()-INTERVAL '7 days'",[req.params.id,req.user.id,req.params.pagina]);

@@ -27,6 +27,8 @@
 export const CENTROS = [
   {
     id: "blanes",
+    // Ágora de Blanes ya incluye la Cooperativa (confirmado el 28/10/2026).
+    fuentesVentas: ["La Tapeta - Blanes"],
     nombre: "Blanes",
     principal: "La Tapeta - Blanes",
     barras: ["La Tapeta - Blanes", "Cooperativa - Blanes"],
@@ -192,4 +194,10 @@ export function agruparPorCentro(filas = [], campos = [], { clave = "local" } = 
 export function esBarraSecundaria(local) {
   const c = centroDe(local);
   return !!c && texto(local) !== c.principal;
+}
+
+/** Servidores de ventas, distintos de las barras físicas del centro. */
+export function fuentesVentas(local) {
+  const c = centroDe(local);
+  return c?.fuentesVentas ? [...c.fuentesVentas] : barras(local, "ventas");
 }

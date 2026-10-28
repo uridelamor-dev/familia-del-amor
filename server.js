@@ -1,3 +1,4 @@
+import {filtrosLineas} from './src/modules/facturas/filtros-lineas.js';
 import { crearCachePeriodo } from './src/modules/dashboard/cache-periodo.js';
 import {agruparDesglose,gastoDesglosado} from './src/modules/dashboard/desglose.js';
 import {AVISOS_SCHEMA,registrarBandeja} from './src/modules/avisos/bandeja.js';
@@ -117,7 +118,7 @@ import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocales
 // Centros: dos barras que son un mismo negocio (Blanes + Cooperativa). Traduce el local
 // UNA vez, en los helpers de ámbito, y las ~190 consultas con `local = ?` operan solas sobre
 // el centro sin tocar ninguna. src/modules/locales/centros.js explica qué se junta y qué no.
-import { ambitoDeRuta, canonico as localCentro, barras as barrasDelCentro, visiblesEn, detalleCentro, centroDe } from "./src/modules/locales/centros.js";
+import { ambitoDeRuta, canonico as localCentro, barras as barrasDelCentro, fuentesVentas, visiblesEn, detalleCentro, centroDe } from "./src/modules/locales/centros.js";
 // `activoEnFecha` y `pertenecioAlPeriodo` no se importan: en el servidor esas dos preguntas se
 // hacen en SQL (SQL_ACTIVO_EL_DIA y SQL_ESTUVO_ENTRE) porque hay que filtrar en la consulta,
 // no después. El módulo puro es la referencia y quien las prueba.
@@ -3682,7 +3683,7 @@ app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direcc
 app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
     const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
-    const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa},{local:"local",empresa:"COALESCE(resultado->'datos'->>'empresa',resultado->'datos'->>'empresa_detectada')"});
+    const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa,tipo:req.query.tipo},{tipo:"resultado->'datos'->>'tipo'",local:"local",empresa:"COALESCE(resultado->'datos'->>'empresa',resultado->'datos'->>'empresa_detectada')"});
     const filtro=ambito.sql; const params=ambito.params;
     const filas = await dbAll(`SELECT id,canal,local,nombre,estado,intentos,error,creado,original IS NOT NULL AS tiene_original FROM facturas_recepciones
       WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
@@ -3739,8 +3740,21 @@ app.post("/api/facturas/recepciones/:id/reintentar", requireAuth(["direccion", "
   } catch(e) { next(e); }
 });
 
+// Acceso directo desde avisos, independiente del límite y filtros de la lista.
+app.get("/api/facturas/documento/:id", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const row=await dbGet("SELECT * FROM facturas WHERE id=?",[req.params.id]);
+    if(!row)return res.status(404).json({ok:false,error:"El documento ya no está disponible"});
+    if(!documentoEnAmbito(row,localesScope({...req,query:{}})))return res.status(403).json({ok:false,error:"Sin acceso a este documento"});
+    delete row.drive_thumb;
+    row.estado_pago=estadoPago(row,instanteMadrid(new Date()).fecha);
+    res.json({ok:true,data:row});
+  } catch(e){next(e);}
+});
+
 app.get("/api/facturas/pendientes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
-  const rows = await dbAll("SELECT * FROM facturas_pendientes WHERE descartado_en IS NULL ORDER BY creado_en DESC", []);
+  const tipos=String(req.query.tipo||'').split(',').map(t=>t.trim()).filter(Boolean);
+  const rows = await dbAll(`SELECT * FROM facturas_pendientes WHERE descartado_en IS NULL ${tipos.length?'AND tipo = ANY(?::text[])':''} ORDER BY creado_en DESC`, tipos.length?[tipos]:[]);
   // Enriquecer cada pendiente con una sugerencia de local (para preseleccionar en el panel).
   let locales = [], historial = {};
   try {
@@ -5833,15 +5847,17 @@ async function nombresCasa() {
   return _nombresCasa.lista;
 }
 
+function filtroProductosRevision(req){
+ return filtrosLineas(req.query,{locales:[...new Set(localesScope(req).flatMap(comprasDe))],proveedoresDeCategorias,claveProducto});
+}
 app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     // LA COLA se puede acotar a un establecimiento; EL DICCIONARIO no. Son cosas distintas:
     // un producto es el mismo en Blanes y en Lloret —de eso va unificar, de poder comparar el
     // precio entre locales—, pero la cola de revisión sí conviene poder despacharla por sitio:
     // «lo que compro en Blanes» de una sentada, en vez de las siete mezcladas.
-    const local = localScope(req) || String(req.query.local || "").trim();
-    const cond = ["a.clave IS NULL", "COALESCE(l.clave,'') <> ''", SIN_DUDAS], par = [];
-    if (local) { cond.push("f.local = ANY(?)"); par.push(comprasDe(local)); }
+    const filtro=await filtroProductosRevision(req);
+    const cond=["a.clave IS NULL", "COALESCE(l.clave,'') <> ''",filtro.sql],par=filtro.params;
     const pendientes = await dbAll(
       `SELECT l.clave, MAX(l.descripcion) AS descripcion, SUM(l.importe)::float AS gasto,
               COUNT(*)::int AS veces, string_agg(DISTINCT f.proveedor, ' · ') AS proveedores
@@ -5875,7 +5891,7 @@ app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]),
       `SELECT SUM(l.importe)::float AS gasto
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
          JOIN producto_alias a ON a.clave = l.clave
-        WHERE ${SIN_DUDAS}${local ? " AND f.local = ANY(?)" : ""} GROUP BY a.clave`, local ? [comprasDe(local)] : []);
+        WHERE ${filtro.sql} GROUP BY a.clave`, filtro.params);
 
     // Cada pendiente dice si PARECE que no es un producto, y por qué. Solo señala: la
     // decisión sigue siendo de quien mira, con el motivo delante para poder juzgarlo.
@@ -6097,6 +6113,7 @@ app.delete("/api/facturas/productos/:id", requireAuth(["direccion", "contabilida
  */
 app.get("/api/facturas/productos/apartados", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    const filtro=await filtroProductosRevision(req);
     const filas = await dbAll(
       `SELECT a.clave, a.descarte_motivo AS motivo, a.confirmado_por AS quien, a.confirmado_en AS cuando,
               COALESCE(MAX(l.descripcion), a.descripcion) AS descripcion,
@@ -6105,9 +6122,9 @@ app.get("/api/facturas/productos/apartados", requireAuth(["direccion", "contabil
          FROM producto_alias a
          LEFT JOIN factura_lineas l ON l.clave = a.clave
          LEFT JOIN facturas f ON f.id = l.factura_id
-        WHERE a.descartado
+        WHERE a.descartado AND ${filtro.sql}
         GROUP BY a.clave, a.descarte_motivo, a.confirmado_por, a.confirmado_en, a.descripcion
-        ORDER BY gasto DESC NULLS LAST LIMIT 300`);
+        ORDER BY gasto DESC NULLS LAST LIMIT 300`,filtro.params);
     res.json({ ok: true, data: filas || [] });
   } catch (e) {
     console.error("[facturas] apartados:", e.message);
@@ -6520,6 +6537,7 @@ app.get("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
 app.get("/api/facturas/proveedores-duplicados", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa});
+    for(const [k,op] of [['from','>='],['to','<=']])if(/^\d{4}-\d{2}-\d{2}$/.test(String(req.query[k]||''))){ambito.sql+=` AND fecha ${op} ?`;ambito.params.push(req.query[k]);}
     // Una fila por forma de escribirlo, con su NIF más repetido: es la señal que permite ver
     // que «GRAU» y «Vins i Licors Grau, S.A.» son la misma empresa, cosa que por el nombre no
     // se puede saber.
@@ -6545,7 +6563,7 @@ app.get("/api/facturas/proveedores-duplicados", requireAuth(["direccion", "conta
           WHERE REPLACE(REPLACE(REPLACE(UPPER(nif),'-',''),'.',''),' ','') = ANY(?) ${ambito.sql}
           GROUP BY proveedor ORDER BY n DESC`,
         [nuestros.map((c) => String(c).replace(/[\s.\-/]/g, "").toUpperCase()),...ambito.params]).catch(() => []);
-      conNifNuestro = { n: r.reduce((a, x) => a + x.n, 0), proveedores: r.slice(0, 12) };
+      conNifNuestro = { n: r.reduce((a, x) => a + x.n, 0), proveedores: r };
     }
     res.json({ ok: true, grupos: gruposDuplicados(filas, { nuestrosCif: nuestros }).slice(0, 40),
       proveedores: filas.length, conNifNuestro });
@@ -6608,6 +6626,8 @@ app.post("/api/facturas/somos-nosotros", requireAuth(["direccion", "contabilidad
 app.post("/api/facturas/nif-propio/limpiar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa});
+    for(const [k,op] of [['from','>='],['to','<=']])if(/^\d{4}-\d{2}-\d{2}$/.test(String(req.query[k]||''))){ambito.sql+=` AND fecha ${op} ?`;ambito.params.push(req.query[k]);}
+    if(Array.isArray(req.body.proveedores)){ambito.sql+=' AND proveedor = ANY(?::text[])';ambito.params.push(req.body.proveedores.filter(p=>typeof p==='string'));}
     const nuestros = (await dbAll(`SELECT DISTINCT cif FROM facturas_locales WHERE cif IS NOT NULL AND cif <> ''`))
       .map((x) => String(x.cif).replace(/[\s.\-/]/g, "").toUpperCase()).filter(Boolean);
     if (!nuestros.length) return res.json({ ok: true, limpiadas: 0, mensaje: "No hay ningún CIF de empresa configurado." });
@@ -6701,11 +6721,11 @@ app.put("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
 // paga la factura creyendo que está comprobada. Ver src/modules/facturas/conciliacion.js.
 app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const scope = localScope(req);
+    const scopes = localesScope(req);
     const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || "")) ? req.query.from : null;
     const hasta = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || "")) ? req.query.to : null;
     const cond = [SIN_DUDAS], par = [];
-    if (scope) { cond.push("local = ?"); par.push(scope); }
+    if (scopes.length) { cond.push("local = ANY(?)"); par.push(scopes); }
     if (desde) { cond.push("fecha >= ?"); par.push(desde); }
     if (hasta) { cond.push("fecha <= ?"); par.push(hasta); }
     const where = "WHERE " + cond.join(" AND ");
@@ -6721,10 +6741,10 @@ app.get("/api/facturas/conciliacion", requireAuth(["direccion", "contabilidad"])
     const albDesde = desde ? new Date(Date.parse(desde) - 60 * 86400000).toISOString().slice(0, 10) : null;
     const albaranes = await dbAll(
       `SELECT id, local, empresa, tipo, fecha, numero_factura, proveedor, nif, total::float AS total, drive_url, conciliado_con
-         FROM facturas WHERE ${SIN_DUDAS} AND tipo = 'albaran' ${scope ? "AND local = ?" : ""}
+         FROM facturas WHERE ${SIN_DUDAS} AND tipo = 'albaran' ${scopes.length ? "AND local = ANY(?)" : ""}
          ${albDesde ? "AND fecha >= ?" : ""} ${hasta ? "AND fecha <= ?" : ""}
          ORDER BY fecha LIMIT 3000`,
-      [scope, albDesde, hasta].filter((x) => x != null));
+      [...(scopes.length?[scopes]:[]),...([albDesde,hasta].filter(x=>x!=null))]);
 
     const sueltos = albaranes.filter((a) => !a.conciliado_con);
     const facturas = docs.filter((d) => (d.tipo || "factura") !== "albaran");
@@ -6911,7 +6931,7 @@ app.post("/api/facturas/:id/conciliar", requireAuth(["direccion", "contabilidad"
 // importe, misma fecha y el número difiere en un carácter» se decide en dos segundos.
 app.get("/api/facturas/duplicados", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa},{local:"f.local",empresa:"f.empresa"});
+    const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa,tipo:req.query.tipo},{local:"f.local",empresa:"f.empresa",tipo:"f.tipo"});
     const filas = await dbAll(
       `SELECT f.id, f.local, f.empresa, f.tipo, f.fecha, f.numero_factura, f.proveedor, f.nif,
               f.concepto, f.base_imponible::float AS base_imponible, f.total::float AS total,
@@ -7177,16 +7197,20 @@ const SQL_RECUADRE = `
 
 app.get("/api/facturas/lineas/paquetes", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    const filtro=await filtroProductosRevision(req);
+    const seleccion=`SELECT l.id FROM factura_lineas l JOIN facturas f ON f.id=l.factura_id WHERE ${filtro.sql}`;
     const r = await dbGet(`${SQL_RECUADRE}
-      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND contenido = round(f) AND abs(f - round(f)) < 0.01`);
+      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND contenido = round(f) AND abs(f - round(f)) < 0.01 AND id IN (${seleccion})`,filtro.params);
     res.json({ ok: true, n: r?.n || 0 });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo comprobar", n: 0 }); }
 });
 
 app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    const filtro=await filtroProductosRevision(req);
+    const seleccion=`SELECT l.id FROM factura_lineas l JOIN facturas f ON f.id=l.factura_id WHERE ${filtro.sql}`;
     const antes = await dbGet(`${SQL_RECUADRE}
-      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND contenido = round(f) AND abs(f - round(f)) < 0.01`);
+      SELECT count(*)::int AS n FROM cand WHERE f >= 2 AND contenido = round(f) AND abs(f - round(f)) < 0.01 AND id IN (${seleccion})`,filtro.params);
     await dbRun(`${SQL_RECUADRE}
       UPDATE factura_lineas l
          SET cantidad = c.cantidad * round(c.f),
@@ -7196,7 +7220,7 @@ app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilid
              unidad = 'ud',
              precio_unitario = round(l.importe / (c.cantidad * round(c.f)), 6)
         FROM cand c
-       WHERE l.id = c.id AND c.f >= 2 AND c.contenido = round(c.f) AND abs(c.f - round(c.f)) < 0.01`);
+       WHERE l.id = c.id AND c.f >= 2 AND c.contenido = round(c.f) AND abs(c.f - round(c.f)) < 0.01 AND c.id IN (${seleccion})`,filtro.params);
     res.json({ ok: true, arregladas: antes?.n || 0 });
   } catch (e) {
     console.error("[facturas] recuadrar:", e.message);
@@ -8416,7 +8440,7 @@ app.get("/api/dashboard/hoy", requireAuth(["direccion", "encargado", "contabilid
   try {
     const scope = localesScope(req);
     const centros = scope.length ? scope : INV_LOCALES.filter(l => !LOCALES_SIN_PUBLICO.has(l));
-    const locales = [...new Set(centros.flatMap(l => barrasDelCentro(l, "ventas")))];
+    const locales = [...new Set(centros.flatMap(l => fuentesVentas(l)))];
     const vivo = await ventasVivoData(false);
     res.json({ ok: true, data: resumenHoy(vivo, { hoy: hoyISO(), locales }) });
   } catch (e) { next(e); }
@@ -8439,16 +8463,17 @@ app.get("/api/agora/informe/:tipo", requireAuth(["direccion", "contabilidad"]), 
     // Pasa por localScope: con varios establecimientos asignados hay que respetar el que se
     // esté mirando. Mirando `req.user.local` a pelo siempre salía el principal, así que
     // cambiar de local en la barra no cambiaba nada en estas pantallas.
-    const local = localScope(req);
+    const seleccion=localesScope(req).sort();
+    const local=seleccion.length===1?seleccion[0]:null;
     const from = String(req.query.from || "").slice(0, 10);
     const to = String(req.query.to || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return res.status(400).json({ ok: false, error: "Rango inválido" });
     const force = req.query.force === "1" || req.query.force === "true";
-    const ckey = `${local || "*"}|${def.key}|${from}_${to}`;
+    const ckey = `${seleccion.length?JSON.stringify(seleccion):"*"}|${def.key}|${from}_${to}`;
     const cached = _informeCache.get(ckey);
     if (!force && cached && (Date.now() - cached.ts) < 3 * 60 * 1000) return res.json({ ok: true, cache: true, ...cached.payload });
 
-    const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (local ? c.local === local : true));
+    const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (!seleccion.length || seleccion.includes(c.local)));
     if (!configs.length) {
       return res.json({ ok: true, data: { tipo: def.key, label: def.label, from, to, local, columnas: [], filas: [], totales: {}, sinCredenciales: true }, errores: [] });
     }
@@ -8504,7 +8529,7 @@ async function leerVentasRangoLive(local, from, to) {
     _ventasRangoCache.set(key, { ts: Date.now(), serie: dbc.valor });
     return dbc.valor;
   }
-  const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (local ? c.local === local : true));
+  const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (!local || c.local === local));
   if (!configs.length) return null;
   const conTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
   const results = await Promise.all(configs.map((cfg) => conTimeout(createAgoraClient(cfg).getVentasRango(from, addDaysISO(to, 1)), 20000).then((d) => d).catch(() => null)));
@@ -8529,7 +8554,7 @@ async function leerVentasRangoLive(local, from, to) {
 async function runInformeAgora(tipoKey, { local, from, to }) {
   const def = getInforme(tipoKey);
   if (!def) return { filas: [], errores: [], sinDef: true };
-  const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (local ? c.local === local : true));
+  const configs = (await loadAgoraConfigsActive()).filter((c) => c.usuario && c.password && (!local || c.local === local));
   if (!configs.length) return { filas: [], errores: [], sinCredenciales: true };
   const conTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
   const filas = []; const errores = [];
@@ -8593,7 +8618,9 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
     const fechaValida=s=>/^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s;
     if ((compararDesde||compararHasta) && (!fechaValida(compararDesde)||!fechaValida(compararHasta)||compararDesde>compararHasta))return res.status(400).json({ok:false,error:'Periodo de comparación inválido'});
     const deLosLocales=q=>cachePeriodoDashboard(JSON.stringify([req.user.id,req.user.rol,[...locales].sort(),q.from,q.to]),()=>calcularLocales(q),{esperar:req.query.esperar==='1'});
-    const data = await deLosLocales(req.query);
+    const quiereComparar=["1", "true", "si", "sí"].includes(String(req.query.comparar || "").toLowerCase());
+    const prev=quiereComparar ? (compararDesde ? {from:compararDesde,to:compararHasta,etiqueta:'periodo elegido'} : rangoAnterior(f0,t0,req.query.preset)) : null;
+    const [data,ant]=await Promise.all([deLosLocales(req.query),prev?deLosLocales({...req.query,from:prev.from,to:prev.to}):null]);
 
     // ¿Con qué se compara? Solo si se pide (`comparar=1`): son las mismas consultas otra vez, y
     // el que no quiera la comparación no tiene por qué pagarlas. Una cifra sola no dice nada
@@ -8605,18 +8632,16 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
       // El preset lo sabe el panel («semana», «mes»…) y es lo que decide la regla: un rango de
       // once días puede ser «lo que va de mes» o una ventana de once días, y mirando solo las
       // fechas no hay forma de saberlo.
-      const prev = compararDesde ? {from:compararDesde,to:compararHasta,etiqueta:'periodo elegido'} : rangoAnterior(f0, t0, req.query.preset);
       if (prev && data) {
-        const ant = await deLosLocales({ ...req.query, from: prev.from, to: prev.to });
         data.comparacion = {
-          desde: prev.from, hasta: prev.to, etiqueta: prev.etiqueta, lectura: ant?.lectura,
+          desde: prev.from, hasta: prev.to, etiqueta: prev.etiqueta, lectura: ant?.lectura, ventasParcial: !!ant?.ventas?.parcial,
           reservas: variacion(data?.reservas?.total, ant?.reservas?.total),
           personas: variacion(data?.reservas?.personas, ant?.reservas?.personas),
           ventas: data?.ventas?.disponible && ant?.ventas?.disponible && !data.ventas.parcial && !ant.ventas.parcial ? variacion(data.ventas.total, ant.ventas.total) : null,
           gastos: data?.gastos?.disponible && ant?.gastos?.disponible && !data.gastos.parcial && !ant.gastos.parcial ? variacion(data.gastos.total, ant.gastos.total) : null,
           resultado: variacion(data?.resultado, ant?.resultado),
           // Los totales de antes, para poder enseñarlos al pasar el ratón sin pedirlos otra vez.
-          totales: { reservas: ant?.reservas?.total ?? null, ventas: ant?.ventas?.total ?? null,
+          totales: { reservas: ant?.reservas?.total ?? null, ventas: ant?.ventas?.disponible ? ant.ventas.total : null,
             gastos: ant?.gastos?.total ?? null, resultado: ant?.resultado ?? null },
         };
       }
@@ -8668,8 +8693,12 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
     // No sumar copias del día de hoy persistidas en BD a su lectura en vivo.
     const inicioReciente = addDaysISO(hoy, -7);
     const recientesDesde = from > inicioReciente ? from : inicioReciente;
-    const barras = local ? barrasDelCentro(local, "ventas") : [...new Set(
-      INV_LOCALES.filter(l => !LOCALES_SIN_PUBLICO.has(l)).flatMap(l => barrasDelCentro(l, "ventas")))];
+    const barras = local ? fuentesVentas(local) : [...new Set(
+      INV_LOCALES.filter(l => !LOCALES_SIN_PUBLICO.has(l)).flatMap(l => fuentesVentas(l)))];
+    // Iniciar el histórico sin esperar al TPV de los días recientes.
+    const finHistorico = to < inicioReciente ? to : addDaysISO(inicioReciente, -1);
+    const lecturasHistoricas = new Map(from < inicioReciente ? barras.map(l =>
+      [l, Promise.resolve().then(() => ventasRangoLive(l, from, finHistorico)).catch(() => null)]) : []);
     if (to >= inicioReciente) {
       const instantanea = _ventasVivoCache.data?.hoy===hoy && Date.now()-_ventasVivoCache.ts<180000 ? _ventasVivoCache.data : {hoy,locales:[]};
       const vivo = await completarVentasRecientes({vivo:instantanea,locales:barras,from:recientesDesde,to,hoy,leer:ventasRangoLive});
@@ -8682,10 +8711,9 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
       fuenteVentas = "live";
     }
     if (from < inicioReciente) {
-      const finHistorico = to < inicioReciente ? to : addDaysISO(inicioReciente, -1);
       // Consultar cada barra una vez: el total y el desglose salen de las mismas lecturas.
       const historicos=await Promise.all(barras.map(async l=>{
-       const live=await ventasRangoLive(l,from,finHistorico);
+       const live=await lecturasHistoricas.get(l);
        const leido=normalizarVentasRango(live,from,finHistorico);
        const rows=leido||await dbAll('SELECT dia,ventas::float ventas,tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ? AND local = ? ORDER BY dia',[from,finHistorico,l]);
        const previo=seriesLocal.get(l)||{serie:[],parcial:false};
@@ -9187,9 +9215,10 @@ app.post("/api/hr/applications", (req, res, next) => {
 
 app.get("/api/hr/applications", requireAuth(["rrhh", "direccion"]), async (req, res) => {
   try {
-    const { q, estado, from, to } = req.query;
+    const { q, estado, from, to, id } = req.query;
     const where = [];
     const params = [];
+    if (id) { where.push("id = ?"); params.push(id); }
     if (q) {
       where.push(`(nombre LIKE ? OR email LIKE ? OR telefono LIKE ? OR puesto LIKE ?)`);
       const like = `%${q}%`;

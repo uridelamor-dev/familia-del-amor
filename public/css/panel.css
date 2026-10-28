@@ -2198,3 +2198,16 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .user-row{padding:10px 14px;gap:16px}.user-identity{gap:9px}.user-identity .ava{width:30px;height:30px;font-size:12px}.user-identity .mut{margin-top:2px}
 .user-access{display:flex;align-items:center;gap:5px 10px;flex-wrap:wrap}.user-scope{flex-basis:100%;order:3;margin:0;line-height:1.4}.user-access .modsfold[open]{flex-basis:100%;order:4}
 @media(max-width:600px){.user-row{padding:10px 12px;gap:6px 10px}.user-access{gap:4px 8px}.user-access .pill{font-size:10px;padding:3px 7px}.user-scope{font-size:11px}.user-identity b{font-size:13px}.user-identity .mut{font-size:11px}.user-identity .ava{display:none}.users-toolbar{gap:8px}.users-toolbar .field:first-child{flex-basis:100%}}
+.dash-sales-trend>.between{font-size:12px;gap:12px;margin:10px 0}.dash-sales-trend .chart{margin:12px 0}
+.dash-sales-comparison{margin-top:18px}.dash-activity .dash-sales-comparison .dash-comparator{border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--bg)}.dash-sales-comparison+.dash-reading{margin-top:10px}
+
+/* Revisión de nóminas: filas amplias en escritorio y apiladas en móvil. */
+.modal.doc-review-modal{width:min(1180px,calc(100vw - 40px));max-width:100%;box-sizing:border-box}
+.modal.doc-preview-modal{width:min(900px,calc(100vw - 40px));max-width:100%;box-sizing:border-box}
+.doc-review-modal .doc-bulk-row>div{min-width:0}
+.doc-review-modal .doc-bulk-status{overflow-wrap:anywhere}
+.doc-review-modal .doc-detected{margin:8px 0 12px;font-size:13px}
+@media(min-width:1000px){.doc-review-modal .doc-bulk-fields{grid-template-columns:1fr 1.4fr .8fr 1.8fr}}
+@media(max-width:600px){.modal.doc-review-modal,.modal.doc-preview-modal{width:100%}.doc-review-modal .doc-bulk-row{grid-template-columns:20px minmax(0,1fr);gap:8px}}
+
+.doc-review-modal .modal-h,.doc-preview-modal .modal-h{position:sticky;top:0;z-index:2;background:var(--surface)}

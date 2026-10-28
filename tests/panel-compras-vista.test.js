@@ -221,12 +221,13 @@ describe("el trabajo en lote se hace donde se ve", () => {
 
 describe("la cola del diccionario se puede despachar por establecimiento", () => {
   test("la cola lleva local; el diccionario que sale de ahí, no", () => {
-    assert.match(panel, /"\/api\/facturas\/diccionario" \+ \(loc \? "\?local=" \+ encodeURIComponent\(loc\) : ""\)/);
+    assert.ok(panel.includes("'/api/facturas/diccionario?'+qs"));
+    assert.match(panel,/qs=productosRevisionQS\(\)/);
   });
 
   test("y la cobertura se mide sobre lo mismo que la cola", () => {
     // Si la cola es de Blanes y el «ya revisado» de los siete, el porcentaje no dice nada.
-    assert.match(server, /WHERE \$\{SIN_DUDAS\}\$\{local \? " AND f\.local = ANY\(\?\)" : ""\} GROUP BY a\.clave/);
+    assert.ok(server.includes('WHERE ${filtro.sql} GROUP BY a.clave'));
   });
 
   test("y se dice en pantalla que lo decidido vale para todos los locales", () => {

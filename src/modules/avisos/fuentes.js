@@ -17,7 +17,7 @@ export async function cargarAvisosFuente(client,fuente,{locales=[],hoy,whatsappC
   // No tienen local asignado: solo responsables con ámbito global.
   if(locales.length)return [];
   return (await all("SELECT id,nombre,creado_en FROM hr_applications WHERE estado='nuevo'"))
-   .map(r=>({id:`candidatura:${r.id}`,titulo:`Candidatura pendiente: ${r.nombre||'Sin nombre'}`,detalle:'Revisar candidatura',sev:'info',desde:r.creado_en}));
+   .map(r=>({id:`candidatura:${r.id}`,documento_id:r.id,titulo:`Candidatura pendiente: ${r.nombre||'Sin nombre'}`,detalle:'Revisar candidatura',sev:'info',desde:r.creado_en}));
  }
  if(fuente==='facturas'){
   const rows=await all(`SELECT id,proveedor,numero_factura,local,revisar,iva_estado,dup_estado FROM facturas

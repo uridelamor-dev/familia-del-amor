@@ -1,8 +1,9 @@
+import {DECISIONES_SCHEMA,claveAviso,versionAviso,repartirAvisos} from './decisiones.js';
 import {modulosEfectivos} from '../usuarios/permisos.js';
 export const AVISOS_SCHEMA=`CREATE TABLE IF NOT EXISTS panel_avisos_historial (
  ambito TEXT NOT NULL,fuente TEXT NOT NULL,id TEXT NOT NULL,
  primera TIMESTAMPTZ NOT NULL,ultima TIMESTAMPTZ NOT NULL,resuelta TIMESTAMPTZ,
- PRIMARY KEY(ambito,fuente,id));`;
+ PRIMARY KEY(ambito,fuente,id));`+DECISIONES_SCHEMA;
 export const PLAZOS_AVISOS={imp:3,info:14};
 export const FUENTES_AVISOS={
  rrhh:{departamento:'RR. HH.',view:'rrhh',roles:['rrhh','encargado']},
@@ -26,7 +27,7 @@ export function seleccionarAvisos(items,user,ahora=Date.now()){
   return {...a,dias,escalado:user.rol==='direccion'&&a.sev!=='crit'};
  });
  if(user.rol==='direccion'){
-  seleccion=seleccion.filter(a=>a.sev==='crit'||a.dias>=(PLAZOS_AVISOS[a.sev]??14));
+  seleccion=seleccion.filter(a=>a.sev==='crit'||a.dias>=(PLAZOS_AVISOS[a.sev]??14)).sort((a,b)=>a.id.localeCompare(b.id));
   const personas=new Map();
   seleccion=seleccion.filter(a=>{
    if(a.fuente!=='rrhh')return true;
@@ -72,8 +73,32 @@ export function registrarBandeja(app,{auth,pool,cargar,ambito}){
     catch{fallidas.push(fuente);}
     finally{client.release();}
    }
-   const data=seleccionarAvisos(items,req.user);
-   res.json({ok:true,data,total:data.length,fallidas,plazos:PLAZOS_AVISOS});
+   const client=await pool.connect();
+   let decisiones;
+   try{decisiones=(await client.query('SELECT * FROM panel_avisos_decisiones WHERE usuario=$1',[String(req.user.id??req.user.username)])).rows;}finally{client.release();}
+   const {data,ocultos}=repartirAvisos(seleccionarAvisos(items,req.user),decisiones);
+   res.json({ok:true,data,ocultos,total:data.length,fallidas,plazos:PLAZOS_AVISOS});
   }catch(e){res.status(500).json({error:'No se pudieron actualizar los avisos. Inténtalo de nuevo.'});}
  });
+ app.post('/api/panel/avisos/decision',auth,async(req,res)=>{
+  const {fuente,clave,version,accion,motivo='',hasta}=req.body||{};
+  if(!fuentesDeUsuario(req.user).includes(fuente))return res.status(403).json({ok:false,error:'Sin acceso a este aviso'});
+  if(typeof clave!=='string'||clave.length>500||!['descartar','posponer','restaurar'].includes(accion)||typeof motivo!=='string'||motivo.length>500)return res.status(400).json({ok:false,error:'Decisión no válida'});
+  if(accion==='posponer'&&(!Number.isFinite(Date.parse(hasta))||Date.parse(hasta)<=Date.now()))return res.status(400).json({ok:false,error:'Elige una fecha futura'});
+  let client;
+  try{
+   client=await pool.connect();
+   const usuario=String(req.user.id??req.user.username);
+   const items=await sincronizarFuente(client,{fuente,ambito:ambito(req,fuente),cargar:()=>cargar(client,req,fuente)});
+   const aviso=seleccionarAvisos(items,req.user).find(a=>claveAviso(a)===clave);
+   if(!aviso||versionAviso(aviso)!==version)return res.status(409).json({ok:false,error:'El aviso ha cambiado o ya se ha resuelto. Actualiza la campana.'});
+   if(accion==='restaurar')await client.query('DELETE FROM panel_avisos_decisiones WHERE usuario=$1 AND fuente=$2 AND id=$3',[usuario,fuente,clave]);
+   else await client.query(`INSERT INTO panel_avisos_decisiones(usuario,fuente,id,version,accion,motivo,hasta)
+    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(usuario,fuente,id) DO UPDATE SET
+    version=excluded.version,accion=excluded.accion,motivo=excluded.motivo,hasta=excluded.hasta,actualizado=NOW()`,[usuario,fuente,clave,version,accion,motivo.trim(),accion==='posponer'?new Date(hasta).toISOString():null]);
+   res.json({ok:true});
+  }catch{res.status(500).json({ok:false,error:'No se pudo guardar la decisión. Inténtalo de nuevo.'});}
+  finally{client?.release();}
+ });
+
 }

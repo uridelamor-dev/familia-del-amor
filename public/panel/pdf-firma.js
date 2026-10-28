@@ -1,6 +1,7 @@
+import './pdf-compat.js';
 // Visor compartido: las peticiones autenticadas las realiza la página anfitriona.
 let lib;
-async function pdfLib(){if(!lib){lib=await import('/vendor/pdfjs/build/pdf.mjs');lib.GlobalWorkerOptions.workerSrc='/vendor/pdfjs/build/pdf.worker.mjs';}return lib;}
+async function pdfLib(){if(!lib){lib=await import('/vendor/pdfjs/build/pdf.mjs');lib.GlobalWorkerOptions.workerSrc='/panel/pdf-worker.js';}return lib;}
 export async function visorPdf(host,bytes,{posicion=null,colocar=false,onChange=()=>{}}={}){
  const api=await pdfLib(),task=api.getDocument({data:new Uint8Array(bytes),isEvalSupported:false,disableWorkerRendering:true,cMapUrl:'/vendor/pdfjs/cmaps/',cMapPacked:true,standardFontDataUrl:'/vendor/pdfjs/standard_fonts/',wasmUrl:'/vendor/pdfjs/wasm/'}),pdf=await task.promise;
  host.innerHTML='<div class="doc-pdf-nav"><button type="button" data-prev>‹ Anterior</button><span aria-live="polite"></span><button type="button" data-next>Siguiente ›</button></div><div class="doc-pdf-sheet"><canvas></canvas><div class="doc-sign-zone" hidden>Firma del trabajador</div></div>';

@@ -37,6 +37,12 @@ async function api(path) {
 async function apiOptional(path) {
   try { const r = await fetch(path, { headers: { Authorization: "Bearer " + token() } }); if (!r.ok) return null; const j = await r.json(); return j.ok ? j.data : null; } catch { return null; }
 }
+// Las consultas del dashboard deben finalizar también si la conexión queda abierta.
+async function apiDashboard(path) {
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),45000);
+  try {const r=await fetch(path,{signal:controller.signal,headers:{Authorization:"Bearer "+token()}});if(!r.ok)return null;const j=await r.json();return j.ok?j.data:null;}catch{return null;}finally{clearTimeout(timer);}
+}
 async function apiSend(method, path, body) {
   const opt = { method, headers: { Authorization: "Bearer " + token() } };
   if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
@@ -1013,7 +1019,7 @@ let DASH_GASTOS = null, DASH_GASTOS_ESTADO="cargando";
 let DASH_PERIODO = null;
 let DASH_PERIODO_ESTADO = "cargando";
 let DASH_CARGA = 0;
-let DASH_COMPARAR = null, DASH_COMPARANDO = false;
+let DASH_COMPARAR = null, DASH_COMPARANDO = false, DASH_COMPARACION_ERROR = false;
 let DASH_AVANCE = [];
 const DASH_VISTOS = new Map();
 // El parte del día de Sara, guardado para poder abrirlo desde el botón de la cabecera.
@@ -1304,9 +1310,17 @@ function dashDesgloseLocales(filas){
  const positivas=filas.reduce((s,r)=>s+Math.max(0,Number(r.total)||0),0);
  return `<div class="dash-local-breakdown">${positivas?`<div class="mbar" aria-hidden="true">${filas.map((r,i)=>`<span style="width:${Math.max(0,Number(r.total)||0)/positivas*100}%;background:${pal[i%pal.length]}"></span>`).join('')}</div>`:''}<div class="rows">${filas.map((r,i)=>`<div class="row"><span class="sdot" style="background:${pal[i%pal.length]}"></span><div class="grow"><span>${esc(nombreCortoLocal(r.local))}</span>${r.parcial&&r.disponible?'<small class="mut">Lectura parcial</small>':''}</div><b class="tnum">${r.cargando?'Consultando…':r.disponible===false?'No disponible':eur(r.total)}</b></div>`).join('')}</div></div>`;
 }
+function graficoVentasDashboard(per, mensaje) {
+  const ventas=per?.ventas;
+  if(!ventas?.disponible || ventas.parcial)return `<p class="mut">${!per?esc(mensaje):ventas?.parcial?'Gráfico pendiente de una lectura completa de ventas.':'Ventas no disponibles para el gráfico.'}</p>`;
+  const serie=(ventas.serie||[]).filter(d=>d.ventas!=null&&Number.isFinite(Number(d.ventas))).slice().sort((a,b)=>String(a.dia).localeCompare(String(b.dia)));
+  if(!serie.length)return '<p class="mut">Sin ventas diarias disponibles.</p>';
+  if(serie.length===1)return `<div class="dash-sales-trend"><b>Ventas del día</b><p>${esc(fechaCorta(serie[0].dia))} · ${eur(serie[0].ventas)}</p></div>`;
+  return `<div class="dash-sales-trend"><div class="between"><b>Ventas por día</b><span class="mut">Importes en euros</span></div>${area({valores:serie.map(d=>Number(d.ventas)),etiquetas:serie.map(d=>fechaCorta(d.dia))},{h:140,fmt:eur})}<div class="between mut"><span>${esc(fechaCorta(serie[0].dia))}</span><span>${esc(fechaCorta(serie.at(-1).dia))}</span></div></div>`;
+}
 function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
-  fijarPendientes(d);
+  if (!d.resumenPendiente) fijarPendientes(d);
   // ── Cabecera ejecutiva ──
   // Con varios establecimientos, «todo el grupo» sería mentira: se dice cuáles son. El
   // servidor manda la etiqueta ya hecha («Lloret y Girona») junto a los datos sumados.
@@ -1351,14 +1365,10 @@ function renderDashboard(d) {
   // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
   const per = DASH_PERIODO || null;
   const winLbl = DASH_RANGE.label || "Hoy";
-  const rSerie = (per && per.reservas && per.reservas.serie) || [];
-  const serieVals = rSerie.map((x) => x.personas || x.n || 0);
   const totalPeriodo = per && per.reservas ? per.reservas.total : null;
   const periodoMensaje = DASH_PERIODO_ESTADO === "error" ? "No se han podido cargar los datos del periodo. Vuelve a elegir el periodo para reintentar." : "Cargando datos del periodo…";
   const vOk = per && per.ventas && per.ventas.disponible;
   const gOk = per && per.gastos && per.gastos.disponible;
-  const res = vOk && gOk && per ? per.resultado : null;
-  const resCol = res == null ? "var(--ink)" : (res >= 0 ? "var(--brand)" : "var(--danger)");
   // La comparación con el periodo anterior la calcula el servidor (sabe que un mes se compara
   // con el mes anterior, no con «los 31 días de antes»). Si no la manda, no se pinta nada.
   const cmp = (per && per.comparacion) || null;
@@ -1374,22 +1384,13 @@ function renderDashboard(d) {
   const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
   const ventasBox = (vOk || gOk)
     ? `<div class="dash-period-stats">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}</div>`
-    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
-  const diferencia=res!=null&&cmp?.totales?.resultado!=null?res-cmp.totales.resultado:null;
-  const comparador=`<div class="dash-comparator"><div class="dash-comparator-head"><span class="dash-metric-label">Resultado de referencia</span><button class="btn sm" data-act="dash-compare">${ic('cal',14)} ${esc(DASH_COMPARAR?.label || 'Elegir periodo')} ▾</button></div><div class="dash-comparator-values"><b class="tnum">${cmp?.totales?.resultado!=null?eur(cmp.totales.resultado):'—'}</b><span class="mut">${DASH_COMPARANDO?'Cargando comparación…':cmp?esc([cmp.desde,cmp.hasta].map(f=>new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',year:'numeric'}).format(new Date(f+'T12:00:00'))).join(' – ')):'Comparación no disponible'}</span></div>${diferencia!=null?`<div class="dash-comparator-delta"><span>Diferencia</span> ${diferencia>=0?'+':'−'}${eur(Math.abs(diferencia))}${cmp.resultado!=null?' · '+(cmp.resultado>0?'+':'')+dec1(cmp.resultado)+' %':''}</div>`:''}${DASH_COMPARAR?'<button class="link" data-act="dash-compare-auto">Volver al periodo anterior</button>':''}${cmp?.lectura?.actualizando?'<small class="mut">Actualizando referencia…</small>':''}</div>`;
+    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y gastos<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
+  const diferencia=vOk&&!per.ventas.parcial&&!cmp?.ventasParcial&&cmp?.totales?.ventas!=null?per.ventas.total-cmp.totales.ventas:null;
+  const comparador=`<div class="dash-comparator"><div class="dash-comparator-head"><span class="dash-metric-label">Facturación de referencia</span><button class="btn sm" data-act="dash-compare">${ic('cal',14)} ${esc(DASH_COMPARAR?.label || 'Elegir periodo')} ▾</button></div><div class="dash-comparator-values"><b class="tnum">${cmp?.totales?.ventas!=null?eur(cmp.totales.ventas):'—'}</b><span class="mut">${DASH_COMPARANDO?'Cargando comparación…':cmp?esc([cmp.desde,cmp.hasta].map(f=>new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',year:'numeric'}).format(new Date(f+'T12:00:00'))).join(' – ')):'Comparación no disponible'}</span></div>${diferencia!=null?`<div class="dash-comparator-delta"><span>Diferencia</span> ${diferencia>=0?'+':'−'}${eur(Math.abs(diferencia))}${cmp.ventas!=null?' · '+(cmp.ventas>0?'+':'')+dec1(cmp.ventas)+' %':''}</div>`:''}${DASH_COMPARAR?'<button class="link" data-act="dash-compare-auto">Volver al periodo anterior</button>':''}${cmp?.ventasParcial?'<small class="mut">Referencia parcial: faltan datos de ventas.</small>':cmp&&cmp.totales?.ventas==null?'<small class="mut">No hay una lectura de ventas disponible para estas fechas.</small>':''}${cmp?.lectura?.actualizando?'<small class="mut">Actualizando referencia…</small>':''}${DASH_COMPARACION_ERROR?'<p role="status">No se pudo actualizar la comparación. <button class="link" data-act="dash-compare-retry">Reintentar</button></p>':''}</div>`;
   const lecturaPeriodo=per?.lectura?`<div class="dash-reading" role="status">Datos guardados · ${esc(new Date(per.lectura.actualizado).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}))}${per.lectura.error?' · No se pudo actualizar':per.lectura.actualizando?' · Actualizando importes…':''}</div>`:'';
-  // Al pasar el ratón se ve el día, cuántas reservas y —si Ágora está conectado— lo que
-  // se facturó ESE día. Es la pregunta que uno se hace mirando el pico del sábado.
-  const ventasPorDia = new Map(((per && per.ventas && per.ventas.serie) || []).map((v) => [String(v.dia), Number(v.ventas) || 0]));
-  const grafico = serieVals.length >= 2
-    ? area({
-        valores: serieVals,
-        etiquetas: rSerie.map((x) => fechaCorta(x.dia)),
-        extra: vOk ? rSerie.map((x) => ventasPorDia.get(String(x.dia)) ?? null) : null,
-      }, { h: 120, fmt: (v) => num(v) + (v === 1 ? " comensal" : " comensales"), fmtExtra: (v) => eur(v) + " facturado" })
-    : `<div class="mut" style="font-size:12.5px;padding:14px 0">${!per ? esc(periodoMensaje) : totalPeriodo ? "Solo hay un día con reservas en este periodo." : "Sin reservas en este periodo."}</div>`;
-  const notaRes = (vOk || gOk) ? `<div class="mut" style="font-size:11px;margin-top:8px">Resultado = ventas${per.hoyEnVivo ? " (incluye hoy)" : ""} − gastos en facturas del periodo (no incluye personal).</div>` : "";
-  const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="dash-activity-metrics"><div class="dash-metric"><div class="dash-metric-label">Reservas</div><div class="dash-metric-value tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="dash-metric-note">${per?.reservas?.personas != null ? num(per.reservas.personas) + " comensales" : "Comensales no disponibles"}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${!per&&DASH_AVANCE.length?`<div class="dash-sales-breakdown"><h4>Facturación por local · consultando</h4>${dashDesgloseLocales(DASH_AVANCE)}</div>`:''}<div class="dash-comparison-row"><div class="dash-result-current">${stat3("Resultado del periodo", res != null ? eur(res) : "—", resCol, null, "Ventas − gastos en facturas")}${lecturaPeriodo}</div>${comparador}</div>${per?.ventas?.porLocal?.length>1?`<div class="dash-sales-breakdown"><h4>Facturación por local</h4>${dashDesgloseLocales(per.ventas.porLocal)}</div>`:""}<div class="dash-activity-trend">${grafico}</div><div class="dash-activity-footer">${notaRes}<div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles; resultado pendiente." : per && !gOk ? " · Sin facturas registradas; resultado pendiente." : ""}</div></div></div>`;
+  const grafico = graficoVentasDashboard(per, periodoMensaje);
+
+  const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad · ventas y reservas</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="dash-activity-metrics"><div class="dash-metric"><div class="dash-metric-label">Reservas</div><div class="dash-metric-value tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="dash-metric-note">${per?.reservas?.personas != null ? num(per.reservas.personas) + " comensales" : "Comensales no disponibles"}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${!per&&DASH_AVANCE.length?`<div class="dash-sales-breakdown"><h4>Facturación por local · consultando</h4>${dashDesgloseLocales(DASH_AVANCE)}</div>`:''}<div class="dash-sales-comparison">${comparador}</div>${lecturaPeriodo}${per?.ventas?.porLocal?.length>1?`<div class="dash-sales-breakdown"><h4>Facturación por local</h4>${dashDesgloseLocales(per.ventas.porLocal)}</div>`:""}<div class="dash-activity-trend">${grafico}</div><div class="dash-activity-footer"><div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles." : per && !gOk ? " · Sin facturas registradas." : ""}</div></div></div>`;
 
   // El gasto usa el mes actual por defecto y el rango elegido al cambiar el periodo.
   const gl = DASH_GASTOS?.porLocal || [], gtot=DASH_GASTOS?.total;
@@ -1399,20 +1400,9 @@ function renderDashboard(d) {
   const radar = d.radarLocales || [];
   const estado = `<details class="card fold c12 p0"><summary style="padding:18px 18px 14px"><h3>Estado por establecimiento</h3><span class="foldr"><span class="mut">${radar.length ? num(radar.length) : "—"}</span><span class="car">${ic("chev", 16)}</span></span></summary>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur(e.gastoMes)}</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</details>`;
 
-  // ── Reseñas ──
-  const rs = d.resenas || {};
-  const resenasCard = `<div class="card c4"><div class="ch"><h3>Reseñas</h3><button class="link" data-view="reviews">Gestionar →</button></div><div style="display:flex;gap:12px;align-items:baseline"><div class="big tnum" style="font-size:34px">${rs.total ? dec1(rs.media) : "—"}</div><div class="stars">${"★".repeat(Math.round(rs.media || 0))}</div></div><div class="mut" style="font-size:12px;margin-top:6px">${num(rs.total || 0)} reseñas (90 días)</div>${rs.sinResponder ? `<div style="margin-top:12px"><span class="pill warn">${rs.sinResponder} sin responder</span></div>` : ""}</div>`;
-  // ── Clientes a llamar + Equipo (preserva la inteligencia real) ──
-  const cl = d.clientes || {}; const enfr = (cl.enfriando || []).slice(0, 4);
-  const clientesCard = enfr.length ? `<div class="card c6 p0"><div class="ch" style="padding:18px 18px 0"><h3>Clientes a los que llamar</h3><button class="link" data-view="clientes">Ver →</button></div><div class="rows">${enfr.map((c) => `<div class="row"><div class="ava">${esc((c.nombre || "?").slice(0, 1).toUpperCase())}</div><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}</div></div>${c.telefono ? `<a class="btn sm" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>` : "";
-  const eq = d.equipo || {}; const einc = (eq.incidencias || []).slice(0, 3); const eck = eq.checkins;
-  const equipoCard = (einc.length || (eck && eck.plantilla)) ? `<div class="card c6"><div class="ch"><h3>Equipo</h3><button class="link" data-view="rrhh">RR. HH. →</button></div>${eck && eck.plantilla ? `<div class="between" style="margin-bottom:8px"><span class="mut" style="font-size:12.5px">Conversaciones del mes</span><b class="tnum">${eck.hechos}/${eck.plantilla}</b></div><div class="prog ${eck.hechos / eck.plantilla < 0.5 ? "warn" : ""}"><i style="width:${Math.round((eck.hechos / Math.max(1, eck.plantilla)) * 100)}%"></i></div>` : ""}${einc.length ? `<div class="rows" style="margin-top:10px">${einc.map((w) => `<div class="row" style="padding:8px 0;border-top:0"><div class="grow"><div class="t1" style="font-size:12.5px">${esc(w.nombre || "—")}</div><div class="t2">${esc(w.local || "")}</div></div><span class="badge ${w.c >= 2 ? "bad" : "warn"}">${w.c} incid.</span></div>`).join("")}</div>` : ""}<div class="pendingblock" style="margin-top:12px;padding:11px 13px">Consulta turnos y horas registradas en Horarios y Fichajes. El coste de personal no está incluido aquí.</div></div>` : "";
-
   const row1 = `<div class="grid g12" style="margin-top:16px">${actividad}${gasto}</div>`;
   const row2 = radar.length ? `<div class="grid g12" style="margin-top:16px">${estado}</div>` : "";
-  const row3 = `<div class="grid g12" style="margin-top:16px">${resenasCard}</div>`;
-  const row4 = (clientesCard || equipoCard) ? `<div class="grid g12" style="margin-top:16px">${clientesCard}${equipoCard}</div>` : "";
-  return header + sara + kpis + row1 + row3 + row4 + row2;
+  return header + sara + kpis + row1 + row2;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -1428,7 +1418,11 @@ async function loadDashboard() {
   DASH_GASTOS=null;DASH_GASTOS_ESTADO="cargando";
   DASH_PERIODO = null;
   DASH_PERIODO_ESTADO = "cargando";
-  let d = DASH_VISTOS.get(q) || null;
+  // Los importes no dependen del resumen secundario (reseñas, equipo, radar...).
+  let d = DASH_VISTOS.get(q) || {resumenPendiente:true,scope:{
+    local:viendoVarios()?null:localActualFE(),
+    etiqueta:viendoVarios()?localesDelAmbito().map(nombreCortoLocal).join(" · "):null
+  }};
   let diario;
   DASH_AVANCE=[];
   const pintar = () => { if (d && vigente()) view.innerHTML = renderDashboard(d); };
@@ -1453,19 +1447,24 @@ async function loadDashboard() {
     });
   }
   const comparacionElegida=DASH_COMPARAR ? `&compararDesde=${DASH_COMPARAR.from}&compararHasta=${DASH_COMPARAR.to}` : '';
-  const aplicar=per=>{if(!vigente())return;DASH_PERIODO=per?.reservas?per:null;DASH_PERIODO_ESTADO=DASH_PERIODO?'listo':'error';pintar();};
-  apiOptional(basePeriodo).then(async per=>{
+  let comparacionRecibida=null;
+  const aplicar=per=>{if(!vigente())return;DASH_PERIODO=per?.reservas?per:null;if(DASH_PERIODO&&comparacionRecibida)DASH_PERIODO.comparacion=comparacionRecibida;DASH_PERIODO_ESTADO=DASH_PERIODO?'listo':'error';pintar();};
+  apiDashboard(basePeriodo).then(async per=>{
     if(!vigente())return;
     aplicar(per);
-    if(per?.lectura?.actualizando){per=await apiOptional(basePeriodo+'&esperar=1');if(!vigente())return;if(per)aplicar(per);else if(DASH_PERIODO){DASH_PERIODO.lectura.actualizando=false;DASH_PERIODO.lectura.error=true;pintar();}}
-    if(!per||!DASH_PERIODO){DASH_COMPARANDO=false;pintar();return;}
-    let completo=await apiOptional(basePeriodo+'&comparar=1'+comparacionElegida);
+    if(per?.lectura?.actualizando){const nuevo=await apiDashboard(basePeriodo+'&esperar=1');if(!vigente())return;if(nuevo)aplicar(nuevo);else if(DASH_PERIODO){DASH_PERIODO.lectura.actualizando=false;DASH_PERIODO.lectura.error=true;pintar();}}
+  });
+  DASH_COMPARACION_ERROR=false;
+  const aplicarComparacion=completo=>{comparacionRecibida=completo.comparacion;if(DASH_PERIODO)DASH_PERIODO.comparacion=comparacionRecibida;};
+  apiDashboard(basePeriodo+'&comparar=1'+comparacionElegida).then(async completo=>{
     if(!vigente())return;
-    if(completo?.comparacion)DASH_PERIODO.comparacion=completo.comparacion;
+    if(completo?.comparacion)aplicarComparacion(completo);else DASH_COMPARACION_ERROR=true;
     DASH_COMPARANDO=false;pintar();
     if(completo?.comparacion?.lectura?.actualizando){
-      completo=await apiOptional(basePeriodo+'&comparar=1&esperar=1'+comparacionElegida);
-      if(vigente()&&completo?.comparacion){DASH_PERIODO.comparacion=completo.comparacion;pintar();}
+      completo=await apiDashboard(basePeriodo+'&comparar=1&esperar=1'+comparacionElegida);
+      if(!vigente())return;
+      if(completo?.comparacion)aplicarComparacion(completo);else {DASH_COMPARACION_ERROR=true;comparacionRecibida.lectura.actualizando=false;}
+      pintar();
     }
   });
   try {
@@ -1477,7 +1476,7 @@ async function loadDashboard() {
     repintarBarra();
   } catch (e) {
     if (vigente() && e.message !== "noauth") {
-      d = { fecha: todayStr(), diario, errorResumen: true };
+      d = { ...d, fecha: todayStr(), diario, resumenPendiente:true };
       pintar();
     }
   }
@@ -2073,10 +2072,10 @@ function applyMantFilter() {
 }
 function mantGestionar(id) {
   const r=MAN_LIST.find(x=>String(x.id)===String(id)); if(!r) return;
-  const ov=modal("Organizar · "+r.titulo, `<form id="mantGestion"><div class="form-grid"><div class="field full"><label>Responsable o proveedor</label><input name="responsable" maxlength="120" value="${esc(r.responsable || "")}" placeholder="Persona que se ocupa de resolverla"></div><div class="field"><label>Fecha objetivo</label><input type="date" name="fecha_objetivo" value="${esc(r.fecha_objetivo || "")}"></div></div><p class="mut">Esta asignación organiza el trabajo. No envía un aviso al responsable.</p><p role="alert" id="mantGestionError"></p><div class="toolbar"><button type="button" class="btn" data-close>Cerrar</button><button type="submit" class="btn primary">Guardar</button></div></form>`);
+  const ov=modal("Incidencia · "+r.titulo, `<p class="mut">${esc(r.local)}</p><p style="white-space:pre-wrap">${esc(r.descripcion||"")}</p>${r.foto_url?`<a href="${esc(r.foto_url)}" target="_blank" rel="noopener">Ver foto de la incidencia ↗</a>`:""}<form id="mantGestion"><div class="form-grid"><div class="field full"><label>Estado</label><select name="estado">${MANT_ESTADOS.map(e=>`<option value="${esc(e)}" ${e===r.estado?"selected":""}>${esc(cap(e))}</option>`).join("")}</select></div><div class="field full"><label>Responsable o proveedor</label><input name="responsable" maxlength="120" value="${esc(r.responsable || "")}" placeholder="Persona que se ocupa de resolverla"></div><div class="field"><label>Fecha objetivo</label><input type="date" name="fecha_objetivo" value="${esc(r.fecha_objetivo || "")}"></div></div><p class="mut">Esta asignación organiza el trabajo. No envía un aviso al responsable.</p><p role="alert" id="mantGestionError"></p><div class="toolbar"><button type="button" class="btn" data-close>Cerrar</button><button type="submit" class="btn primary">Guardar</button></div></form>`);
   ov.querySelector('form').onsubmit=async e=> {
     e.preventDefault(); const btn=e.target.querySelector('[type="submit"]');btn.disabled=true;
-    try { await apiSend("PUT","/api/maintenance/"+r.id,{estado:r.estado,gestion:{...Object.fromEntries(new FormData(e.target)),version:r.gestion_version || 0}});ov.remove();loadMant(); }
+    try { await apiSend("PUT","/api/maintenance/"+r.id,{estado:e.target.elements.estado.value,gestion:{responsable:e.target.elements.responsable.value,fecha_objetivo:e.target.elements.fecha_objetivo.value,version:r.gestion_version || 0}});ov.remove();loadMant(); }
     catch(err) {ov.querySelector('#mantGestionError').textContent=err.message;btn.disabled=false;}
   };
 }
@@ -2158,10 +2157,11 @@ async function loadInventario() {
 
 async function loadInvProveedores() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
+  const vigente=cargaContable("inventario-lista",view);
   try {
     const data = await api("/api/inventario/proveedores?local=" + encodeURIComponent(INV.local));
-    view.innerHTML = renderInvProveedores(data || []);
-  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+    if(!vigente())return; view.innerHTML = renderInvProveedores(data || []);
+  } catch (e) { if (vigente() && e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function renderInvProveedores(list) {
   // Sin botón de «Locales»: el establecimiento se cambia arriba, en la barra.
@@ -2186,10 +2186,12 @@ function renderInvProveedores(list) {
 async function loadInvHistorial() {
   const view = document.getElementById("view");
   view.innerHTML = invHeader("Historial de inventarios", esc(nombreCortoLocal(INV.local)), null, "historial") + `<p class="mut">Cargando…</p>`;
+  const vigente=cargaContable("inventario-lista",view);
   let j;
   try { j = await apiRaw("/api/inventario/historial?local=" + encodeURIComponent(INV.local)); }
-  catch (e) { view.innerHTML = invHeader("Historial de inventarios", "", null, "historial") + errorCard(e.message); return; }
+  catch (e) { if(!vigente())return; view.innerHTML = invHeader("Historial de inventarios", "", null, "historial") + errorCard(e.message); return; }
 
+  if(!vigente())return;
   const filas = (j.data || []).map((s) => `<div class="row">
       <div class="grow" style="min-width:0">
         <div class="t1">${esc(s.proveedor_nombre || "—")}</div>
@@ -2460,8 +2462,9 @@ async function invCambiarEstadoPedido(estado, msg) {
 // ── Pedidos (historial) ──
 async function loadInvPedidos() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
-  try { const data = await api("/api/inventario/pedidos?local=" + encodeURIComponent(INV.local)); view.innerHTML = renderInvPedidos(data || []); }
-  catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  const vigente=cargaContable("inventario-lista",view);
+  try { const data = await api("/api/inventario/pedidos?local=" + encodeURIComponent(INV.local)); if(!vigente())return; view.innerHTML = renderInvPedidos(data || []); }
+  catch (e) { if (vigente() && e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 function renderInvPedidos(list) {
   const pill = (e) => e === "APPROVED" ? '<span class="pill ok">Aprobado</span>' : e === "CANCELLED" ? '<span class="pill bad">Cancelado</span>' : '<span class="pill warn">Borrador</span>';
@@ -4008,15 +4011,16 @@ async function rrDocumentosMasivos(){
  let lote=null,docs=[],paso=1,ocupado=false;
  const error=e=>{ov.querySelector('.doc-error').textContent=e.message;};
  async function abrir(id){try{const r=await apiRaw('/api/rrhh/documentos-masivos/'+id);preparar(r);}catch(e){error(e);}}
- function preparar(r){lote=r;docs=r.paginas.map(p=>({paginas:[p.id],worker_id:p.propuesta.worker_id||'',tipo:'nomina',nombre:p.propuesta.mes&&p.propuesta.worker_id?nombre(p.propuesta.mes,r.trabajadores.find(w=>w.id===p.propuesta.worker_id)?.nombre):p.archivo,mes:p.propuesta.mes||'',seleccionado:true,firma:null,motivo:p.propuesta.motivo}));paso=1;pintar();}
+ function preparar(r){lote=r;docs=r.paginas.map(p=>({paginas:[p.id],worker_id:p.propuesta.worker_id||'',tipo:'nomina',nombre:p.propuesta.mes&&p.propuesta.worker_id?nombre(p.propuesta.mes,r.trabajadores.find(w=>w.id===p.propuesta.worker_id)?.nombre):p.archivo,mes:p.propuesta.mes||'',seleccionado:true,firma:null,motivo:p.propuesta.motivo,nombre_detectado:p.propuesta.nombre_detectado,candidatos:p.propuesta.candidatos||[]}));paso=1;pintar();}
  function nombre(mes,n){if(!mes||!n)return '';const [y,m]=mes.split('-');return `${['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][Number(m)-1]} ${y} - ${n}.pdf`;}
  const worker=d=>lote.trabajadores.find(w=>Number(w.id)===Number(d.worker_id));
  const paginas=d=>d.paginas.map(id=>lote.paginas.find(p=>p.id===id));
  function pintar(){
   ov.querySelector('.modal').classList.remove('doc-upload-modal');
+  ov.querySelector('.modal').classList.add('doc-review-modal');
   const asociados=docs.filter(d=>worker(d)).length,seleccion=docs.filter(d=>d.seleccionado),mes=docs.find(d=>d.mes)?.mes||new Date().toISOString().slice(0,7);
   ov.querySelector('.modal-b').innerHTML=`<p class="mut">${paso===1?'1. Revisar y asociar':'2. Preparar firmas y guardar'}</p><div class="doc-bulk-summary"><span>${docs.length} documentos</span><span>${asociados} asociados</span><span class="pending">${docs.length-asociados} pendientes</span></div>${paso===1?`<div class="doc-bulk-actions"><label>Mes <input type="month" id="docMes" value="${esc(mes)}"></label><button class="btn" id="docRenombrar">Renombrar: MES - Nombre</button><button class="btn" id="docCombinar">Unir seleccionados</button></div><p class="mut">Revisa las coincidencias. Busca y selecciona manualmente al trabajador cuando haga falta. Puedes desmarcar documentos para dejarlos pendientes.</p>`:'<p>Marca la posición de firma de cada documento que deba firmarse. Los demás se guardarán únicamente en su carpeta.</p>'}
-  <div>${docs.map((d,i)=>paso===2&&!d.seleccionado?'':`<div class="doc-bulk-row"><input type="checkbox" data-seleccion="${i}" ${d.seleccionado?'checked':''} ${paso===2?'disabled':''} aria-label="Seleccionar documento ${i+1}"><div><div class="doc-bulk-status">${esc(paginas(d).map(p=>`${p.archivo} · pág. ${p.pagina}`).join(' / '))}</div>${paso===1?`<div class="doc-bulk-fields"><label>Buscar trabajador<input type="search" data-buscar="${i}" placeholder="Escribe un nombre…"></label><label>Trabajador<select data-worker="${i}" aria-label="Trabajador del documento ${i+1}"><option value="">Seleccionar trabajador</option>${opciones(d)}</select></label><label>Tipo<select data-tipo="${i}">${Object.entries(RR_DOC_TIPOS).map(([k,v])=>`<option value="${k}" ${d.tipo===k?'selected':''}>${esc(v)}</option>`).join('')}</select></label><label>Nombre del archivo<input data-nombre="${i}" value="${esc(d.nombre)}" maxlength="220"></label></div><small>${esc(d.motivo||'Asociación manual')}</small>`:`<strong>${esc(d.nombre)}</strong><p>${esc(worker(d)?.nombre||'Sin trabajador')} · ${esc(RR_DOC_TIPOS[d.tipo])}</p>`}<div class="doc-bulk-actions"><button class="btn sm" data-preview="${i}">Ver documento</button>${paso===2?`<button class="btn sm" data-firma="${i}">${d.firma?'Cambiar posición de firma':'Añadir firma'}</button>${d.firma?`<span class="pill ok">Firma · página ${d.firma.pagina}</span><button class="linkbtn" data-quitar-firma="${i}">Quitar firma</button>`:''}`:''}</div></div></div>`).join('')}</div><p class="doc-error" role="alert"></p><div class="doc-bulk-actions">${paso===2?'<button class="btn" id="docVolver">Volver</button>':''}<button class="btn primary" id="docContinuar">${paso===1?'Continuar':'Guardar y solicitar las firmas'}</button><button class="btn" data-close>Cerrar</button></div>`;
+  <div>${docs.map((d,i)=>paso===2&&!d.seleccionado?'':`<div class="doc-bulk-row"><input type="checkbox" data-seleccion="${i}" ${d.seleccionado?'checked':''} ${paso===2?'disabled':''} aria-label="Seleccionar documento ${i+1}"><div><div class="doc-bulk-status">${esc(paginas(d).map(p=>`${p.archivo} · pág. ${p.pagina}`).join(' / '))}</div>${d.nombre_detectado?`<p class="doc-detected">Nombre en el documento: <strong>${esc(d.nombre_detectado)}</strong></p>`:''}${paso===1?`<div class="doc-bulk-fields"><label>Buscar trabajador<input type="search" data-buscar="${i}" placeholder="Escribe un nombre…"></label><label>Trabajador<select data-worker="${i}" aria-label="Trabajador del documento ${i+1}"><option value="">Seleccionar trabajador</option>${opciones(d)}</select></label><label>Tipo<select data-tipo="${i}">${Object.entries(RR_DOC_TIPOS).map(([k,v])=>`<option value="${k}" ${d.tipo===k?'selected':''}>${esc(v)}</option>`).join('')}</select></label><label>Nombre del archivo<input data-nombre="${i}" value="${esc(d.nombre)}" maxlength="220"></label></div><small>${esc(d.motivo||'Asociación manual')}</small>`:`<strong>${esc(d.nombre)}</strong><p>${esc(worker(d)?.nombre||'Sin trabajador')} · ${esc(RR_DOC_TIPOS[d.tipo])}</p>`}<div class="doc-bulk-actions"><button class="btn sm" data-preview="${i}">Ver documento</button>${paso===2?`<button class="btn sm" data-firma="${i}">${d.firma?'Cambiar posición de firma':'Añadir firma'}</button>${d.firma?`<span class="pill ok">Firma · página ${d.firma.pagina}</span><button class="linkbtn" data-quitar-firma="${i}">Quitar firma</button>`:''}`:''}</div></div></div>`).join('')}</div><p class="doc-error" role="alert"></p><div class="doc-bulk-actions">${paso===2?'<button class="btn" id="docVolver">Volver</button>':''}<button class="btn primary" id="docContinuar">${paso===1?'Continuar':'Guardar y solicitar las firmas'}</button><button class="btn" data-close>Cerrar</button></div>`;
   ov.querySelectorAll('[data-seleccion]').forEach(b=>b.onchange=()=>{docs[Number(b.dataset.seleccion)].seleccionado=b.checked;});
   ov.querySelectorAll('[data-worker]').forEach(b=>b.onchange=()=>{docs[Number(b.dataset.worker)].worker_id=b.value;docs[Number(b.dataset.worker)].motivo='Asociación revisada manualmente';});
   ov.querySelectorAll('[data-tipo]').forEach(b=>b.onchange=()=>docs[Number(b.dataset.tipo)].tipo=b.value);
@@ -4024,13 +4028,13 @@ async function rrDocumentosMasivos(){
   ov.querySelectorAll('[data-buscar]').forEach(b=>b.oninput=()=>{const i=Number(b.dataset.buscar),sel=ov.querySelector(`[data-worker="${i}"]`);sel.innerHTML='<option value="">Seleccionar trabajador</option>'+opciones(docs[i],b.value);});
   ov.querySelector('#docRenombrar')?.addEventListener('click',()=>{const m=ov.querySelector('#docMes').value;if(!/^20\d\d-(0[1-9]|1[0-2])$/.test(m)){error(Error('Selecciona el mes y año.'));return;}docs.filter(d=>d.seleccionado&&worker(d)).forEach(d=>{d.mes=m;d.nombre=nombre(m,worker(d).nombre);});pintar();});
   ov.querySelector('#docCombinar')?.addEventListener('click',()=>{const selected=docs.filter(d=>d.seleccionado);if(selected.length<2){error(Error('Selecciona al menos dos páginas para unirlas.'));return;}if(!worker(selected[0])||selected.some(d=>String(d.worker_id)!==String(selected[0].worker_id))){error(Error('Asocia primero todas las páginas seleccionadas al mismo trabajador.'));return;}const first=selected[0];first.paginas=selected.flatMap(d=>d.paginas);first.firma=null;docs=docs.filter(d=>!d.seleccionado||d===first);pintar();});
-  ov.querySelectorAll('[data-preview]').forEach(b=>b.onclick=async()=>{const d=docs[Number(b.dataset.preview)],view=modal('Revisar documento','<div id="docVista"></div><p class="doc-error"></p>');let visor;try{const m=await import('/panel/pdf-firma.js');const pages=paginas(d);if(pages.length>1){const select=document.createElement('select');select.innerHTML=pages.map((p,i)=>`<option value="${i}">Página ${i+1}</option>`).join('');view.querySelector('.modal-b').prepend(select);select.onchange=()=>load(Number(select.value));}async function load(i){visor?.destroy();visor=await m.visorPdf(view.querySelector('#docVista'),await rrPdfBytes(`/api/rrhh/documentos-masivos/${lote.id}/pagina/${pages[i].id}`));}await load(0);const ob=new MutationObserver(()=>{if(!view.isConnected){visor?.destroy();ob.disconnect();}});ob.observe(document.body,{childList:true});}catch(e){view.querySelector('.doc-error').textContent=e.message;}});
+  ov.querySelectorAll('[data-preview]').forEach(b=>b.onclick=async()=>{const d=docs[Number(b.dataset.preview)],view=modal('Revisar documento','<div id="docVista"></div><p class="doc-error"></p>');view.querySelector('.modal').classList.add('doc-preview-modal');let visor;try{const m=await import('/panel/pdf-firma.js');const pages=paginas(d);if(pages.length>1){const select=document.createElement('select');select.innerHTML=pages.map((p,i)=>`<option value="${i}">Página ${i+1}</option>`).join('');view.querySelector('.modal-b').prepend(select);select.onchange=()=>load(Number(select.value));}async function load(i){visor?.destroy();visor=await m.visorPdf(view.querySelector('#docVista'),await rrPdfBytes(`/api/rrhh/documentos-masivos/${lote.id}/pagina/${pages[i].id}`));}await load(0);const ob=new MutationObserver(()=>{if(!view.isConnected){visor?.destroy();ob.disconnect();}});ob.observe(document.body,{childList:true});}catch(e){view.querySelector('.doc-error').textContent=e.message;}});
   ov.querySelectorAll('[data-firma]').forEach(b=>b.onclick=async()=>{const d=docs[Number(b.dataset.firma)],pos=await rrColocarFirma(d.paginas.map(id=>`/api/rrhh/documentos-masivos/${lote.id}/pagina/${id}`),d.firma);if(pos){d.firma=pos;pintar();}});
   ov.querySelectorAll('[data-quitar-firma]').forEach(b=>b.onclick=()=>{docs[Number(b.dataset.quitarFirma)].firma=null;pintar();});
   ov.querySelector('#docVolver')?.addEventListener('click',()=>{paso=1;pintar();});
   ov.querySelector('#docContinuar').onclick=async e=>{if(ocupado)return;const list=docs.filter(d=>d.seleccionado);if(!list.length||list.some(d=>!worker(d))){error(Error('Selecciona documentos y asigna un trabajador a cada uno antes de continuar.'));return;}if(list.some(d=>!d.nombre.trim().toLowerCase().endsWith('.pdf'))){error(Error('Cada nombre debe terminar en .pdf.'));return;}if(paso===1){paso=2;pintar();return;}ocupado=true;e.target.disabled=true;try{const r=await apiSend('POST',`/api/rrhh/documentos-masivos/${lote.id}/guardar`,{documentos:list.map(({paginas,worker_id,tipo,nombre,firma})=>({paginas,worker_id,tipo,nombre,firma}))});ov.remove();toast(`${r.guardados||0} guardados · ${r.duplicados||0} ya existentes · ${r.pendientes||0} páginas pendientes`);if(RRSEG.sel)rrSelWorker(RRSEG.sel.id);}catch(err){error(err);e.target.disabled=false;}finally{ocupado=false;}};
  }
- function opciones(d,query=''){const norm=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();return lote.trabajadores.filter(w=>String(w.id)===String(d.worker_id)||norm(w.nombre).includes(norm(query))).map(w=>`<option value="${w.id}" ${String(w.id)===String(d.worker_id)?'selected':''}>${esc(w.nombre)} · ${esc(w.local||'')}</option>`).join('');}
+ function opciones(d,query=''){const norm=s=>String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();return lote.trabajadores.filter(w=>String(w.id)===String(d.worker_id)||norm(query).split(/\s+/).every(t=>norm(w.nombre).includes(t))).sort((a,b)=>Number(d.candidatos?.includes(b.id))-Number(d.candidatos?.includes(a.id))).map(w=>`<option value="${w.id}" ${String(w.id)===String(d.worker_id)?'selected':''}>${d.candidatos?.includes(w.id)?'Posible coincidencia · ':''}${esc(w.nombre)} · ${esc(w.local||'')}</option>`).join('');}
  ov.querySelector('#docLoteForm').onsubmit=async e=>{e.preventDefault();const btn=e.target.querySelector('button');btn.disabled=true;btn.textContent='Analizando…';try{const fd=new FormData();for(const file of e.target.archivos.files)fd.append('archivos',file);const r=await fetch('/api/rrhh/documentos-masivos',{method:'POST',headers:{Authorization:'Bearer '+token()},body:fd});if(await fueraDeSesion(r))return;const j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'No se pudo analizar');preparar(j);}catch(err){error(err);btn.disabled=false;btn.textContent='Analizar documentos';}};
  try{const j=await apiRaw('/api/rrhh/documentos-masivos');if(!ov.querySelector('#docLotesPendientes'))return;ov.querySelector('#docLotesPendientes').innerHTML=j.data.length?`<h3>Lotes pendientes</h3><p class="mut">Se conservan durante 7 días. Las asociaciones sin guardar se vuelven a proponer al abrir.</p>${j.data.map(l=>`<div class="doc-bulk-actions"><button class="btn sm" data-lote="${l.id}">Continuar lote · ${esc(String(l.creado_en).slice(0,16).replace('T',' '))}</button><button class="linkbtn" data-descartar="${l.id}">Descartar lote</button></div>`).join('')}`:'';ov.querySelectorAll('[data-lote]').forEach(b=>b.onclick=()=>abrir(b.dataset.lote));ov.querySelectorAll('[data-descartar]').forEach(b=>b.onclick=async()=>{try{await apiSend('POST',`/api/rrhh/documentos-masivos/${b.dataset.descartar}/descartar`,{});b.parentElement.remove();}catch(e){error(e);}});}catch(e){error(e);}
 }
@@ -4554,22 +4558,25 @@ function renderRRResumen() {
 // Sin teléfono no se les puede escribir. Lo rellenan ellos desde su perfil, pero
 // aquí se ve de un vistazo a quién le falta, para poder recordárselo.
 function renderRRSinTelefono() { return ''; }
+let AVISOS_OCULTOS=[];
 async function refrescarAvisosRR(){
  if(!USER||!['direccion','rrhh','encargado','contabilidad','marketing'].includes(USER.rol)){AVISOS_RR=[];return;}
  const sesion=token();
- if(AVISOS_SESION!==sesion){AVISOS_RR=[];AVISOS_CARGA=null;AVISOS_SESION=sesion;}
+ if(AVISOS_SESION!==sesion){AVISOS_RR=[];AVISOS_OCULTOS=[];AVISOS_CARGA=null;AVISOS_SESION=sesion;}
  if(AVISOS_CARGA)return AVISOS_CARGA;
- const carga=(async()=>{try{const r=await apiRaw('/api/panel/avisos');if(token()!==sesion)return false;const fallidas=new Set(r.fallidas||[]);AVISOS_RR=[...(r.data||[]),...AVISOS_RR.filter(a=>fallidas.has(a.fuente))];repintarBarra();return fallidas.size===0;}catch{return false;}})();
+ const carga=(async()=>{try{const r=await apiRaw('/api/panel/avisos');if(token()!==sesion)return false;const fallidas=new Set(r.fallidas||[]);AVISOS_RR=[...(r.data||[]),...AVISOS_RR.filter(a=>fallidas.has(a.fuente))];AVISOS_OCULTOS=[...(r.ocultos||[]),...AVISOS_OCULTOS.filter(a=>fallidas.has(a.fuente))];repintarBarra();return fallidas.size===0;}catch{return false;}})();
  AVISOS_CARGA=carga;try{return await carga;}finally{if(AVISOS_CARGA===carga)AVISOS_CARGA=null;}
 }
-async function abrirAvisos(){
+async function abrirAvisos(ocultos=false){
  const direccion=USER?.rol==='direccion';
  const ov=modal(direccion?'Avisos para Dirección':'Avisos de tu departamento','<p class="mut">Revisando pendientes…</p>');
  const actualizado=await refrescarAvisosRR();if(!USER||!ov.isConnected)return;
- const avisos=AVISOS_RR.slice(),grupos=new Map();
+ const avisos=(ocultos?AVISOS_OCULTOS:AVISOS_RR).slice(),grupos=new Map();
  avisos.forEach((a,indice)=>{const dept=a.departamento||'Otros';if(!grupos.has(dept))grupos.set(dept,[]);grupos.get(dept).push({...a,indice});});
  const nota=direccion?'Solo incidencias críticas o pendientes que necesitan tu intervención. Las importantes escalan a los 3 días; las ordinarias, a los 14.':'Solo los pendientes de tu departamento y de los locales a los que tienes acceso. Desaparecen al resolverlos.';
- ov.querySelector('.modal-b').innerHTML=`<p class="mut avisos-nota">${nota}</p>${actualizado===false?'<p role="alert" class="avisos-error">No se pudieron actualizar los avisos. La lista puede no estar al día.</p>':''}${[...grupos].map(([dept,items])=>`<details class="avisos-grupo" open><summary>${esc(dept)} <span class="pill">${items.length}</span></summary><div class="rows">${items.map(a=>`<button class="row rr-aviso-item" type="button" data-aviso="${a.indice}"><span class="grow"><b>${esc(a.titulo)}</b><span class="t2">${esc([a.detalle,a.local].filter(Boolean).join(' · '))}</span><span class="avisos-motivo ${a.sev==='crit'?'crit':''}">${a.sev==='crit'?'Crítico':(a.escalado?'Escalado · ':'')+(a.dias?`${a.dias} ${a.dias===1?'día':'días'} pendiente`:'Pendiente')}</span></span><span aria-hidden="true">→</span></button>`).join('')}</div></details>`).join('')||(actualizado===false?'':'<div class="avisos-vacio"><b>Todo al día</b><p class="mut">'+(direccion?'No hay incidencias que requieran tu intervención.':'No tienes avisos pendientes.')+'</p></div>')}`;
+ ov.querySelector('.modal-b').innerHTML=`<div class="toolbar"><button class="btn ${!ocultos?'primary':''}" data-bandeja="activos">Pendientes (${AVISOS_RR.length})</button><button class="btn ${ocultos?'primary':''}" data-bandeja="ocultos">Descartados y pospuestos (${AVISOS_OCULTOS.length})</button></div><p class="mut avisos-nota">${nota} Descartar o posponer solo afecta a tu campana; no elimina el documento.</p>${actualizado===false?'<p role="alert" class="avisos-error">No se pudieron actualizar los avisos. La lista puede no estar al día.</p>':''}${[...grupos].map(([dept,items])=>`<details class="avisos-grupo" open><summary>${esc(dept)} <span class="pill">${items.length}</span></summary><div class="rows">${items.map(a=>`<div class="aviso-con-acciones"><button class="row rr-aviso-item" type="button" data-aviso="${a.indice}"><span class="grow"><b>${esc(a.titulo)}</b><span class="t2">${esc([a.detalle,a.local].filter(Boolean).join(' · '))}</span><span class="avisos-motivo ${a.sev==='crit'?'crit':''}">${a.sev==='crit'?'Crítico':(a.escalado?'Escalado · ':'')+(a.dias?`${a.dias} ${a.dias===1?'día':'días'} pendiente`:'Pendiente')}</span></span><span aria-hidden="true">→</span></button><div class="toolbar" style="padding:0 14px 12px;gap:8px;flex-wrap:wrap">${ocultos?`<span class="mut">${a.decision==='descartar'?'Descartado':'Recordatorio: '+new Date(a.hasta).toLocaleString('es-ES')}${a.motivo?' · '+esc(a.motivo):''}</span><button class="btn sm" data-decision="restaurar" data-indice="${a.indice}">Recuperar aviso</button>`:`<button class="btn sm" data-decision="posponer" data-indice="${a.indice}">Recordármelo después</button><button class="btn sm" data-decision="descartar" data-indice="${a.indice}">Descartar</button>`}</div></div>`).join('')}</div></details>`).join('')||(actualizado===false?'':'<div class="avisos-vacio"><b>'+ (ocultos?'Sin avisos ocultos':AVISOS_OCULTOS.length?'Sin avisos visibles':'Todo al día')+'</b><p class="mut">'+(ocultos?'Aquí verás los avisos que descartes o pospongas.':AVISOS_OCULTOS.length?'Puedes consultar los avisos ocultos en Descartados y pospuestos.':direccion?'No hay incidencias que requieran tu intervención.':'No tienes avisos pendientes.')+'</p></div>')}`;
+ ov.querySelectorAll('[data-bandeja]').forEach(b=>b.onclick=()=>{ov.remove();abrirAvisos(b.dataset.bandeja==='ocultos');});
+ ov.querySelectorAll('[data-decision]').forEach(b=>b.onclick=()=>decidirAviso(avisos[Number(b.dataset.indice)],b.dataset.decision,ov,ocultos));
  ov.querySelectorAll('[data-aviso]').forEach(b=>b.onclick=async()=>{
   const aviso=avisos[Number(b.dataset.aviso)];if(!aviso)return;ov.remove();
   if(aviso.local&&aviso.fuente!=='reviews'){DASH_LOCAL=aviso.local;SELECCION=[];guardarAmbito();}
@@ -4583,10 +4590,52 @@ async function abrirAvisos(){
   if(['facturas','pendientes'].includes(aviso.fuente)){FACF={categoria:'',subcategoria:'',local:'',empresa:'',estado:'',tipo:'',q:'',from:'',to:''};FACTAB='facturas';if(aviso.fuente==='pendientes'){DASH_LOCAL='';SELECCION=[];guardarAmbito();}}
   if(aviso.fuente==='mantenimiento'){MANT_TAB='inc';MANF.estado='';}
   await go(aviso.view);
-  if(aviso.fuente==='facturas'&&FAC_LIST?.some(f=>String(f.id)===String(aviso.documento_id)))facFicha(aviso.documento_id);
-  else if(['facturas','pendientes'].includes(aviso.fuente)){const avisos=document.getElementById('facAvisos');if(avisos){avisos.open=true;avisos.scrollIntoView({block:'start'});}}
-  if(aviso.fuente==='mantenimiento')mantGestionar(aviso.documento_id);
+  try {
+   const id=aviso.documento_id;
+   if(aviso.fuente==='facturas'){
+    const f=await api('/api/facturas/documento/'+encodeURIComponent(id));
+    if(!f)throw Error('El documento ya no está disponible');
+    FAC_LIST=FAC_LIST.filter(x=>String(x.id)!==String(id)).concat(f);
+    facFicha(id);
+   } else if(aviso.fuente==='pendientes'){
+    if(!FAC_PEND.some(x=>String(x.id)===String(id)))throw Error('Este documento ya se ha asignado o retirado de pendientes');
+    facRevisar(id);
+   } else if(aviso.fuente==='mantenimiento'){
+    if(!MAN_LIST.some(x=>String(x.id)===String(id)))throw Error('La incidencia ya no está disponible en este ámbito');
+    mantGestionar(id);
+   } else if(aviso.fuente==='reviews'){
+    const j=await apiSend('GET','/api/reviews/manage?id='+encodeURIComponent(id));
+    const r=j.data?.find(x=>String(x.id)===String(id));
+    if(!r)throw Error('La reseña ya no está disponible en tu ámbito');
+    REV_DATA=REV_DATA.filter(x=>String(x.id)!==String(id)).concat(r);
+    if(revPuedeResponder())openResponder(id);else modal('Reseña',reviewCard(r));
+   } else if(aviso.fuente==='candidaturas'){
+    const rows=await api('/api/hr/applications?id='+encodeURIComponent(id));
+    const c=rows?.find(x=>String(x.id)===String(id));
+    if(!c)throw Error('La candidatura ya no está disponible');
+    const ficha=modal('Candidatura · '+c.nombre,`<p>${esc(c.puesto||'Puesto sin indicar')} · ${esc(c.poblacion||'')}</p><p>${esc(c.telefono||'')} · ${esc(c.email||'')}</p><p>Estado: <b>${esc(cap(c.estado||'nuevo'))}</b></p>${c.cv_url?`<a class="btn" href="${esc(c.cv_url)}" target="_blank" rel="noopener">Ver currículum ↗</a>`:''}<div class="toolbar" style="margin-top:16px;flex-wrap:wrap">${['revisando','descartada'].filter(e=>e!==c.estado).map(e=>`<button class="btn" data-act="cand-estado" data-id="${esc(c.id)}" data-estado="${e}">${e==='revisando'?'Marcar en revisión':'Descartar'}</button>`).join('')}${c.estado!=='contratada'?`<button class="btn primary" data-act="cand-contratar" data-id="${esc(c.id)}" data-nombre="${esc(c.nombre)}">Contratar</button>`:''}</div>`);
+    ficha.addEventListener('click',e=>{if(e.target.closest('[data-act="cand-estado"], [data-act="cand-contratar"]'))ficha.remove();});
+   } else if(aviso.fuente==='riesgos'){
+    modal(aviso.titulo,`<p>${esc(aviso.detalle||'')}</p><p class="mut">Este aviso resume una situación general, no un único documento.</p>`);
+   }
+  } catch(e){if(e.message!=='noauth')toast(e.message||'No se pudo abrir el aviso. Vuelve a intentarlo.');}
+
  });
+}
+async function decidirAviso(aviso,accion,bandeja,ocultos){
+ const guardar=async(extra={})=>{
+  await apiSend('POST','/api/panel/avisos/decision',{fuente:aviso.fuente,clave:aviso.clave,version:aviso.version,accion,...extra});
+  bandeja.remove();await refrescarAvisosRR();await abrirAvisos(ocultos);
+ };
+ if(accion==='restaurar'){try{await guardar();}catch(e){toast(e.message);}return;}
+ const ov=modal(accion==='descartar'?'Descartar aviso':'Recordármelo después',`<p><b>${esc(aviso.titulo)}</b></p><p class="mut">Solo se oculta en tu campana. Podrás recuperarlo y volverá a aparecer si cambia la situación.</p><form id="decisionAviso">${accion==='posponer'?'<div class="field"><label for="avisoHasta">Fecha y hora del recordatorio</label><input id="avisoHasta" name="hasta" type="datetime-local" required></div>':'<div class="field"><label for="avisoMotivo">Motivo (opcional)</label><textarea id="avisoMotivo" name="motivo" rows="2" maxlength="500" placeholder="Por ejemplo: ya comprobado, no corresponde"></textarea></div>'}<p role="alert"></p><div class="toolbar"><button class="btn" type="button" data-close>Cancelar</button><button class="btn primary" type="submit">${accion==='descartar'?'Descartar aviso':'Guardar recordatorio'}</button></div></form>`);
+ ov.querySelector('form').onsubmit=async e=>{
+  e.preventDefault();const f=e.target,b=f.querySelector('[type="submit"]');b.disabled=true;
+  try{
+   const extra=accion==='posponer'?{hasta:new Date(f.elements.hasta.value).toISOString()}:{motivo:f.elements.motivo.value};
+   await guardar(extra);ov.remove();
+  }catch(err){f.querySelector('[role="alert"]').textContent=err.message;b.disabled=false;}
+ };
 }
 setInterval(()=>{if(document.visibilityState==='visible'&&token())refrescarAvisosRR();},60000);
 
@@ -8130,6 +8179,7 @@ function facQS(localForzado) {
 function facRevisionQS(extra={}) {
  const qs=new URLSearchParams(extra);
  if(FACF.empresa)qs.set('empresa',FACF.empresa);
+ if(FACF.tipo)qs.set('tipo',FACF.tipo);
  const locales=viendoVarios()?localesDelAmbito():[localActualFE()].filter(Boolean);
  if(locales.length)qs.set('locales',locales.join(','));
  return qs.toString();
@@ -8279,7 +8329,7 @@ function renderFacturas(list, pend, stats, empresas) {
     : (porLocal || topProv) ? `<div style="margin-top:16px">${porLocal}${topProv}</div>` : "";
   const pendCard=facPendientesHtml(pend);
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
-  return `${facHeader()}${resumen}${toolbar}<details class="cont-review-notice" id="facAvisos"><summary class="btn">Avisos de compras</summary><p class="mut">Los avisos respetan la empresa y los locales seleccionados. Los documentos sin local asignado se consultan en Todos los locales.</p><div id="facCalidadAvisos">${facCalidadHtml(list)}</div><div id="facRecepciones"></div><div id="facDups"></div><div id="facLocalesRaros"></div><div id="facPendientes">${pendCard}</div></details><div id="facRes">${facTablaHtml(list)}</div>${vizGrid}`;
+  return `${facHeader()}${resumen}${toolbar}<details class="cont-review-notice" id="facAvisos"><summary class="btn">Avisos de compras</summary><p class="mut">Los avisos respetan el tipo de documento, la empresa y los locales seleccionados. Los documentos sin local asignado se consultan en Todos los locales.</p><div id="facCalidadAvisos">${facCalidadHtml(list)}</div><div id="facRecepciones"></div><div id="facDups"></div><div id="facLocalesRaros"></div><div id="facPendientes">${pendCard}</div></details><div id="facRes">${facTablaHtml(list)}</div>${vizGrid}`;
 }
 function facPendientesHtml(pend) {
   const pendRow = (p) => {
@@ -8455,7 +8505,22 @@ const colorCategoriaFE = (c) => COLOR_CAT_FE[String(c || "").trim()] || "gris";
 // categorías sueltas: así el gasto va entero a un sitio y no hay que repartir nada.
 const parTxt = (p) => (p.subcategoria ? `${p.categoria} · ${p.subcategoria}` : p.categoria);
 
+// Una respuesta anterior no puede pintar filtros o una pantalla que ya han cambiado.
+const CONT_CARGAS=new Map();
+function cargaContable(clave,elemento){
+ const n=(CONT_CARGAS.get(clave)||0)+1,vista=CURRENT;
+ CONT_CARGAS.set(clave,n);
+ return ()=>CONT_CARGAS.get(clave)===n&&CURRENT===vista&&elemento?.isConnected;
+}
+function contAmbitoQS(){
+ const qs=new URLSearchParams();
+ const locales=viendoVarios()?localesDelAmbito():[localActualFE()].filter(Boolean);
+ if(locales.length)qs.set('locales',locales.join(','));
+ return qs;
+}
+
 async function loadProveedores() {
+  PROVDUP=null;
   PROV_SEL.clear();
   view.innerHTML = `<div class="ph"><div class="eyebrow">Contabilidad</div>${contabilidadTitulo("Proveedores","Proveedores")}<p class="mut">Datos, contactos y condiciones de suministro</p></div><div id="facCats">Cargando proveedores…</div><div id="facProvDup"></div>`;
   await facCargarCategorias();
@@ -8465,16 +8530,20 @@ async function loadProveedores() {
 async function facCargarCategorias() {
   const caja = document.getElementById("facCats");
   if (!caja) return;
+  const vigente=cargaContable("categorias",caja);
+  let datos;
   try {
-    if(CURRENT!=="proveedores") FCATS=await apiRaw("/api/facturas/categorias");
+    if(CURRENT!=="proveedores") datos=await apiRaw("/api/facturas/categorias");
     else {
       const locales=viendoVarios()?localesDelAmbito():[localActualFE()];
       const parts=await Promise.all(locales.map(local=>apiRaw("/api/facturas/categorias?"+new URLSearchParams({...PROV_RANGE,...(local?{local}:{})}))));
       const merged=new Map();
       for(const part of parts)for(const p of part.proveedores||[]){const key=p.clave||p.proveedor;if(!merged.has(key))merged.set(key,{...p,facturas:0,gasto:0});const out=merged.get(key);out.facturas+=Number(p.facturas)||0;out.gasto+=Number(p.gasto)||0;}
-      FCATS={...parts[0],proveedores:[...merged.values()]};
+      datos={...parts[0],proveedores:[...merged.values()]};
     }
-  } catch (e) { caja.innerHTML=errorCard(e.message); return; }
+  } catch (e) { if(!vigente())return; caja.innerHTML=errorCard(e.message); return; }
+  if(!vigente())return;
+  FCATS=datos;
   pintarProveedores();
 }
 function proveedoresFiltrados() {
@@ -8533,7 +8602,7 @@ function pintarProveedores() {
   heading.textContent=`${proveedoresFiltrados().length} proveedores · Facturas y gasto · ${!PROV_RANGE.from&&!PROV_RANGE.to?"Todo el histórico":(PROV_RANGE.from||"Inicio")+" – "+(PROV_RANGE.to||"Hoy")}`;
   fold.querySelector("summary").replaceWith(heading);fold.querySelector("p")?.remove();
   const toolbar=document.createElement("div");toolbar.innerHTML=`<div class="toolbar filter-toolbar"><div class="field filter-search"><label for="provQ">Buscar</label><input type="search" id="provQ" placeholder="Buscar proveedor…" value="${esc(PROVF.q)}"></div><div class="field filter-sort"><label for="provOrden">Ordenar por</label><select id="provOrden"><option value="nombre" ${PROVF.orden==="nombre"?"selected":""}>Nombre</option><option value="gasto" ${PROVF.orden==="gasto"?"selected":""}>Mayor gasto</option></select></div>${filterButton('id="provFiltros"',filterValues(PROVF.categoria).length+filterValues(PROVF.subcategoria).length+(PROVF.actividad?1:0))}</div><div class="fchips">${["categoria","subcategoria","actividad"].filter(k=>PROVF[k]).map(k=>`<button class="fchip" data-prov-quitar="${k}">${esc(k==="actividad"?({con:"Con compras",sin:"Sin compras",sin_categoria:"Sin categoría"}[PROVF[k]]):PROVF[k])} ×</button>`).join("")}${PROVF.q||PROVF.categoria||PROVF.subcategoria||PROVF.actividad?'<button class="linkbtn" id="provLimpiar">Limpiar filtros</button>':""}</div>`;
-  const sinCategoria=(FCATS?.proveedores||[]).filter(p=>!(p.categorias||[]).length).length;
+  const sinCategoria=proveedoresFiltrados().filter(p=>!(p.categorias||[]).length).length;
   if(sinCategoria) {
     const acceso=document.createElement("button");
     acceso.className="btn sm";
@@ -8557,6 +8626,7 @@ function pintarProveedores() {
   caja.querySelectorAll('[data-prov-sel]').forEach(el=>el.onchange=()=>{el.checked?PROV_SEL.add(el.dataset.provSel):PROV_SEL.delete(el.dataset.provSel);pintarProveedores();});
   const todos=caja.querySelector('#provSelTodos');if(todos){const visibles=proveedoresFiltrados();todos.checked=!!visibles.length&&visibles.every(p=>PROV_SEL.has(p.proveedor));todos.indeterminate=visibles.some(p=>PROV_SEL.has(p.proveedor))&&!todos.checked;todos.onchange=()=>{visibles.forEach(p=>todos.checked?PROV_SEL.add(p.proveedor):PROV_SEL.delete(p.proveedor));pintarProveedores();};}
   caja.prepend(toolbar);
+  pintarProvDuplicados();
   toolbar.querySelector("#provQ").oninput=e=>{PROVF.q=e.target.value;const pos=e.target.selectionStart;pintarProveedores();const input=document.getElementById("provQ");input.focus();input.setSelectionRange(pos,pos);};
   toolbar.querySelector("#provOrden").onchange=e=>{PROVF.orden=e.target.value;pintarProveedores();};
   toolbar.querySelector("#provFiltros").onclick=()=>{
@@ -8573,14 +8643,23 @@ function pintarProveedores() {
 let PROVDUP = null;
 
 async function facProvDuplicados() {
-  const caja = document.getElementById("facProvDup");
-  if (!caja) return;
-  try { PROVDUP = await apiRaw("/api/facturas/proveedores-duplicados?"+facRevisionQS()); } catch { return; }
-  const g = PROVDUP.grupos || [];
+ const caja=document.getElementById('facProvDup');if(!caja)return;
+ const vigente=cargaContable('proveedores-avisos',caja);
+ const qs=contAmbitoQS();
+ if(CURRENT==='proveedores')Object.entries(PROV_RANGE).forEach(([k,v])=>{if(v)qs.set(k,v);});
+ let datos;try{datos=await apiRaw('/api/facturas/proveedores-duplicados?'+qs);}catch{return;}
+ if(!vigente())return;
+ PROVDUP=datos;pintarProvDuplicados();
+}
+function pintarProvDuplicados(){
+ const caja=document.getElementById('facProvDup');if(!caja||!PROVDUP)return;
+ const visibles=CURRENT==='proveedores'?new Set(proveedoresFiltrados().map(p=>p.proveedor)):null;
+ const g=(PROVDUP.grupos||[]).filter(x=>!visibles||[x.sugerido,...x.otros].every(p=>visibles.has(p.proveedor)));
   // NUESTRO CIF EN LA CASILLA DEL PROVEEDOR. Es lo que hacía que cinco empresas que no tienen
   // nada que ver salieran aquí como «la misma»: la lectura coló nuestro CIF y esta pantalla
   // proponía unirlas. Ya no agrupan, pero el dato sigue mal en las facturas y hay que decirlo.
-  const mal = PROVDUP.conNifNuestro || { n: 0, proveedores: [] };
+  const pendientesNif=(PROVDUP.conNifNuestro?.proveedores||[]).filter(p=>!visibles||visibles.has(p.proveedor));
+  const mal={proveedores:pendientesNif,n:pendientesNif.reduce((n,p)=>n+Number(p.n||0),0)};
   const avisoNif = mal.n ? `<div class="card" style="margin-bottom:16px;border-color:var(--danger)">
       <div class="t1">Hay ${num(mal.n)} ${mal.n === 1 ? "factura" : "facturas"} con un CIF vuestro como NIF del proveedor</div>
       <p class="mut" style="margin:6px 0 0;line-height:1.55">Nadie os factura con vuestro propio CIF: cuando aparece ahí,
@@ -8602,8 +8681,8 @@ async function facProvDuplicados() {
           <div class="t2">y ${x.otros.map((o) => `<b>${esc(o.proveedor)}</b>`).join(", ")}
             · ${esc(x.motivo)} · ${num(x.facturas)} facturas · ${esc(eur(x.gasto))}</div>
         </div>
-        <button class="btn sm primary" data-act="fac-provdup" data-provdup="unir" data-i="${i}">Unir en «${esc(nombreCorto(x.sugerido.proveedor))}»</button>
-        <button class="btn sm" data-act="fac-provdup" data-provdup="otro" data-i="${i}">Al revés</button>
+        <button class="btn sm primary" data-act="fac-provdup" data-provdup="unir" data-i="${PROVDUP.grupos.indexOf(x)}">Unir en «${esc(nombreCorto(x.sugerido.proveedor))}»</button>
+        <button class="btn sm" data-act="fac-provdup" data-provdup="otro" data-i="${PROVDUP.grupos.indexOf(x)}">Al revés</button>
       </div>`).join("")}</div>
   </details>`);
 }
@@ -10084,10 +10163,11 @@ async function facCargarRecepciones(antes = null, navegacion = "primera") {
   const estaba = Boolean(caja.querySelector("details")?.open);
   const carga = ++FAC_RECEPCIONES_CARGA;
   let pagina;
-  try { pagina = await apiRaw("/api/facturas/recepciones?"+facRevisionQS(antes?{antes}:{})); }
+  const consulta=facRevisionQS(antes?{antes}:{});
+  try { pagina = await apiRaw("/api/facturas/recepciones?"+consulta); }
   catch { pagina = null; }
   const filas = pagina?.data;
-  if (!caja.isConnected || carga !== FAC_RECEPCIONES_CARGA) return;
+  if (!caja.isConnected || carga !== FAC_RECEPCIONES_CARGA || consulta!==facRevisionQS(antes?{antes}:{})) return;
   if (!Array.isArray(filas)) { caja.innerHTML = '<p class="mut">No se ha podido consultar la recepción de documentos.</p>'; return; }
   if (navegacion === "next" && antes !== FAC_RECEPCIONES_ANTES) FAC_RECEPCIONES_HIST.push(FAC_RECEPCIONES_ANTES);
   if (navegacion === "prev") FAC_RECEPCIONES_HIST.pop();
@@ -10147,6 +10227,9 @@ async function facReintentarRecepcion(id) {
 }
 
 async function loadFacturas() {
+  clearTimeout(_facTimer);
+  const seq=++_facSeq, tab=FACTAB;
+  const vigente=()=>seq===_facSeq && CURRENT==="facturas" && FACTAB===tab;
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   facScope(); // el ámbito lo fija el selector de establecimiento de la barra superior
   try {
@@ -10156,6 +10239,7 @@ async function loadFacturas() {
         apiOptional("/api/facturas/status"), apiOptional("/api/facturas/gmail-status"), apiOptional("/api/facturas/drive-carpetas"),
         (async () => { try { return await apiRaw("/api/facturas/master"); } catch { return null; } })(),
       ]);
+      if(!vigente())return;
       FCFG = { locales: locales || [], reglas: reglas || [], grupos: grupos || [], empresas: empresas || [], groups: groups || [], integ: { drive: integDrive, gmail: integGmail }, carpetas: carpetas || [], master: master || null };
       view.innerHTML = renderFacturasConfig();
       facCargarCategorias(); facDiagnosticoDrive(); facProvDuplicados();   // no se esperan: la configuración ya está
@@ -10170,10 +10254,11 @@ async function loadFacturas() {
       // El resumen viene YA AGREGADO del servidor y es de UN local. Viendo varios juntos
       // enseñaría el de uno solo junto a una tabla con los dos, que es la peor mezcla posible:
       // un número que parece el total y no lo es. Se pide solo cuando hay un local.
-      viendoVarios() ? Promise.resolve(null)
+      (viendoVarios() || facFiltrosActivos().length || FACF.q) ? Promise.resolve(null)
         : apiOptional("/api/facturas/stats" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : "")),
       apiOptional("/api/facturas/empresas"),
     ]);
+    if(!vigente())return;
     // Los totales vienen del servidor con el MISMO filtro y sin el tope de 500. Con varios
     // locales se suman los de cada uno: es exacto porque una factura es de un solo local.
     FAC_LIST = (lst && lst.data) || [];
@@ -10186,7 +10271,7 @@ async function loadFacturas() {
     facCargarRecepciones();
     facCargarMiniaturas(view);
     facAvisoLocales(); facDuplicados(); // no se esperan: la tabla ya está
-  } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
+  } catch (e) { if (vigente() && e.message !== "noauth") view.innerHTML = errorCard(e.message); }
 }
 // `ir` = true cuando se llama desde OTRA pantalla (Productos): hay que cambiar de vista, no
 // solo de pestaña, o se pintaría Compras dejando el menú marcando donde no se está.
@@ -10238,8 +10323,10 @@ async function loadPagos() {
   const view = document.getElementById("view");
   view.innerHTML = facHeader() + `<div id="pagosRes"><p class="mut">Mirando vencimientos…</p></div>`;
   let j;
-  try { j = await apiRaw("/api/facturas/pagos"); }
-  catch (e) { document.getElementById("pagosRes").innerHTML = errorCard(e.message); return; }
+  const caja=document.getElementById("pagosRes"),vigente=cargaContable("pagos",caja);
+  try { j = await apiRaw("/api/facturas/pagos?"+contAmbitoQS()); }
+  catch (e) { if(vigente())caja.innerHTML = errorCard(e.message); return; }
+  if(!vigente())return;
 
   if (Array.isArray(j.prevision)) return pintarPrevisionPagos(j);
   const r = j.resumen || {};
@@ -10418,12 +10505,14 @@ async function refrescarConciliacion() {
   const cont = document.getElementById("concRes"); if (!cont) return;
   // El periodo es el de la barra: Conciliaciones es Compras, y tener dos calendarios en la
   // misma pantalla —uno arriba y otro dentro— era la manera de que uno de los dos mintiera.
+  const vigente=cargaContable("conciliacion",cont);
   const per = periodoVista("facturas");
-  const qs = new URLSearchParams();
+  const qs = contAmbitoQS();
   if (per.from) qs.set("from", per.from);
   if (per.to) qs.set("to", per.to);
   let j;
-  try { j = await apiRaw("/api/facturas/conciliacion?" + qs); } catch (e) { cont.innerHTML = errorCard(e.message); return; }
+  try { j = await apiRaw("/api/facturas/conciliacion?" + qs); } catch (e) { if(vigente())cont.innerHTML = errorCard(e.message); return; }
+  if(!vigente())return;
   const r = j.resumen;
   const lista = (j.propuestas || []).filter((p) => !CONC.filtro || p.estado === CONC.filtro);
 
@@ -10631,17 +10720,21 @@ const COMP_FILTROS = ["q", "from", "to", "proveedor", "categoria", "subcategoria
 // Nada se une solo. Lo que sale es una propuesta y hay que decir que sí.
 let DICC = null;
 
+function productosRevisionQS(){
+ const qs=contAmbitoQS();
+ COMP_FILTROS.forEach(k=>{if(COMP[k])qs.set(k,COMP[k]);});
+ return qs.toString();
+}
 async function dicPedir() {
-  // La cola se pide del establecimiento que se esté mirando: revisar «lo que compro en Blanes»
-  // de una sentada es abordable; las descripciones de los siete sitios mezcladas, no. El
-  // diccionario que sale de ahí sigue siendo único —un producto es el mismo en todas partes—.
-  const loc = localActualFE();
-  try { DICC = await apiRaw("/api/facturas/diccionario" + (loc ? "?local=" + encodeURIComponent(loc) : "")); }
-  catch { DICC = null; }
-  // Lo apartado se pide aparte y no se espera: si falla, la cola se pinta igual. Es una lista
-  // de consulta, no un dato del que dependa nada de lo de arriba.
-  if (DICC) apiOptional("/api/facturas/productos/apartados").then((a) => { if (DICC) { DICC.apartados = a || []; dicPintar(); } });
-  dicPintar();
+ const caja=document.getElementById('dicRes');if(!caja)return;
+ const vigente=cargaContable('diccionario',caja),qs=productosRevisionQS();
+ let datos;
+ try{datos=await apiRaw('/api/facturas/diccionario?'+qs);}catch{datos=null;}
+ if(!vigente()||qs!==productosRevisionQS())return;
+ DICC=datos;dicPintar();
+ if(datos)apiOptional('/api/facturas/productos/apartados?'+qs).then(a=>{
+  if(vigente()&&qs===productosRevisionQS()&&DICC===datos){DICC.apartados=a||[];dicPintar();}
+ });
 }
 
 function dicPintar() {
@@ -10912,8 +11005,6 @@ async function loadProductos() {
   view.innerHTML = productosHeader() + `<div id="dicRes"></div><div id="compRes"><p class="mut">Cargando…</p></div>`;
   document.getElementById("escAbrir")?.addEventListener("click", () => escListado());
   await refrescarCompras();
-  comprasPaquetes();                 // tampoco se espera: es un aviso, no un dato de la tabla
-  dicPedir();                        // no se espera: la cola llega cuando llegue
 
   document.getElementById("dicRes")?.addEventListener("click", async (e) => {
     const dev = e.target.closest('[data-apart="devolver"]');
@@ -11448,8 +11539,11 @@ function comprasDebounced() { clearTimeout(_compTimer); _compTimer = setTimeout(
  */
 let COMP_PAQUETES = 0;
 async function comprasPaquetes() {
-  try { COMP_PAQUETES = (await apiRaw("/api/facturas/lineas/paquetes")).n || 0; } catch { COMP_PAQUETES = 0; }
-  if (COMP_PAQUETES && CURRENT === "productos") refrescarCompras();
+ const qs=productosRevisionQS();let n=0;
+ try{n=(await apiRaw('/api/facturas/lineas/paquetes?'+qs)).n||0;}catch{}
+ if(CURRENT!=='productos'||qs!==productosRevisionQS())return;
+ const cambio=COMP_PAQUETES!==n;COMP_PAQUETES=n;
+ if(cambio)refrescarCompras();
 }
 
 /** La lista tal y como se está viendo, en hoja de cálculo. */
@@ -11466,13 +11560,14 @@ function comprasCsv() {
 }
 
 async function comprasRecuadrar() {
+  const qs=productosRevisionQS();
   const ok = await confirmModal(
     `Se van a recuadrar ${COMP_PAQUETES} línea(s): la cantidad pasa a estar en unidades sueltas y el precio, a ser el de cada unidad. ` +
     `El importe pagado NO se toca, así que las facturas siguen cuadrando igual. No se vuelve a leer ningún documento.`,
     { ok: "Recuadrar" });
   if (!ok) return;
   try {
-    const r = await apiSend("POST", "/api/facturas/lineas/recuadrar");
+    const r = await apiSend("POST", "/api/facturas/lineas/recuadrar?"+qs);
     COMP_PAQUETES = 0;
     toast(`${r.arregladas} línea(s) recuadradas ✅`);
     loadProductos();
@@ -11484,6 +11579,7 @@ async function refrescarCompras() {
   const cont = document.getElementById("compRes");
   if (!cont) return;
   const request = ++comprasFilterRequest;
+  dicPedir();comprasPaquetes();
   repintarSeg();   // Mantener visible el periodo aplicado.
   const qs = new URLSearchParams();
   // «Qué compramos» también es un agregado: con varios establecimientos se le pasan todos y el
@@ -11725,7 +11821,7 @@ async function facRefresh() {
   box.classList.add("livebusy");
   try {
     const lst = await pidePorLocales((loc) => { const q = facQS(loc); return "/api/facturas" + (q ? "?" + q : ""); }, { raw: true });
-    if (seq !== _facSeq) return; // llegó tarde: ya hay una búsqueda más nueva
+    if (seq !== _facSeq || CURRENT!=="facturas" || !box.isConnected) return; // llegó tarde: ya hay una búsqueda más nueva
     FAC_LIST = (lst && lst.data) || [];
     FAC_TOT = facSumaTotales(lst);
     FAC_HAY_MAS = !!(lst && lst.hayMas);
@@ -11733,7 +11829,7 @@ async function facRefresh() {
     facDuplicados(); facCargarRecepciones(); facAvisoLocales();
     const calidad=document.getElementById("facCalidadAvisos");if(calidad)calidad.innerHTML=facCalidadHtml(FAC_LIST);
     const pend=await apiOptional("/api/facturas/pendientes?"+facRevisionQS());
-    if(seq!==_facSeq)return;
+    if(seq!==_facSeq || CURRENT!=="facturas" || !box.isConnected)return;
     FAC_PEND=pend||[];
     const pendiente=document.getElementById("facPendientes");if(pendiente)pendiente.innerHTML=facPendientesHtml(FAC_PEND);
     facCargarMiniaturas(box);
@@ -11816,7 +11912,12 @@ async function facSomosNosotros(prov) {
 
 /** Dejar en blanco el NIF de las facturas donde se coló un CIF nuestro. */
 async function facLimpiarNifPropio() {
-  const mal = (PROVDUP && PROVDUP.conNifNuestro) || { n: 0 };
+  const origen=(PROVDUP && PROVDUP.conNifNuestro)||{proveedores:[]};
+  const visibles=CURRENT==='proveedores'?new Set(proveedoresFiltrados().map(p=>p.proveedor)):null;
+  const proveedores=(origen.proveedores||[]).filter(p=>!visibles||visibles.has(p.proveedor));
+  const mal={n:proveedores.reduce((n,p)=>n+Number(p.n||0),0)};
+  const qs=contAmbitoQS();if(CURRENT==='proveedores')Object.entries(PROV_RANGE).forEach(([k,v])=>{if(v)qs.set(k,v);});
+  if(!mal.n)return;
   const ok = await confirmModal(
     `Se deja en blanco el NIF del proveedor en ${mal.n} ${mal.n === 1 ? "factura" : "facturas"}. `
     + "Solo se tocan las que tienen un CIF VUESTRO ahí, que es seguro que está mal: nadie os factura con vuestro propio CIF. "
@@ -11824,7 +11925,7 @@ async function facLimpiarNifPropio() {
     { ok: "Quitar el NIF", danger: true });
   if (!ok) return;
   try {
-    const r = await apiSend("POST", "/api/facturas/nif-propio/limpiar?"+facRevisionQS(), {});
+    const r = await apiSend("POST", "/api/facturas/nif-propio/limpiar?"+qs, {proveedores:proveedores.map(p=>p.proveedor)});
     toast(r.mensaje || "Listo");
     facProvDuplicados();
   } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
@@ -15269,11 +15370,12 @@ function renderAnalitica() {
 function analScope() { ANAL.local = localActualFE(); return ANAL.local; }
 async function loadAnalitica() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
+  const vigente=cargaContable("analitica",view);
   if (!ANAL.range) ANAL.range = rangoPreset("mes", todayStr());
   analScope();
   if (sinPublico(ANAL.local)) { view.innerHTML = avisoSinPublico("Analítica de ventas", "Inteligencia", "ventas"); return; }
   try {
-    if (!ANAL.tipos.length) { const j = await apiOptional("/api/agora/informes"); ANAL.tipos = j || []; if (ANAL.tipos.length && !analDeArea(ANAL.area).some((t) => t.key === ANAL.tipo)) ANAL.tipo = (analDeArea(ANAL.area)[0] || ANAL.tipos[0]).key; }
+    if (!ANAL.tipos.length) { const j = await apiOptional("/api/agora/informes"); if(!vigente())return; ANAL.tipos = j || []; if (ANAL.tipos.length && !analDeArea(ANAL.area).some((t) => t.key === ANAL.tipo)) ANAL.tipo = (analDeArea(ANAL.area)[0] || ANAL.tipos[0]).key; }
     view.innerHTML = renderAnalitica();
     loadAnalInforme();
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -15281,15 +15383,18 @@ async function loadAnalitica() {
 async function loadAnalInforme(force) {
   ANAL.cargando = true; ANAL.sort = null;
   const b = document.getElementById("analBody"); if (b) b.innerHTML = `<div class="card"><div class="mut" style="font-size:13px">Consultando el TPV…</div></div>`;
+  const vigente=cargaContable("informe",b);
   try {
     const r = ANAL.range;
-    const qs = `from=${r.from}&to=${r.to}` + (ANAL.local ? "&local=" + encodeURIComponent(ANAL.local) : "") + (force ? "&force=1" : "");
+    const qs = `from=${r.from}&to=${r.to}&`+contAmbitoQS()+(force ? "&force=1" : "");
     const j = await apiRaw("/api/agora/informe/" + ANAL.tipo + "?" + qs);
+    if(!vigente())return;
     const data = j.data || null; if (data && j.errores) data.__errores = j.errores;
     ANAL.data = data; ANAL.cargando = false;
     const bb = document.getElementById("analBody"); if (bb) bb.innerHTML = renderAnaliticaTabla(ANAL.data);
     const sub = document.querySelector("#view .ph .sub"); if (sub) sub.textContent = "Informes en vivo del TPV · " + (ANAL.range.label || "");
   } catch (e) {
+    if(!vigente())return;
     ANAL.cargando = false;
     const bb = document.getElementById("analBody"); if (bb) bb.innerHTML = `<div class="card"><div class="mut" style="font-size:13px">No se pudo cargar el informe${e.message && e.message !== "noauth" ? ": " + esc(e.message) : ""}.</div></div>`;
   }
@@ -17975,6 +18080,7 @@ document.addEventListener("click", (e) => {
     document.querySelectorAll(".topbar .seg button").forEach((b) => b.classList.toggle("on", b === t));
     recargarPorPeriodo();
   }
+  else if (act === "dash-compare-retry") loadDashboard();
   else if (act === "dash-compare") openPeriodoCustom(true);
   else if (act === "dash-compare-auto") {DASH_COMPARAR=null;loadDashboard();}
   else if (act === "period-custom") openPeriodoCustom();

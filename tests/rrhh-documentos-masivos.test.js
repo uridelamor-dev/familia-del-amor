@@ -7,3 +7,14 @@ test('asociación conservadora: NIF único, homónimos y nombres con NIF contrad
 test('reparto rechaza páginas repetidas, ajenas y empleados fuera del alcance',()=>{const p=[{id:'a'},{id:'b'}],w=[{id:1}],d={paginas:['a','b'],worker_id:1,tipo:'nomina',nombre:'Octubre - Persona.pdf'};assert.equal(validarReparto([d],p,w)[0].paginas.length,2);assert.throws(()=>validarReparto([d,d],p,w));assert.throws(()=>validarReparto([{...d,worker_id:2}],p,w));assert.throws(()=>validarReparto([{...d,paginas:['x']}],p,w));assert.throws(()=>validarReparto([{...d,nombre:'../a.pdf'}],p,w));});
 test('firma rechaza zonas fuera de página, páginas inexistentes y trazos vacíos o excesivos',()=>{const p={pagina:1,x:.1,y:.7,ancho:.3,alto:.1};assert.deepEqual(validarPosicion(p,1),p);assert.throws(()=>validarPosicion({...p,x:.9},1));assert.throws(()=>validarPosicion({...p,pagina:2},1));assert.throws(()=>validarTrazos([]));assert.throws(()=>validarTrazos([Array(2001).fill([.5,.5])]));assert.throws(()=>validarTrazos([[[0,0],[2,0]]]));});
 test('coordenadas respetan rotación y copia firmada conserva original y añade registro',async()=>{const pdf=await PDFDocument.create(),page=pdf.addPage([600,800]);page.setCropBox(20,30,500,700);assert.deepEqual(puntoPdf(page,0,0),{x:20,y:730});page.setRotation(degrees(90));assert.deepEqual(puntoPdf(page,0,0),{x:20,y:30});assert.deepEqual(puntoPdf(page,1,1),{x:520,y:730});const original=Buffer.from(await pdf.save()),hash=sha256(original);const s={id:1,worker_id:88,nombre:'Prueba.pdf',original,original_sha256:hash,posicion:{pagina:1,x:.2,y:.7,ancho:.3,alto:.1}};const signed=await crearPdfFirmado(s,[[[0,.5],[.2,.2],[.4,.8],[.6,.2],[1,.5]]],new Date('2026-10-27T12:00:00Z'),'Persona Prueba');assert.equal((await PDFDocument.load(signed)).getPageCount(),2);assert.equal(sha256(original),hash);assert.notEqual(sha256(signed),hash);await assert.rejects(crearPdfFirmado({...s,original_sha256:'incorrecto'},[],new Date(),'Persona'));});
+test('nombre: tolera desplazamiento de columna y conserva primera letra',()=>{
+ const d=detectarNomina('EMPRESA                     TRABAJADOR\nSOCIEDAD SL                APELLIDO SEGUNDO, ANA');
+ assert.equal(d.nombre,'APELLIDO SEGUNDO, ANA');
+});
+test('iniciales o nombres incompletos proponen candidatos sin asignar ni ignorar DNI contradictorio',()=>{
+ const w=[{id:1,nombre:'Ana Maria Apellido Segundo'},{id:2,nombre:'Otra Persona Distinta'}];
+ const r=asociarTrabajador({nombre:'APELLIDO SEGUNDO, ANA M.',hayTexto:true},w);
+ assert.equal(r.worker_id,null);assert.deepEqual(r.candidatos,[1]);
+ assert.deepEqual(asociarTrabajador({nombre:'APELLIDO SEGUNDO, ANA M.',dni:'12345678Z',hayTexto:true},[{...w[0],dni:'87654321X'}]).candidatos,[]);
+ assert.equal(asociarTrabajador({nombre:'Mª Dolores Prueba',hayTexto:true},[{id:3,nombre:'Maria Dolores Prueba'}]).worker_id,3);
+});
