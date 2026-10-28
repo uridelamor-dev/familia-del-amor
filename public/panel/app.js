@@ -1013,6 +1013,9 @@ let DASH_GASTOS = null, DASH_GASTOS_ESTADO="cargando";
 let DASH_PERIODO = null;
 let DASH_PERIODO_ESTADO = "cargando";
 let DASH_CARGA = 0;
+let DASH_COMPARAR = null, DASH_COMPARANDO = false;
+let DASH_AVANCE = [];
+const DASH_VISTOS = new Map();
 // El parte del día de Sara, guardado para poder abrirlo desde el botón de la cabecera.
 let DASH_PARTE = null;
 // Reflejo puro de src/modules/dashboard/periodos.js
@@ -1299,7 +1302,7 @@ window.addEventListener('resize',()=>{if(document.getElementById('drawer')?.clas
 function dashDesgloseLocales(filas){
  const pal=['var(--info)','var(--warning)','#8A5A9B','var(--brand)','var(--success)','#B5713A','#5B8A72'];
  const positivas=filas.reduce((s,r)=>s+Math.max(0,Number(r.total)||0),0);
- return `<div class="dash-local-breakdown">${positivas?`<div class="mbar" aria-hidden="true">${filas.map((r,i)=>`<span style="width:${Math.max(0,Number(r.total)||0)/positivas*100}%;background:${pal[i%pal.length]}"></span>`).join('')}</div>`:''}<div class="rows">${filas.map((r,i)=>`<div class="row"><span class="sdot" style="background:${pal[i%pal.length]}"></span><div class="grow"><span>${esc(nombreCortoLocal(r.local))}</span>${r.parcial&&r.disponible?'<small class="mut">Lectura parcial</small>':''}</div><b class="tnum">${r.disponible===false?'No disponible':eur(r.total)}</b></div>`).join('')}</div></div>`;
+ return `<div class="dash-local-breakdown">${positivas?`<div class="mbar" aria-hidden="true">${filas.map((r,i)=>`<span style="width:${Math.max(0,Number(r.total)||0)/positivas*100}%;background:${pal[i%pal.length]}"></span>`).join('')}</div>`:''}<div class="rows">${filas.map((r,i)=>`<div class="row"><span class="sdot" style="background:${pal[i%pal.length]}"></span><div class="grow"><span>${esc(nombreCortoLocal(r.local))}</span>${r.parcial&&r.disponible?'<small class="mut">Lectura parcial</small>':''}</div><b class="tnum">${r.cargando?'Consultando…':r.disponible===false?'No disponible':eur(r.total)}</b></div>`).join('')}</div></div>`;
 }
 function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
@@ -1319,7 +1322,7 @@ function renderDashboard(d) {
   DASH_PARTE = { titular: d.titular || "", contexto };
   const hayParte = !!(d.titular || contexto);
   const fechaSeleccionada = DASH_RANGE.from === DASH_RANGE.to ? fechaLarga(DASH_RANGE.from) : fechaCorta(DASH_RANGE.from) + " – " + fechaCorta(DASH_RANGE.to);
-  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaSeleccionada ? " · " + fechaSeleccionada : ""}</div></div><div class="acts">${hayParte ? `<button class="btn" data-act="dash-parte">${ic("chat", 15)} El parte de Sara</button>` : ""}<button class="btn" data-act="cmdk">${ic("search", 15)} Acción rápida</button></div></div>`;
+  const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaSeleccionada ? " · " + fechaSeleccionada : ""}</div></div><div class="acts">${hayParte ? `<button class="btn" data-act="dash-parte">${ic("chat", 15)} El parte de Sara</button>` : ""}</div></div>`;
   const sara = "";
   // Ventas del día: sin sustituir datos ausentes por cero ni por reservas.
   const diario = d.diario, actual = diario?.actual;
@@ -1339,7 +1342,7 @@ function renderDashboard(d) {
   const tarjetasPeriodo = periodo ? [
     periodo.ventas?.disponible ? kpi({lab:(periodo.ventas.parcial ? "Facturación parcial · " : "Facturación · ") + (DASH_RANGE.label || "Periodo"), icon:"euro", val:eur(periodo.ventas.total), sub:periodo.ventas.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "Periodo seleccionado"}) : "",
     periodo.ventas?.disponible && periodo.ventas.tickets > 0 ? kpi({lab:"Ticket medio", icon:"receipt", val:eur(periodo.ventas.ticket_medio), sub:num(periodo.ventas.tickets) + " tickets · periodo seleccionado"}) : "",
-    periodo.comparacion?.ventas != null ? kpi({lab:"Vs. " + periodo.comparacion.etiqueta, icon:"cal", val:dec1(periodo.comparacion.ventas) + " %", sub:fechaCorta(periodo.comparacion.desde) + " – " + fechaCorta(periodo.comparacion.hasta)}) : "",
+    periodo.comparacion?.ventas != null ? kpi({lab:"Variación de facturación", icon:"cal", val:(periodo.comparacion.ventas > 0 ? "+" : "") + dec1(periodo.comparacion.ventas) + " %", sub:"Respecto a " + [periodo.comparacion.desde, periodo.comparacion.hasta].map(fecha => new Intl.DateTimeFormat("es-ES", {day:"numeric", month:"short", year:"numeric"}).format(new Date(fecha + "T12:00:00"))).join(" – ")}) : "",
   ].filter(Boolean) : [];
   const kpis = !esHoy ? (tarjetasPeriodo.length ? `<div class="grid g${tarjetasPeriodo.length} dash-kpis">${tarjetasPeriodo.join("")}</div>` : `<p class="mut" role="status">${DASH_PERIODO_ESTADO === "cargando" ? "Consultando el periodo seleccionado…" : "Las cifras del periodo no están disponibles."}</p>`) : tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : `<p class="mut" role="status">${diario === undefined ? "Consultando las cifras de hoy…" : "Las cifras de hoy no están disponibles en este momento."}</p>`;
   if (d.errorResumen) return header + kpis + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
@@ -1363,15 +1366,18 @@ function renderDashboard(d) {
   // El rótulo va corto para que quepa dentro de la tarjeta; las fechas exactas de la
   // comparación se ven al pasar el ratón, que es donde se miran cuando se dudan.
   const cuando = cmp ? `Comparado con ${fechaCorta(cmp.desde)} – ${fechaCorta(cmp.hasta)}` : "";
-  const stat3 = (lab, val, col, pct, nota) => `<div style="min-width:0"><div class="mut" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">${lab}</div><div class="big tnum" style="font-size:22px${col ? ";color:" + col : ""}">${val}</div>${pct != null ? `<div style="margin-top:2px" title="${esc(cuando)}">${deltaEl(pct, contra)}</div>` : ""}${nota ? `<div class="mut" style="font-size:10px;margin-top:1px">${esc(nota)}</div>` : ""}</div>`;
+  const stat3 = (lab, val, col, pct, nota) => `<div class="dash-metric"><div class="dash-metric-label">${lab}</div><div class="dash-metric-value tnum"${col ? ` style="color:${col}"` : ''}>${val}</div>${pct != null ? `<div class="dash-metric-change" title="${esc(cuando)}">${deltaEl(pct, contra)}</div>` : ""}${nota ? `<div class="dash-metric-note">${esc(nota)}</div>` : ""}</div>`;
   // Parte del gasto que no es de este local sino de toda su empresa (la gestoría, el seguro) y
   // que se le imputa al sumar. Se dice SIEMPRE que la hay: un número repartido sin avisar se lee
   // como un número medido, y luego nadie entiende por qué no cuadra con la lista de facturas.
   const gEmp = gOk ? Number(per.gastos.empresa) || 0 : 0;
   const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
   const ventasBox = (vOk || gOk)
-    ? `<div class="dash-period-stats" style="display:flex;gap:18px;flex-wrap:wrap;justify-content:flex-end;text-align:right">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}${stat3("Resultado", res != null ? eur(res) : "—", resCol, res != null && cmp ? cmp.resultado : null)}</div>`
+    ? `<div class="dash-period-stats">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}</div>`
     : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y resultado<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
+  const diferencia=res!=null&&cmp?.totales?.resultado!=null?res-cmp.totales.resultado:null;
+  const comparador=`<div class="dash-comparator"><div class="dash-comparator-head"><span class="dash-metric-label">Resultado de referencia</span><button class="btn sm" data-act="dash-compare">${ic('cal',14)} ${esc(DASH_COMPARAR?.label || 'Elegir periodo')} ▾</button></div><div class="dash-comparator-values"><b class="tnum">${cmp?.totales?.resultado!=null?eur(cmp.totales.resultado):'—'}</b><span class="mut">${DASH_COMPARANDO?'Cargando comparación…':cmp?esc([cmp.desde,cmp.hasta].map(f=>new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',year:'numeric'}).format(new Date(f+'T12:00:00'))).join(' – ')):'Comparación no disponible'}</span></div>${diferencia!=null?`<div class="dash-comparator-delta"><span>Diferencia</span> ${diferencia>=0?'+':'−'}${eur(Math.abs(diferencia))}${cmp.resultado!=null?' · '+(cmp.resultado>0?'+':'')+dec1(cmp.resultado)+' %':''}</div>`:''}${DASH_COMPARAR?'<button class="link" data-act="dash-compare-auto">Volver al periodo anterior</button>':''}${cmp?.lectura?.actualizando?'<small class="mut">Actualizando referencia…</small>':''}</div>`;
+  const lecturaPeriodo=per?.lectura?`<div class="dash-reading" role="status">Datos guardados · ${esc(new Date(per.lectura.actualizado).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}))}${per.lectura.error?' · No se pudo actualizar':per.lectura.actualizando?' · Actualizando importes…':''}</div>`:'';
   // Al pasar el ratón se ve el día, cuántas reservas y —si Ágora está conectado— lo que
   // se facturó ESE día. Es la pregunta que uno se hace mirando el pico del sábado.
   const ventasPorDia = new Map(((per && per.ventas && per.ventas.serie) || []).map((v) => [String(v.dia), Number(v.ventas) || 0]));
@@ -1383,29 +1389,19 @@ function renderDashboard(d) {
       }, { h: 120, fmt: (v) => num(v) + (v === 1 ? " comensal" : " comensales"), fmtExtra: (v) => eur(v) + " facturado" })
     : `<div class="mut" style="font-size:12.5px;padding:14px 0">${!per ? esc(periodoMensaje) : totalPeriodo ? "Solo hay un día con reservas en este periodo." : "Sin reservas en este periodo."}</div>`;
   const notaRes = (vOk || gOk) ? `<div class="mut" style="font-size:11px;margin-top:8px">Resultado = ventas${per.hoyEnVivo ? " (incluye hoy)" : ""} − gastos en facturas del periodo (no incluye personal).</div>` : "";
-  const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="between" style="align-items:flex-end;margin-bottom:8px"><div><div class="big tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="mut" style="font-size:12.5px">reservas${per && per.reservas && per.reservas.personas ? " · " + num(per.reservas.personas) + " comensales" : ""}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${per?.ventas?.porLocal?.length>1?`<div class="dash-sales-breakdown"><h4>Facturación por local</h4>${dashDesgloseLocales(per.ventas.porLocal)}</div>`:""}${grafico}${notaRes}<div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles; resultado pendiente." : per && !gOk ? " · Sin facturas registradas; resultado pendiente." : ""}</div></div>`;
+  const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad · reservas y resultado</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="dash-activity-metrics"><div class="dash-metric"><div class="dash-metric-label">Reservas</div><div class="dash-metric-value tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="dash-metric-note">${per?.reservas?.personas != null ? num(per.reservas.personas) + " comensales" : "Comensales no disponibles"}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${!per&&DASH_AVANCE.length?`<div class="dash-sales-breakdown"><h4>Facturación por local · consultando</h4>${dashDesgloseLocales(DASH_AVANCE)}</div>`:''}<div class="dash-comparison-row"><div class="dash-result-current">${stat3("Resultado del periodo", res != null ? eur(res) : "—", resCol, null, "Ventas − gastos en facturas")}${lecturaPeriodo}</div>${comparador}</div>${per?.ventas?.porLocal?.length>1?`<div class="dash-sales-breakdown"><h4>Facturación por local</h4>${dashDesgloseLocales(per.ventas.porLocal)}</div>`:""}<div class="dash-activity-trend">${grafico}</div><div class="dash-activity-footer">${notaRes}<div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles; resultado pendiente." : per && !gOk ? " · Sin facturas registradas; resultado pendiente." : ""}</div></div></div>`;
 
   // El gasto usa el mes actual por defecto y el rango elegido al cambiar el periodo.
   const gl = DASH_GASTOS?.porLocal || [], gtot=DASH_GASTOS?.total;
   const gasto = `<div class="card c4"><div class="ch"><h3>${esHoy?'Gasto del mes':'Gasto del periodo'}</h3></div><div class="big tnum">${gtot==null?'—':eur(gtot)}</div><p class="mut" style="font-size:12px">${DASH_GASTOS?esc(fechaCorta(DASH_GASTOS.from))+' – '+esc(fechaCorta(DASH_GASTOS.to)):DASH_GASTOS_ESTADO==='error'?'No se pudo cargar el gasto.':'Consultando gasto…'}</p>${gl.length?dashDesgloseLocales(gl):DASH_GASTOS?'<p class="mut">Sin gasto registrado en este periodo.</p>':''}<div class="mut" style="font-size:11px;margin-top:16px">Facturas del periodo, incluido el gasto de empresa repartido. No incluye coste de personal.</div></div>`;
 
-  // ── Necesita tu atención (preocupaciones reales) ──
-  const concerns = (d.preocupaciones || []).filter(c => !GO_VIEW[c.go] || puedeVer(GO_VIEW[c.go])).slice().sort((a,b) => ({crit:0,imp:1,info:2}[a.sev] ?? 3) - ({crit:0,imp:1,info:2}[b.sev] ?? 3));
-  // Los detalles empiezan cerrados; la importancia se indica en la cabecera.
-  const nCritC = concerns.filter((c) => c.sev === "crit").length;
-  const nImportantes = concerns.filter((c) => c.sev === "crit" || c.sev === "imp").length;
-  const atencion = `<details class="card fold c7 p0"><summary style="padding:18px 18px 14px"><h3>Necesita tu atención</h3><span class="foldr">${concerns.length ? `<span class="pill ${nImportantes ? "bad" : "warn"}">${nCritC ? `${nCritC} crítica${nCritC === 1 ? "" : "s"}` : `${concerns.length}`}</span>` : '<span class="pill ok">Todo en orden</span>'}<span class="car">${ic("chev", 16)}</span></span></summary>${concerns.length ? `<div class="rows">${concerns.map(attRow).join("")}</div>` : `<div style="padding:18px"><p class="mut" style="margin:0">Hoy no hay nada urgente${localName ? " en " + esc(localName) : ""}. Buen momento para cuidar el servicio y al equipo.</p></div>`}</details>`;
-
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
-  const estado = `<details class="card fold c5 p0"><summary style="padding:18px 18px 14px"><h3>Estado por establecimiento</h3><span class="foldr"><span class="mut">${radar.length ? num(radar.length) : "—"}</span><span class="car">${ic("chev", 16)}</span></span></summary>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur(e.gastoMes)}</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</details>`;
+  const estado = `<details class="card fold c12 p0"><summary style="padding:18px 18px 14px"><h3>Estado por establecimiento</h3><span class="foldr"><span class="mut">${radar.length ? num(radar.length) : "—"}</span><span class="car">${ic("chev", 16)}</span></span></summary>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur(e.gastoMes)}</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</details>`;
 
-  // ── Reseñas + Sara/WhatsApp ──
+  // ── Reseñas ──
   const rs = d.resenas || {};
   const resenasCard = `<div class="card c4"><div class="ch"><h3>Reseñas</h3><button class="link" data-view="reviews">Gestionar →</button></div><div style="display:flex;gap:12px;align-items:baseline"><div class="big tnum" style="font-size:34px">${rs.total ? dec1(rs.media) : "—"}</div><div class="stars">${"★".repeat(Math.round(rs.media || 0))}</div></div><div class="mut" style="font-size:12px;margin-top:6px">${num(rs.total || 0)} reseñas (90 días)</div>${rs.sinResponder ? `<div style="margin-top:12px"><span class="pill warn">${rs.sinResponder} sin responder</span></div>` : ""}</div>`;
-  const waok = d.whatsapp && d.whatsapp.connected;
-  const saraCard = `<div class="card c8"><div class="ch"><h3>Sara · WhatsApp</h3><span class="pill ${waok ? "ok" : "bad"}">${waok ? "Conectada" : "Desconectada"}</span></div><p class="mut" style="margin:0">${waok ? "Sara atiende reservas y clientes por WhatsApp automáticamente." : "WhatsApp está caído: Sara no responde a los clientes. Reconéctala cuanto antes."}</p><div style="margin-top:12px"><button class="btn ${waok ? "" : "primary"}" data-view="whatsapp">${waok ? "Abrir WhatsApp" : "Reconectar ahora"}</button></div></div>`;
-
   // ── Clientes a llamar + Equipo (preserva la inteligencia real) ──
   const cl = d.clientes || {}; const enfr = (cl.enfriando || []).slice(0, 4);
   const clientesCard = enfr.length ? `<div class="card c6 p0"><div class="ch" style="padding:18px 18px 0"><h3>Clientes a los que llamar</h3><button class="link" data-view="clientes">Ver →</button></div><div class="rows">${enfr.map((c) => `<div class="row"><div class="ava">${esc((c.nombre || "?").slice(0, 1).toUpperCase())}</div><div class="grow"><div class="t1">${esc(c.nombre || "—")}</div><div class="t2">${c.visitas} reservas · última ${esc(c.ultima)}</div></div>${c.telefono ? `<a class="btn sm" href="tel:${esc(c.telefono)}">Llamar</a>` : ""}</div>`).join("")}</div></div>` : "";
@@ -1413,10 +1409,10 @@ function renderDashboard(d) {
   const equipoCard = (einc.length || (eck && eck.plantilla)) ? `<div class="card c6"><div class="ch"><h3>Equipo</h3><button class="link" data-view="rrhh">RR. HH. →</button></div>${eck && eck.plantilla ? `<div class="between" style="margin-bottom:8px"><span class="mut" style="font-size:12.5px">Conversaciones del mes</span><b class="tnum">${eck.hechos}/${eck.plantilla}</b></div><div class="prog ${eck.hechos / eck.plantilla < 0.5 ? "warn" : ""}"><i style="width:${Math.round((eck.hechos / Math.max(1, eck.plantilla)) * 100)}%"></i></div>` : ""}${einc.length ? `<div class="rows" style="margin-top:10px">${einc.map((w) => `<div class="row" style="padding:8px 0;border-top:0"><div class="grow"><div class="t1" style="font-size:12.5px">${esc(w.nombre || "—")}</div><div class="t2">${esc(w.local || "")}</div></div><span class="badge ${w.c >= 2 ? "bad" : "warn"}">${w.c} incid.</span></div>`).join("")}</div>` : ""}<div class="pendingblock" style="margin-top:12px;padding:11px 13px">Consulta turnos y horas registradas en Horarios y Fichajes. El coste de personal no está incluido aquí.</div></div>` : "";
 
   const row1 = `<div class="grid g12" style="margin-top:16px">${actividad}${gasto}</div>`;
-  const row2 = `<div class="grid g12" style="margin-top:16px">${atencion}${estado}</div>`;
-  const row3 = `<div class="grid g12" style="margin-top:16px">${resenasCard}${saraCard}</div>`;
+  const row2 = radar.length ? `<div class="grid g12" style="margin-top:16px">${estado}</div>` : "";
+  const row3 = `<div class="grid g12" style="margin-top:16px">${resenasCard}</div>`;
   const row4 = (clientesCard || equipoCard) ? `<div class="grid g12" style="margin-top:16px">${clientesCard}${equipoCard}</div>` : "";
-  return header + sara + kpis + row2 + row1 + row3 + row4;
+  return header + sara + kpis + row1 + row3 + row4 + row2;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -1432,9 +1428,11 @@ async function loadDashboard() {
   DASH_GASTOS=null;DASH_GASTOS_ESTADO="cargando";
   DASH_PERIODO = null;
   DASH_PERIODO_ESTADO = "cargando";
-  let d = null;
+  let d = DASH_VISTOS.get(q) || null;
   let diario;
+  DASH_AVANCE=[];
   const pintar = () => { if (d && vigente()) view.innerHTML = renderDashboard(d); };
+  pintar();
   if (from === todayStr() && to === todayStr()) apiOptional("/api/dashboard/hoy" + (q ? "?" + q : "")).then((valor) => {
     if (!vigente()) return;
     diario = valor?.hoy ? valor : null;
@@ -1444,17 +1442,37 @@ async function loadDashboard() {
   const gastoDesde=mesPorDefecto?todayStr().slice(0,7)+'-01':from;
   const gastoHasta=mesPorDefecto?new Date(Number(todayStr().slice(0,4)),Number(todayStr().slice(5,7)),0,12).toISOString().slice(0,10):to;
   apiOptional(`/api/dashboard/gastos?from=${gastoDesde}&to=${gastoHasta}${q?'&'+q:''}`).then(g=>{if(!vigente())return;DASH_GASTOS=g&&Array.isArray(g.porLocal)?g:null;DASH_GASTOS_ESTADO=DASH_GASTOS?'listo':'error';pintar();});
-  const pedirPeriodo = apiOptional(`/api/dashboard/periodo?from=${from}&to=${to}&comparar=1&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`);
-  pedirPeriodo.then((per) => {
-    if (!vigente()) return;
-    DASH_PERIODO = per && per.reservas ? per : null;
-    DASH_PERIODO_ESTADO = DASH_PERIODO ? "listo" : "error";
-    pintar();
+  DASH_COMPARANDO=true;
+  const basePeriodo=`/api/dashboard/periodo?from=${from}&to=${to}&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`;
+  const centros=viendoVarios()?localesDelAmbito():localActualFE()?[localActualFE()]:localesBase();
+  if(centros.length>1){
+    DASH_AVANCE=centros.filter(l=>!sinPublico(l)).map(local=>({local,disponible:false,cargando:true}));
+    for(const fila of DASH_AVANCE)apiOptional(`/api/dashboard/periodo?from=${from}&to=${to}&local=${encodeURIComponent(fila.local)}`).then(per=>{
+      if(!vigente())return;
+      Object.assign(fila,{cargando:false,disponible:!!per?.ventas?.disponible,total:per?.ventas?.total,parcial:!!per?.ventas?.parcial});pintar();
+    });
+  }
+  const comparacionElegida=DASH_COMPARAR ? `&compararDesde=${DASH_COMPARAR.from}&compararHasta=${DASH_COMPARAR.to}` : '';
+  const aplicar=per=>{if(!vigente())return;DASH_PERIODO=per?.reservas?per:null;DASH_PERIODO_ESTADO=DASH_PERIODO?'listo':'error';pintar();};
+  apiOptional(basePeriodo).then(async per=>{
+    if(!vigente())return;
+    aplicar(per);
+    if(per?.lectura?.actualizando){per=await apiOptional(basePeriodo+'&esperar=1');if(!vigente())return;if(per)aplicar(per);else if(DASH_PERIODO){DASH_PERIODO.lectura.actualizando=false;DASH_PERIODO.lectura.error=true;pintar();}}
+    if(!per||!DASH_PERIODO){DASH_COMPARANDO=false;pintar();return;}
+    let completo=await apiOptional(basePeriodo+'&comparar=1'+comparacionElegida);
+    if(!vigente())return;
+    if(completo?.comparacion)DASH_PERIODO.comparacion=completo.comparacion;
+    DASH_COMPARANDO=false;pintar();
+    if(completo?.comparacion?.lectura?.actualizando){
+      completo=await apiOptional(basePeriodo+'&comparar=1&esperar=1'+comparacionElegida);
+      if(vigente()&&completo?.comparacion){DASH_PERIODO.comparacion=completo.comparacion;pintar();}
+    }
   });
   try {
     d = await api("/api/dashboard" + (q ? "?" + q : ""));
     if (!vigente()) return;
     d.diario = diario;
+    DASH_VISTOS.set(q,d);
     pintar();
     repintarBarra();
   } catch (e) {
@@ -1475,10 +1493,10 @@ async function loadDashboard() {
  *
  * Dos meses a la vez porque casi todos los rangos que se miran cruzan de mes.
  */
-function openPeriodoCustom() {
+function openPeriodoCustom(comparacion = false) {
   const hoy = todayStr();
   const grupo = grupoPeriodo();
-  const per = periodoVista();
+  const per = comparacion ? (DASH_COMPARAR || {from:DASH_PERIODO?.comparacion?.desde,to:DASH_PERIODO?.comparacion?.hasta}) : periodoVista();
   let a = per.from || "", b = per.to || "", hov = "";
   let cur = "";   // el mes de la izquierda; se fija abajo, cuando `mesSig` ya existe
 
@@ -1490,7 +1508,7 @@ function openPeriodoCustom() {
     ["este-ano", "Este año"], ["ano-pasado", "Año pasado"], ["12m", "Últimos 12 meses"],
   ];
 
-  const ov = modal("Periodo", `<div class="rng">
+  const ov = modal(comparacion ? "Comparar con otro periodo" : "Periodo", `<div class="rng">
     <div class="rngq">${rapidos.map(([k, l]) => `<button type="button" data-rq="${k}">${esc(l)}</button>`).join("")}</div>
     <div class="rngc">
       <div class="rngh">
@@ -1587,8 +1605,11 @@ function openPeriodoCustom() {
   });
 
   ov.querySelector("#rngOk").addEventListener("click", () => {
+    if(comparacion&&!a){toast('Elige las fechas que quieres comparar');return;}
     if (a && !b) b = a;                       // un solo día es un rango de un día
-    const label = !a ? "Desde siempre" : a === b ? fechaCorta(a) : `${fechaCorta(a)} – ${fechaCorta(b)}`;
+    const etiquetaFecha=iso=>comparacion?new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',year:'numeric'}).format(new Date(iso+'T12:00:00')):fechaCorta(iso);
+    const label = !a ? "Desde siempre" : a === b ? etiquetaFecha(a) : `${etiquetaFecha(a)} – ${etiquetaFecha(b)}`;
+    if(comparacion){DASH_COMPARAR={from:a,to:b,label};ov.remove();loadDashboard();return;}
     fijarPeriodoVista(a ? "custom" : "todo", a, b, label);
     ov.remove();
     repintarSeg();
@@ -5264,23 +5285,32 @@ function personasDelAmbito(list) {
   });
 }
 const usuariosDelAmbito = personasDelAmbito;
+const USER_ROLE_LABELS = {direccion:"Dirección",encargado:"Encargado",trabajador:"Trabajador",rrhh:"Recursos humanos",marketing:"Marketing",contabilidad:"Contabilidad"};
+const USER_ROLE_HELP = {direccion:"Acceso completo a todos los establecimientos y apartados.",encargado:"Gestiona la operativa de los establecimientos asignados.",trabajador:"Acceso a su espacio personal de trabajo.",rrhh:"Gestiona el equipo y los procesos de recursos humanos.",marketing:"Gestiona las herramientas de marketing y clientes de su rol.",contabilidad:"Gestiona compras, proveedores y las herramientas de contabilidad de su rol."};
+let USERS_QUERY = "", USERS_ROLE = "";
 function renderUsuarios(list) {
   const rows = usuariosDelAmbito(list);
   const loc = localActualFE();
-  const toolbar = `<div class="toolbar"><div class="mut" style="flex:1;font-size:13px">Los usuarios con <b>local</b> asignado (y rol distinto de Dirección) solo ven los datos de su local en los módulos marcados «por local».</div><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div>`;
-  const table = rows.length ? `<div class="card p0"><div class="tw"><table class="tbl"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Local</th><th>Módulos con acceso</th><th></th></tr></thead><tbody>${rows.map((u) => {
-    const extras = (u.locales || []).filter((l) => l && l !== u.local);
-    const localCell = u.local ? `${esc(u.local)}${extras.length ? `<div class="mut" style="font-size:12px">También: ${extras.map(esc).join(", ")}</div>` : ""}${u.rol !== "direccion" ? ` <span class="mut" title="Acceso a los locales asignados">🔒</span>` : ""}` : `<span class="mut">— todos —</span>`;
-    return `<tr><td><b>${esc(u.username)}</b></td><td>${esc(u.nombre || "")}</td><td>${esc(u.rol)}</td><td>${localCell}</td><td style="max-width:340px;line-height:1.9">${chipsModulos(u)}</td><td class="r" style="white-space:nowrap"><button class="linkbtn" style="color:var(--brand)" data-act="user-edit" data-id="${u.id}">Editar</button> · <button class="linkbtn" style="color:var(--brand)" data-act="user-pass" data-id="${u.id}" data-nombre="${esc(u.username)}">Contraseña</button> · <button class="linkbtn" data-act="user-del" data-id="${u.id}" data-nombre="${esc(u.username)}">Eliminar</button></td></tr>`;
-  }).join("")}</tbody></table></div></div>` : `<div class="card"><div class="mut" style="padding:8px">${loc
-    ? `Ningún usuario asignado a <b>${esc(nombreCortoLocal(loc))}</b>. Cambia de establecimiento en la barra para verlos todos.`
-    : "No hay usuarios todavía. Crea el primero con «+ Nuevo usuario»."}</div></div>`;
-  const sub = loc
-    ? `${rows.length} cuenta${rows.length === 1 ? "" : "s"} en <b>${esc(nombreCortoLocal(loc))}</b> · <span class="mut">dirección no se muestra: no está asignada a ningún local</span>`
-    : `${rows.length} cuenta${rows.length === 1 ? "" : "s"}`;
-  return `<div class="ph"><div class="eyebrow">Sistema</div><h1>Usuarios</h1><div class="sub">${sub}</div></div>${toolbar}${table}`;
+  const cards = rows.map(u => {
+    const locales = [...new Set([u.local,...(Array.isArray(u.locales)?u.locales:[])].filter(Boolean))];
+    const scope = u.rol === "direccion" || !locales.length ? "Todos los establecimientos" : locales.map(nombreCortoLocal).join(" · ");
+    return `<article class="user-row" data-user-role="${esc(u.rol)}" data-user-search="${esc([u.nombre,u.username,scope].join(" ").toLocaleLowerCase('es'))}">
+      <div class="user-identity"><span class="ava" aria-hidden="true">${esc((u.nombre||u.username||"?").slice(0,1).toUpperCase())}</span><div><b>${esc(u.nombre||u.username)}</b><span class="mut">Usuario: ${esc(u.username)}</span></div></div>
+      <div class="user-access"><span class="pill">${esc(USER_ROLE_LABELS[u.rol]||u.rol)}</span><div class="user-scope">${esc(scope)}</div>${chipsModulos(u)}</div>
+      <div class="user-actions"><button class="btn sm" data-act="user-edit" data-id="${esc(u.id)}" aria-label="Editar ${esc(u.nombre||u.username)}">Editar</button><details class="user-more"><summary aria-label="Más opciones de ${esc(u.username)}">•••</summary><div><button class="linkbtn" data-act="user-pass" data-id="${esc(u.id)}" data-nombre="${esc(u.username)}">Restablecer contraseña</button><button class="linkbtn user-delete" data-act="user-del" data-id="${esc(u.id)}" data-nombre="${esc(u.username)}">Eliminar cuenta</button></div></details></div>
+    </article>`;
+  }).join("");
+  return `<div class="ph"><div><h1>Usuarios</h1><div class="sub">Gestiona quién puede entrar, a qué locales y con qué permisos.</div></div><div class="acts"><button class="btn primary" data-act="user-nuevo">+ Nuevo usuario</button></div></div>
+  <div class="users-toolbar"><label class="field"><span>Buscar usuario</span><input id="usersSearch" type="search" placeholder="Nombre, usuario o establecimiento" value="${esc(USERS_QUERY)}"></label><label class="field"><span>Rol</span><select id="usersRole"><option value="">Todos los roles</option>${ROLES_USUARIO.map(r=>`<option value="${r}" ${USERS_ROLE===r?'selected':''}>${USER_ROLE_LABELS[r]}</option>`).join('')}</select></label><span class="mut" id="usersCount" aria-live="polite"></span></div>
+  ${loc?`<p class="mut users-scope-note">Mostrando cuentas asignadas a ${esc(nombreCortoLocal(loc))}. Para ver también las cuentas globales, selecciona todos los establecimientos arriba.</p>`:''}
+  <div class="card users-list">${cards}<div id="usersEmpty" class="users-empty" ${rows.length?'hidden':''}><b>${rows.length?'No hay coincidencias':'No hay usuarios en este ámbito'}</b><p class="mut">${rows.length?'Prueba otro nombre o cambia el filtro de rol.':'Cambia el establecimiento seleccionado o crea una cuenta.'}</p></div></div>`;
 }
-async function loadUsuarios() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { USERS = await api("/api/users"); view.innerHTML = renderUsuarios(USERS); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
+function wireUsuariosList() {
+  const search=document.getElementById('usersSearch'), role=document.getElementById('usersRole');
+  const filter=()=>{USERS_QUERY=search.value;USERS_ROLE=role.value;const q=USERS_QUERY.trim().toLocaleLowerCase('es');let count=0;document.querySelectorAll('.user-row').forEach(row=>{row.hidden=!!((USERS_ROLE&&row.dataset.userRole!==USERS_ROLE)||(q&&!row.dataset.userSearch.includes(q)));if(!row.hidden)count++;});document.getElementById('usersCount').textContent=`${count} cuenta${count===1?'':'s'}`;document.getElementById('usersEmpty').hidden=count>0;};
+  search.addEventListener('input',filter);role.addEventListener('change',filter);filter();
+}
+async function loadUsuarios() { const view = document.getElementById("view"); view.innerHTML = skeleton(); try { USERS = await api("/api/users"); view.innerHTML = renderUsuarios(USERS); wireUsuariosList(); } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); } }
 
 // Checkboxes de módulos para un rol. `sel` = Set de ids marcados. Dirección → todos, fijos.
 function modsCheckboxesHtml(rol, sel) {
@@ -5297,11 +5327,8 @@ function modsCheckboxesHtml(rol, sel) {
   // de un encargado, no aparece, y parece que los permisos no funcionan.
   const fuera = Object.keys(VIEW_ROLES).filter((id) => !ids.includes(id));
   const nota = dir
-    ? "Dirección tiene acceso total; no se puede restringir."
-    : `Desmarca los módulos a los que NO quieres que entre. Aquí solo salen los del rol
-       <b>${esc(rol)}</b>: desde aquí se quita acceso, nunca se da. Para que llegue a
-       ${fuera.length ? `<b>${esc(fuera.slice(0, 3).map((id) => TITLES[id] || id).join(", "))}</b>${fuera.length > 3 ? " u otros" : ""}` : "otros módulos"},
-       hay que cambiarle el rol.`;
+    ? "Dirección tiene acceso completo. Sus permisos no se pueden limitar."
+    : "Los apartados marcados estarán disponibles. Desmarcar limita el acceso; para habilitar herramientas de otro departamento, cambia el rol.";
   return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">${items}</div><div class="mut" style="margin-top:8px;line-height:1.5">${nota}</div>`;
 }
 // Locales EXTRA. El encargado de la Cooperativa lleva también La Tapeta de Blanes porque
@@ -5313,21 +5340,36 @@ function localesExtraHtml(principal, sel) {
       <input type="checkbox" name="locextra" value="${esc(l)}" ${sel.has(l) ? "checked" : ""} style="width:auto;margin:0">
       <span>${esc(l)}</span></label>`).join("");
   return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px">${items}</div>
-    <div class="mut" style="margin-top:8px;line-height:1.5">Podrá cambiar de establecimiento desde la barra de arriba y ver
-      cada uno por separado. <b>No se suman en la misma pantalla</b>: cada vista sigue enseñando un local.</div>`;
+    <div class="mut" style="margin-top:8px;line-height:1.5">Añade los otros establecimientos a los que podrá acceder. El principal ya está incluido.</div>`;
 }
 function localesExtraSeleccionados(ov) {
   return Array.from(ov.querySelectorAll('input[name=locextra]:checked')).map((c) => c.value);
 }
 
 function localOptionsHtml(sel) {
-  return opcionesLocal(sel, { vacio: "— sin local (todos) —" });
+  return opcionesLocal(sel, { vacio: "Todos los establecimientos" });
 }
 // Cablea el rerender de módulos al cambiar el rol dentro de un modal de usuario.
 function wireUserModal(ov) {
+  ov.querySelector('.modal').classList.add('user-editor');
+  const form=ov.querySelector('form'), grid=form.querySelector('.form-grid');
+  const heading=document.createElement('h3');heading.textContent='Cuenta y función';grid.before(heading);
+  const roleHelp=document.createElement('p');roleHelp.className='user-role-help';grid.after(roleHelp);
+  const extra=ov.querySelector('#locExtraBox').parentElement;
+  const location=ov.querySelector('select[name=local]').closest('.field');
+  const places=document.createElement('section');places.className='user-editor-section';
+  const title=document.createElement('h3');title.textContent='Establecimientos';places.append(title,location,extra);roleHelp.after(places);
+  location.querySelector('label').textContent='Establecimiento principal';
+  const permissions=ov.querySelector('#modsBox').parentElement;
+  const fold=document.createElement('details');fold.className='user-permissions';
+  const summary=document.createElement('summary');summary.textContent='Personalizar permisos';permissions.before(fold);fold.append(summary,permissions);
+  const updateHelp=()=>{const role=ov.querySelector('select[name=rol]').value;roleHelp.textContent=USER_ROLE_HELP[role]||'';places.hidden=role==='direccion';};
+  ov.querySelector('select[name=rol]').addEventListener('change',updateHelp);updateHelp();
+  const footer=form.lastElementChild;footer.classList.add('user-editor-footer');
+  form.querySelectorAll('.field').forEach((field,i)=>{const label=field.querySelector('label'),control=field.querySelector('input:not([type=checkbox]),select');if(label&&control){control.id=control.id||'user-field-'+i;label.htmlFor=control.id;}});
   const rolSel = ov.querySelector("select[name=rol]");
   const box = ov.querySelector("#modsBox");
-  if (rolSel && box) rolSel.addEventListener("change", () => { box.innerHTML = modsCheckboxesHtml(rolSel.value, new Set(modulosDeRolFE(rolSel.value))); });
+  if (rolSel && box) rolSel.addEventListener("change", () => { box.innerHTML = modsCheckboxesHtml(rolSel.value, new Set(modulosDeRolFE(rolSel.value))); roleHelp.textContent += " Se han seleccionado los permisos predeterminados de este rol. Puedes revisarlos en Personalizar permisos antes de guardar."; });
   // El local principal no puede salir también como extra: al cambiarlo se repinta la lista
   // conservando lo que ya estaba marcado.
   const locSel = ov.querySelector("select[name=local]"), locBox = ov.querySelector("#locExtraBox");
@@ -5340,7 +5382,7 @@ function modsSeleccionados(ov) { return Array.from(ov.querySelectorAll("input[na
 
 function openNuevoUsuario() {
   const rol0 = "encargado";
-  const body = `<form id="fUser"><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required></div><div class="field"><label>Nombre</label><input name="nombre"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === rol0 ? "selected" : ""}>${r}</option>`).join("")}</select></div><div class="field full"><label>Local</label><select name="local">${localOptionsHtml("")}</select></div></div><div class="field full" style="margin-top:6px"><label>Otros establecimientos <span class="mut">(opcional)</span></label><div id="locExtraBox">${localesExtraHtml("", new Set())}</div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(rol0, new Set(modulosDeRolFE(rol0)))}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear usuario</button></div></form>`;
+  const body = `<form id="fUser"><div class="form-grid"><div class="field"><label>Usuario</label><input name="username" required></div><div class="field"><label>Nombre</label><input name="nombre"></div><div class="field"><label>Contraseña</label><input name="password" type="text" required></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === rol0 ? "selected" : ""}>${USER_ROLE_LABELS[r] || r}</option>`).join("")}</select></div><div class="field full"><label>Local</label><select name="local">${localOptionsHtml("")}</select></div></div><div class="field full" style="margin-top:6px"><label>Otros establecimientos <span class="mut">(opcional)</span></label><div id="locExtraBox">${localesExtraHtml("", new Set())}</div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(rol0, new Set(modulosDeRolFE(rol0)))}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Crear usuario</button></div></form>`;
   const ov = modal("Nuevo usuario", body);
   wireUserModal(ov);
   ov.querySelector("#fUser").addEventListener("submit", async (e) => {
@@ -5353,7 +5395,7 @@ function openNuevoUsuario() {
 function openEditarUsuario(id) {
   const u = USERS.find((x) => String(x.id) === String(id)); if (!u) return;
   const sel = new Set(Array.isArray(u.modulos) ? u.modulos : []);
-  const body = `<form id="fUserE"><div class="form-grid"><div class="field"><label>Usuario</label><input value="${esc(u.username)}" disabled></div><div class="field"><label>Nombre</label><input name="nombre" value="${esc(u.nombre || "")}"></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === u.rol ? "selected" : ""}>${r}</option>`).join("")}</select></div><div class="field"><label>Local</label><select name="local">${localOptionsHtml(u.local || "")}</select></div></div><div class="field full" style="margin-top:6px"><label>Otros establecimientos <span class="mut">(opcional)</span></label><div id="locExtraBox">${localesExtraHtml(u.local || "", new Set(Array.isArray(u.locales_extra) ? u.locales_extra : (() => { try { return JSON.parse(u.locales_extra || "[]"); } catch { return []; } })()))}</div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(u.rol, sel)}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar cambios</button></div></form>`;
+  const body = `<form id="fUserE"><div class="form-grid"><div class="field"><label>Usuario</label><input value="${esc(u.username)}" disabled></div><div class="field"><label>Nombre</label><input name="nombre" value="${esc(u.nombre || "")}"></div><div class="field"><label>Rol</label><select name="rol">${ROLES_USUARIO.map((r) => `<option value="${r}" ${r === u.rol ? "selected" : ""}>${USER_ROLE_LABELS[r] || r}</option>`).join("")}</select></div><div class="field"><label>Local</label><select name="local">${localOptionsHtml(u.local || "")}</select></div></div><div class="field full" style="margin-top:6px"><label>Otros establecimientos <span class="mut">(opcional)</span></label><div id="locExtraBox">${localesExtraHtml(u.local || "", new Set(Array.isArray(u.locales_extra) ? u.locales_extra : (() => { try { return JSON.parse(u.locales_extra || "[]"); } catch { return []; } })()))}</div></div><div class="field full" style="margin-top:6px"><label>Módulos con acceso</label><div id="modsBox">${modsCheckboxesHtml(u.rol, sel)}</div></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px"><button type="button" class="btn" data-close>Cancelar</button><button type="submit" class="btn primary">Guardar cambios</button></div></form>`;
   const ov = modal(`Editar ${u.username}`, body);
   wireUserModal(ov);
   ov.querySelector("#fUserE").addEventListener("submit", async (e) => {
@@ -17933,6 +17975,8 @@ document.addEventListener("click", (e) => {
     document.querySelectorAll(".topbar .seg button").forEach((b) => b.classList.toggle("on", b === t));
     recargarPorPeriodo();
   }
+  else if (act === "dash-compare") openPeriodoCustom(true);
+  else if (act === "dash-compare-auto") {DASH_COMPARAR=null;loadDashboard();}
   else if (act === "period-custom") openPeriodoCustom();
   else if (act === "theme") toggleTheme();
   else if (act === "logout") { localStorage.removeItem("token"); location.href = "/login.html"; }

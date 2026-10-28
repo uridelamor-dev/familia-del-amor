@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { ventasRecientes, completarVentasRecientes } from '../src/modules/dashboard/ventas-recientes.js';
+import { ventasRecientes, completarVentasRecientes, normalizarVentasRango } from '../src/modules/dashboard/ventas-recientes.js';
 import { resumenHoy } from '../src/modules/dashboard/hoy.js';
 const hoy = '2026-10-13';
 const vivo = { hoy, locales: [{ local:'Blanes', dias:[
@@ -39,7 +39,7 @@ test('el rango inclusivo del dashboard se convierte al extremo exclusivo de Ágo
   const end=source.indexOf('// Ejecuta un informe de Ágora',start);
   const calls=[];
   const ctx=vm.createContext({Date,Promise,Map,Math,Object,setTimeout:()=>0,
-    _ventasRangoCache:new Map(),cacheLeer:async()=>null,cacheGuardar:async()=>{},
+    _ventasRangoCache:new Map(),_ventasRangoPendientes:new Map(),cacheLeer:async()=>null,cacheGuardar:async()=>{},
     claveRango:()=>'',loadAgoraConfigsActive:async()=>[{local:'Blanes',usuario:'u',password:'p'}],
     createAgoraClient:()=>({getVentasRango:async(a,b)=>{calls.push([a,b]);return[];}}),
     addDaysISO:(iso,n)=>{const d=new Date(iso+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);}});
@@ -77,7 +77,7 @@ for (const caso of [
     const inicioReciente = sumarDias(fecha, -7);
     const pedidos = [];
     const ctx = vm.createContext({ Date, Promise, Map, Math, Object, setTimeout: () => 0,
-      _ventasRangoCache: new Map(), cacheLeer: async () => null, cacheGuardar: async () => {},
+      _ventasRangoCache: new Map(), _ventasRangoPendientes:new Map(), cacheLeer: async () => null, cacheGuardar: async () => {},
       claveRango: () => '', loadAgoraConfigsActive: async () => [{ local: 'Blanes', usuario: 'u', password: 'p' }],
       createAgoraClient: () => ({ getVentasRango: async (a, b) => {
         pedidos.push([a, b]);
@@ -85,8 +85,8 @@ for (const caso of [
       } }),
       hoyISO: () => fecha, addDaysISO: sumarDias,
       INV_LOCALES: ['Blanes'], LOCALES_SIN_PUBLICO: new Set(), barrasDelCentro: l => [l],
-      ventasRecientes, completarVentasRecientes, agruparDesglose,
-      ventasVivoData: async () => ({ hoy: fecha, locales: [{ local: 'Blanes', dias: filas.filter(f => f.dia >= inicioReciente) }] }),
+      ventasRecientes, completarVentasRecientes, normalizarVentasRango, agruparDesglose,
+      _ventasVivoCache:{ts:Date.now(),data:{hoy:fecha,locales:[{local:'Blanes',dias:filas.filter(f=>f.dia>=inicioReciente)}]}},
       dbAll: async () => [], dbGet: async () => ({ n: 0, total: 0, base: 0 }),
       SIN_ALBARANES: 'TRUE', resultadoRegistrado: () => null,
     });
@@ -127,4 +127,46 @@ test('recupera cada barra afectada, conserva las completas y no mezcla locales',
  const vivo=await completarVentasRecientes({vivo:originales,locales:['A','B','B','C'],from,to:hoy,hoy,leer:async local=>{calls.push(local);return local==='B'?[{dia:from,ventas:30}]:null;}});
  assert.deepEqual(calls,['B','C']);
  const r=ventasRecientes({vivo,locales:['A','B','C'],from,to:hoy,hoy});assert.equal(total(r),60);assert.equal(r.parcial,true);
+});
+
+test('rango vacio confirmado es cero; fallo y datos invalidos no lo son',()=>{
+ assert.deepEqual(normalizarVentasRango([],hoy,hoy),[{dia:hoy,ventas:0,tickets:0}]);
+ assert.equal(normalizarVentasRango(null,hoy,hoy),null);
+ assert.equal(normalizarVentasRango([{dia:hoy,ventas:null}],hoy,hoy),null);
+});
+test('las recuperaciones de locales avanzan simultaneamente',async()=>{
+ const iniciados=[];let liberar;
+ const espera=new Promise(resolve=>{liberar=resolve;});
+ const tarea=completarVentasRecientes({vivo:{hoy,locales:[]},locales:['A','B','C'],from:hoy,to:hoy,hoy,leer:async local=>{iniciados.push(local);await espera;return [];}});
+ assert.deepEqual(iniciados,['A','B','C']);
+ liberar();const vivo=await tarea;
+ assert.equal(ventasRecientes({vivo,locales:iniciados,from:hoy,to:hoy,hoy}).parcial,false);
+});
+test('historico sin ventas confirmado queda completo; respaldo con huecos queda parcial',async()=>{
+ const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ const ctx=vm.createContext({hoyISO:()=>hoy,addDaysISO:(s,n)=>{const d=new Date(s+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);},
+ INV_LOCALES:['A'],LOCALES_SIN_PUBLICO:new Set(),barrasDelCentro:l=>[l],normalizarVentasRango,agruparDesglose,
+ ventasRangoLive:async()=>[],dbAll:async()=>[],dbGet:async()=>({n:0,total:0,base:0}),SIN_ALBARANES:'TRUE',resultadoRegistrado:()=>null});
+ vm.runInContext(source.slice(source.indexOf('async function periodoDeLocal('),source.indexOf('// Estado de la integración por local (NUNCA expone el token).')),ctx);
+ const q={from:'2026-09-01',to:'2026-09-03'};
+ const completo=await ctx.periodoDeLocal(q,null);
+ assert.equal(completo.ventas.disponible,true);assert.equal(completo.ventas.parcial,false);assert.equal(completo.ventas.total,0);
+ ctx.ventasRangoLive=async()=>null;
+ const fallido=await ctx.periodoDeLocal(q,null);
+ assert.equal(fallido.ventas.disponible,false);assert.equal(fallido.ventas.parcial,true);
+});
+
+test('lectura en vivo paralela: local sin ventas completo y local caido distinguible',async()=>{
+ const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ const iniciados=[];let liberar;const espera=new Promise(r=>{liberar=r;});
+ const ctx=vm.createContext({_ventasVivoCache:{ts:0},hoyISO:()=>hoy,hoyMas:n=>n===1?'2026-10-14':'2026-10-06',
+ cacheLeer:async()=>null,cacheGuardar:async()=>{},CLAVE_VIVO:'vivo',normalizarVentasRango,
+ loadAgoraConfigsActive:async()=>['A','B'].map(local=>({local,usuario:'u',password:'p'})),
+ createAgoraClient:cfg=>({getVentasRango:async()=>{iniciados.push(cfg.local);await espera;if(cfg.local==='B')throw Error('offline');return [];}}),dbRun:async()=>{}});
+ vm.runInContext(source.slice(source.indexOf('async function leerVentasVivo(force)'),source.indexOf('app.get("/api/agora/ventas-vivo"')),ctx);
+ const tarea=ctx.leerVentasVivo(false);
+ await new Promise(r=>setImmediate(r));assert.deepEqual(iniciados,['A','B']);liberar();
+ const vivo=await tarea;
+ assert.equal(vivo.locales[0].dias.length,8);assert.equal(vivo.locales[0].error,null);
+ assert.equal(vivo.locales[1].error,'offline');
 });

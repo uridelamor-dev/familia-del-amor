@@ -1,24 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { crearAvisoRecuperacionFacturas } from '../src/modules/messaging/aviso-recuperacion-facturas.js';
-test('treinta documentos y un reinicio producen un solo aviso por grupo', async () => {
-  const claves = new Set(), envios = [];
-  const deps = { ahora: () => new Date('2026-10-19T12:00:00Z'),
-    dbGet: async (_sql,[key]) => { if (claves.has(key)) return null; claves.add(key); return {key}; },
-    enviar: async (...args) => envios.push(args) };
-  const aviso = crearAvisoRecuperacionFacturas(deps);
-  await Promise.all(Array.from({length:30},()=>aviso('lloret@g.us')));
-  await crearAvisoRecuperacionFacturas(deps)('lloret@g.us');
-  assert.equal(envios.length,1);
-  await aviso('girona@g.us');
-  assert.equal(envios.length,2);
-});
-test('un envío incierto no se repite ni bloquea la recepción', async () => {
-  let reservado=false, intentos=0;
-  const aviso=crearAvisoRecuperacionFacturas({
-    dbGet:async()=>{if(reservado)return null;reservado=true;return {key:'x'};},
-    enviar:async()=>{intentos++;throw Error('timeout');},log:()=>{}
-  });
-  await aviso('lloret@g.us'); await aviso('lloret@g.us');
-  assert.equal(intentos,1);
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+
+test('recuperar adjuntos tras publicar no envía avisos de reconexión y conserva las tandas', async () => {
+ const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ const inicio=source.indexOf('  setOnGroupAttachment(async (');
+ const fin=source.indexOf('\n  initWhatsApp();',inicio);
+ assert.ok(inicio>0 && fin>inicio);
+ const envios=[], registrados=[];
+ let recibir;
+ vm.runInNewContext(source.slice(inicio,fin),{
+  setOnGroupAttachment: fn=>{recibir=fn;},
+  dbGet:async()=>({local:'Oficina'}),dbAll:async()=>[],dbRun:async()=>{},
+  canonizarLocal:l=>l, console:{log(){},warn(){},error(){}},
+  getDriveAccessToken:async()=>'',
+  tandasFacturas:{registrar:async o=>registrados.push(o)},
+  sendMensajeAGrupo:async(...args)=>envios.push(args),
+  procesarFactura:async o=>{
+   await o.onDocumentoGuardado(42);
+   if(o.onRecibido)await o.onRecibido(42);
+   return {id:42};
+  }
+ });
+ for(const recuperado of [true,true,false]) await recibir({groupJid:'grupo',mensajeId:'doc'+registrados.length,citado:{},recuperado});
+ assert.equal(envios.length,0);
+ assert.equal(registrados.length,3,'los documentos nuevos y recuperados siguen entrando en el resumen');
 });

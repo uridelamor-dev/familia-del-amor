@@ -1,3 +1,4 @@
+import { crearCachePeriodo } from './src/modules/dashboard/cache-periodo.js';
 import {agruparDesglose,gastoDesglosado} from './src/modules/dashboard/desglose.js';
 import {AVISOS_SCHEMA,registrarBandeja} from './src/modules/avisos/bandeja.js';
 import {cargarAvisosFuente} from './src/modules/avisos/fuentes.js';
@@ -22,7 +23,6 @@ import {crearDecisionesHistorico,cabeceraHistorica} from './src/modules/facturas
 import { REPASO_HISTORICO_SCHEMA, crearRepasoHistorico } from './src/modules/facturas/repaso-historico.js';
 import { TANDAS_SCHEMA, TANDAS_RESULTADO_SCHEMA, crearTandas } from './src/modules/facturas/tandas-whatsapp.js';
 import { leerDocumentoVerificado, driveDescargar } from './facturas.js';
-import { crearAvisoRecuperacionFacturas } from './src/modules/messaging/aviso-recuperacion-facturas.js';
 import {crearAvisosSolicitudes} from './src/modules/tienda/solicitudes.js';
 import {crearMensuales,desplazarMes} from './src/modules/informes/mensuales.js';
 import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, registerRoutes as registerPepaEmailRoutes } from './src/modules/pepa-email/queue.js';
@@ -93,7 +93,7 @@ import { validarPlan, planesQueTocan, alCompletar } from "./src/modules/mantenim
 import { normalizarEstado, ABIERTOS as MANT_ABIERTOS } from "./src/modules/mantenimiento/estados.js";
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { guardarHorasFicha } from "./src/modules/rrhh/horas-ficha.js";
-import { ventasRecientes, completarVentasRecientes } from "./src/modules/dashboard/ventas-recientes.js";
+import { ventasRecientes, completarVentasRecientes, normalizarVentasRango } from "./src/modules/dashboard/ventas-recientes.js";
 import { resumenHoy } from "./src/modules/dashboard/hoy.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
 import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
@@ -8371,11 +8371,10 @@ async function leerVentasVivo(force) {
   const hoy = hoyISO();
   const desde = hoyMas(-7);
   const hasta = hoyMas(1); // incluye hoy
-  const locales = [];
-  for (const cfg of configs) {
+  const locales = await Promise.all(configs.map(async cfg => {
     try {
-      const dias = await createAgoraClient(cfg).getVentasRango(desde, hasta);
-      locales.push({ local: cfg.local, dias, error: null });
+      const dias = normalizarVentasRango(await createAgoraClient(cfg).getVentasRango(desde, hasta), desde, hoy);
+      if (!dias) throw new Error("Respuesta de ventas invalida");
       for (const v of dias) { // persistir días CERRADOS (< hoy) en ventas_diarias
         if (v.dia >= hoy) continue;
         try {
@@ -8388,10 +8387,11 @@ async function leerVentasVivo(force) {
           );
         } catch { /* no crítico */ }
       }
+      return { local: cfg.local, dias, error: null };
     } catch (e) {
-      locales.push({ local: cfg.local, dias: [], error: (e && e.message) ? String(e.message).slice(0, 220) : "error" });
+      return { local: cfg.local, dias: [], error: (e && e.message) ? String(e.message).slice(0, 220) : "error" };
     }
-  }
+  }));
   const data = { hoy, desde, locales, generado: new Date().toISOString() };
   _ventasVivoCache = { ts: ahora, data, guardadoEn: data.generado };
   // Si NINGÚN TPV ha respondido, no se pisa lo que había: un cero recién hecho es peor que un
@@ -8483,7 +8483,15 @@ app.get("/api/agora/informe/:tipo", requireAuth(["direccion", "contabilidad"]), 
 // local para no colgar el dashboard si el TPV está cerrado. Devuelve serie por día, o null si no
 // hay credenciales / el TPV no responde (para que el endpoint use ventas_diarias de respaldo).
 const _ventasRangoCache = new Map();
+const _ventasRangoPendientes = new Map();
 async function ventasRangoLive(local, from, to) {
+  const key=JSON.stringify([local,from,to]);
+  if(_ventasRangoPendientes.has(key))return _ventasRangoPendientes.get(key);
+  const tarea=leerVentasRangoLive(local,from,to).finally(()=>_ventasRangoPendientes.delete(key));
+  _ventasRangoPendientes.set(key,tarea);
+  return tarea;
+}
+async function leerVentasRangoLive(local, from, to) {
   const key = `${local || "*"}|${from}_${to}`;
   const nowIso = new Date().toISOString();
   const cached = _ventasRangoCache.get(key);
@@ -8554,6 +8562,7 @@ app.get('/api/dashboard/gastos',requireAuth(['direccion','encargado','contabilid
  }catch(e){res.status(500).json({error:'No se pudo cargar el gasto del periodo'});}
 });
 
+const cachePeriodoDashboard = crearCachePeriodo();
 app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res) => {
   try {
     // Ámbito por local: un usuario con local asignado (y rol ≠ dirección) solo ve SU local.
@@ -8568,19 +8577,22 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
     if (!/^\d{4}-\d{2}-\d{2}$/.test(f0) || !/^\d{4}-\d{2}-\d{2}$/.test(t0) || f0 > t0) {
       return res.status(400).json({ ok: false, error: "Rango inválido" });
     }
-    const deLosLocales = async (q) => {
+    const calcularLocales = async (q) => {
       const desde = String(q.from || "").slice(0, 10), hasta = String(q.to || "").slice(0, 10);
       // Una sola vez para todos los locales del ámbito, y solo si alguno mira un local concreto.
       const empresaPartes = locales.length ? await gastoDeEmpresaPorLocal(desde, hasta) : null;
       if (locales.length > 1) {
-        // Varios locales: uno a uno con la consulta de siempre y se suman (ver fusion.js).
-        const partes = [];
-        for (const l of locales) partes.push(await periodoDeLocal(q, l, empresaPartes));
+        // Consultar los locales en paralelo y sumar sus resultados (ver fusion.js).
+        const partes = await Promise.all(locales.map(l => periodoDeLocal(q, l, empresaPartes)));
         return fusionarPeriodo(partes);
       }
       return periodoDeLocal(q, locales[0] || null, empresaPartes);
     };
 
+    const compararDesde=String(req.query.compararDesde||''), compararHasta=String(req.query.compararHasta||'');
+    const fechaValida=s=>/^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s;
+    if ((compararDesde||compararHasta) && (!fechaValida(compararDesde)||!fechaValida(compararHasta)||compararDesde>compararHasta))return res.status(400).json({ok:false,error:'Periodo de comparación inválido'});
+    const deLosLocales=q=>cachePeriodoDashboard(JSON.stringify([req.user.id,req.user.rol,[...locales].sort(),q.from,q.to]),()=>calcularLocales(q),{esperar:req.query.esperar==='1'});
     const data = await deLosLocales(req.query);
 
     // ¿Con qué se compara? Solo si se pide (`comparar=1`): son las mismas consultas otra vez, y
@@ -8593,11 +8605,11 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
       // El preset lo sabe el panel («semana», «mes»…) y es lo que decide la regla: un rango de
       // once días puede ser «lo que va de mes» o una ventana de once días, y mirando solo las
       // fechas no hay forma de saberlo.
-      const prev = rangoAnterior(f0, t0, req.query.preset);
+      const prev = compararDesde ? {from:compararDesde,to:compararHasta,etiqueta:'periodo elegido'} : rangoAnterior(f0, t0, req.query.preset);
       if (prev && data) {
         const ant = await deLosLocales({ ...req.query, from: prev.from, to: prev.to });
         data.comparacion = {
-          desde: prev.from, hasta: prev.to, etiqueta: prev.etiqueta,
+          desde: prev.from, hasta: prev.to, etiqueta: prev.etiqueta, lectura: ant?.lectura,
           reservas: variacion(data?.reservas?.total, ant?.reservas?.total),
           personas: variacion(data?.reservas?.personas, ant?.reservas?.personas),
           ventas: data?.ventas?.disponible && ant?.ventas?.disponible && !data.ventas.parcial && !ant.ventas.parcial ? variacion(data.ventas.total, ant.ventas.total) : null,
@@ -8659,7 +8671,7 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
     const barras = local ? barrasDelCentro(local, "ventas") : [...new Set(
       INV_LOCALES.filter(l => !LOCALES_SIN_PUBLICO.has(l)).flatMap(l => barrasDelCentro(l, "ventas")))];
     if (to >= inicioReciente) {
-      const instantanea = await ventasVivoData(false);
+      const instantanea = _ventasVivoCache.data?.hoy===hoy && Date.now()-_ventasVivoCache.ts<180000 ? _ventasVivoCache.data : {hoy,locales:[]};
       const vivo = await completarVentasRecientes({vivo:instantanea,locales:barras,from:recientesDesde,to,hoy,leer:ventasRangoLive});
       const respaldo = await dbAll(`SELECT local, dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ? AND local = ANY(?)`, [recientesDesde, to, barras]);
       const recientes = ventasRecientes({ vivo, respaldo, locales: barras, from: recientesDesde, to, hoy });
@@ -8674,9 +8686,10 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
       // Consultar cada barra una vez: el total y el desglose salen de las mismas lecturas.
       const historicos=await Promise.all(barras.map(async l=>{
        const live=await ventasRangoLive(l,from,finHistorico);
-       const rows=live||await dbAll('SELECT dia,ventas::float ventas,tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ? AND local = ? ORDER BY dia',[from,finHistorico,l]);
+       const leido=normalizarVentasRango(live,from,finHistorico);
+       const rows=leido||await dbAll('SELECT dia,ventas::float ventas,tickets::int tickets FROM ventas_diarias WHERE dia >= ? AND dia <= ? AND local = ? ORDER BY dia',[from,finHistorico,l]);
        const previo=seriesLocal.get(l)||{serie:[],parcial:false};
-       seriesLocal.set(l,{serie:[...rows,...previo.serie],parcial:previo.parcial||!rows.length});
+       seriesLocal.set(l,{serie:[...rows,...previo.serie],parcial:previo.parcial||(!leido && new Set(rows.map(r=>r.dia)).size!==normalizarVentasRango([],from,finHistorico).length)});
        if(live)fuenteVentas='live';
        return rows;
       }));
@@ -26056,7 +26069,6 @@ const server = app.listen(PORT, async () => {
   setGrupoFacturasPermitido(async groupJid =>
     !!(await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid])));
 
-  const avisarRecuperacionFacturas = crearAvisoRecuperacionFacturas({dbGet, enviar: sendMensajeAGrupo});
   setOnGroupAttachment(async ({ groupJid, senderJid, buffer, mimeType, filename, caption, recuperado = false, mensajeId, citado, respondeA }) => {
     const grupo = await dbGet("SELECT local FROM facturas_grupos WHERE group_jid = ?", [groupJid]);
     if (!grupo) return;
@@ -26071,7 +26083,6 @@ const server = app.listen(PORT, async () => {
         onDocumentoGuardado: async id => {
           if(mensajeId && citado) await tandasFacturas.registrar({grupo:groupJid,mensaje:mensajeId,recepcionId:id,citado,respondeA});
         },
-        onRecibido: recuperado ? () => avisarRecuperacionFacturas(groupJid) : null,
         getToken: getDriveAccessToken,
         dbGet, dbAll, dbRun,
         backupFn: null
