@@ -148,7 +148,7 @@ const VIEW_ROLES = { bancos: ["direccion", "contabilidad"], conversaciones: ["di
 // Módulos cuyos datos varían por local (espejo de CATALOGO_MODULOS.porLocal del backend).
 const MODULOS_POR_LOCAL = new Set(["subirfactura", "dashboard", "reservas", "mantenimiento", "inventarios", "facturas", "productos", "reviews", "analitica", "rrhh", "contratacion", "pulso", "horarios", "fichajes", "usuarios"]);
 // Módulos que un rol puede ver (su máximo teórico), para el editor de usuarios.
-function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol)); }
+function modulosDeRolFE(rol) { return Object.keys(VIEW_ROLES).filter((v) => VIEW_ROLES[v].includes(rol) && !["proveedores", "fidelizacion"].includes(v)); }
 // ¿El usuario actual puede entrar a `view`? Respeta rol + allowlist efectiva (USER.modulos del token).
 function puedeVer(view) {
   if (!VIEW_ROLES[view]) return true;
@@ -5415,7 +5415,7 @@ function modsCheckboxesHtml(rol, sel) {
   const items = ids.map((id) => {
     const checked = (dir || sel.has(id)) ? "checked" : "";
     const loc = MODULOS_POR_LOCAL.has(id) ? ` <span class="mut" style="font-size:11px">· por local</span>` : "";
-    return `<label style="display:flex;align-items:center;gap:8px;padding:5px 2px"><input type="checkbox" name="mod" value="${id}" ${checked} ${dir ? "disabled" : ""} style="width:auto;margin:0"><span>${esc(TITLES[id] || id)}${loc}</span></label>`;
+    return `<label style="display:flex;align-items:center;gap:8px;padding:5px 2px"><input type="checkbox" name="mod" value="${id}" ${checked} ${dir ? "disabled" : ""} style="width:auto;margin:0"><span>${esc(id === "facturas" ? "Compras y proveedores" : TITLES[id] || id)}${loc}</span></label>`;
   }).join("");
   // Esta lista es la del ROL, no el catálogo entero. Desmarcar QUITA; no hay forma de dar
   // aquí un módulo que el rol no tenga. Se dice, porque si no se busca «Facturas» en la lista

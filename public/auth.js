@@ -47,6 +47,7 @@
       if (!res.ok) throw new Error();
       const data = await res.json();
       if (!data.ok) throw new Error();
+      if (data.token) localStorage.setItem("token", data.token);
       const user = data.user;
       if (roles && roles.length && !roles.includes(user.rol)) {
         window.location.href = "/login.html";

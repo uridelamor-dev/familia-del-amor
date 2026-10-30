@@ -4856,13 +4856,17 @@ app.put("/api/mi-password", requireAuth(), async (req, res) => {
 // seguía viéndolo todo. Es una consulta por carga de pantalla, no por petición.
 app.get("/api/auth/me", requireAuth(), async (req, res) => {
   try {
-    const u = await dbGet("SELECT id, username, rol, nombre, local, modulos, locales_extra, pass_temporal FROM users WHERE id = ?", [req.user.id]);
-    if (!u) return res.json({ ok: true, user: req.user });   // usuario borrado: no se le echa a mitad de faena
-    res.json({ ok: true, user: {
+    const u = await dbGet("SELECT id, username, rol, nombre, local, modulos, locales_extra, pass_temporal, activo, fecha_baja FROM users WHERE id = ?", [req.user.id]);
+    if (!u || !marcadoActivo(u) || bajaEfectiva(u, hoyISO())) return res.status(401).json({ ok: false, error: "Esta cuenta ya no está activa." });
+    const user = {
       id: u.id, username: u.username, rol: u.rol, nombre: u.nombre, local: u.local,
       modulos: modulosEfectivos(u.rol, u.modulos), locales: localesDe(u), pass_temporal: !!u.pass_temporal,
-    } });
-  } catch { res.json({ ok: true, user: req.user }); }
+    };
+    // La interfaz y las acciones deben usar los mismos permisos tras recargar.
+    // Se conserva la caducidad original: consultar /me no prolonga la sesión.
+    const token = jwt.sign({ ...user, exp: req.user.exp }, JWT_SECRET);
+    res.json({ ok: true, user, token });
+  } catch { res.status(503).json({ ok: false, error: "No se pudieron comprobar los permisos actuales. Vuelve a intentarlo." }); }
 });
 
 // Gestión de usuarios (solo dirección)
