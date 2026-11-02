@@ -9,6 +9,9 @@ export const BANDEJA_SCHEMA = `
  enviado BOOLEAN NOT NULL,texto TEXT NOT NULL,fecha TIMESTAMPTZ NOT NULL,
  UNIQUE(jid,mensaje_id));
  CREATE INDEX IF NOT EXISTS wa_bandeja_fecha ON wa_bandeja_mensajes(jid,fecha DESC,id DESC);
+ CREATE TABLE IF NOT EXISTS wa_bandeja_lecturas (
+ usuario TEXT NOT NULL,jid TEXT NOT NULL,fecha TIMESTAMPTZ NOT NULL,clave TEXT NOT NULL,
+ PRIMARY KEY(usuario,jid));
  CREATE TABLE IF NOT EXISTS wa_bandeja_sync(id INTEGER PRIMARY KEY CHECK(id=1),actualizado_en TIMESTAMPTZ,estado TEXT);
 `;
 export const jidBandeja = jid => /^[0-9-]+@(s\.whatsapp\.net|lid|g\.us)$/.test(String(jid||''));

@@ -1,3 +1,5 @@
+import {ATENCION_SCHEMA} from '../../src/modules/messaging/atencion.js';
+import {ADJUNTOS_SCHEMA} from '../../src/modules/messaging/sara-promociones.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {conEsquema,disponible,motivoSalto} from '../helpers/pgtmp.js';
@@ -14,7 +16,7 @@ test('historial: conserva audio y fecha original, ignora protocolo y estados',()
 test('historial completo: orden real, idempotencia, alias, agenda, grupos, permisos y paginación',async t=>{
  if(!await disponible())return t.skip(motivoSalto());const db=await conEsquema();
  try{
- for(const sql of ["CREATE TABLE leads(id SERIAL PRIMARY KEY,nombre TEXT,apellidos TEXT,telefono TEXT)","CREATE TABLE whatsapp_messages(id SERIAL PRIMARY KEY,jid TEXT,telefono TEXT,mensaje TEXT,respuesta TEXT,tipo TEXT,historico INTEGER DEFAULT 0,creado_en TEXT,adjuntos JSONB)","CREATE TABLE wa_clientes(jid TEXT PRIMARY KEY,nombre TEXT,telefono TEXT,estado_ia TEXT,pausado_por TEXT,pausado_en TEXT,pausa_motivo TEXT)",VINCULOS_SCHEMA,BANDEJA_SCHEMA])await db.raw(sql);
+ for(const sql of ["CREATE TABLE leads(id SERIAL PRIMARY KEY,nombre TEXT,apellidos TEXT,telefono TEXT)","CREATE TABLE whatsapp_messages(id SERIAL PRIMARY KEY,jid TEXT,telefono TEXT,mensaje TEXT,respuesta TEXT,tipo TEXT,historico INTEGER DEFAULT 0,creado_en TEXT,adjuntos JSONB)","CREATE TABLE wa_clientes(jid TEXT PRIMARY KEY,nombre TEXT,telefono TEXT,estado_ia TEXT,pausado_por TEXT,pausado_en TEXT,pausa_motivo TEXT)",VINCULOS_SCHEMA,BANDEJA_SCHEMA,ATENCION_SCHEMA,ADJUNTOS_SCHEMA])await db.raw(sql);
  const guardar=crearArchivoBandeja({query:db.raw}),pn='34622149946@s.whatsapp.net',lid='123456789012345@lid',interno='34633111222@s.whatsapp.net',grupo='123456789-1@g.us';
  const lote={historico:true,chats:[{id:lid,pnJid:pn,name:'Cliente'},{id:grupo,name:'Equipo Blanes'},{id:interno,name:'Personal'},{id:'34677111222@s.whatsapp.net',name:'Sin mensajes',conversationTimestamp:1700000050}],internos:{[interno]:true},contacts:[{id:'34666111222@s.whatsapp.net',name:'Solo agenda'}],messages:[msg(lid,'a',1600000000,'Antiguo'),msg(pn,'b',1700000000,'Reciente'),msg(grupo,'g',1700000100,'Grupo'),msg(interno,'i',1700000200,'Privado')]};
  await guardar(lote);await guardar(lote);assert.equal((await db.raw('SELECT count(*)::int AS n FROM wa_bandeja_mensajes')).rows[0].n,4);

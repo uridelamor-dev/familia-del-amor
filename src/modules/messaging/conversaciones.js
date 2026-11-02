@@ -42,12 +42,15 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
    (w.interno OR w.jid LIKE '%@g.us') AS solo_lectura,
    COALESCE(w.estado_ia,'activa') AS estado_ia,
    (a.estado IN ('pendiente','en_curso') OR COALESCE(w.estado_ia,'activa')='pausada' OR ((a.cerrada_en IS NULL OR a.cerrada_en<w.creado_en::timestamptz) AND COALESCE(w.tipo,'') IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)'))) AS pendiente,
-   count(*) OVER()::int AS total
+   leidos.no_leidos, count(*) OVER()::int AS total
    FROM identidades w LEFT JOIN wa_atencion a ON a.jid=w.jid
+   LEFT JOIN wa_bandeja_lecturas lectura ON lectura.jid=w.jid AND lectura.usuario=$6
+   CROSS JOIN LATERAL(SELECT count(*)::int AS no_leidos FROM eventos e WHERE e.jid=w.jid AND e.tipo IN ('recibido','intercambio') AND (lectura.fecha IS NULL OR (e.fecha,e.clave)>(lectura.fecha,lectura.clave)))leidos
    WHERE ${visibleSQL} AND ($2='' OR w.nombre ILIKE '%'||$2||'%' OR COALESCE(w.telefono_visible,'') ILIKE '%'||$2||'%')
    AND ($3::boolean=false OR a.estado IN ('pendiente','en_curso') OR w.estado_ia='pausada' OR ((a.cerrada_en IS NULL OR a.cerrada_en<w.creado_en::timestamptz) AND w.tipo IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)')))
    AND ($5='todos' OR ($5='clientes' AND NOT w.interno AND w.jid NOT LIKE '%@g.us') OR ($5='internas' AND (w.interno OR w.jid LIKE '%@g.us')))
-   ORDER BY COALESCE(w.fijado,0) DESC,w.creado_en::timestamptz DESC NULLS LAST,w.jid LIMIT 51 OFFSET $4`,[req.user?.rol==='direccion',q,req.query.pendientes==='1',offset,['clientes','internas'].includes(req.query.tipo)?req.query.tipo:'todos']);
+   AND ($7::boolean=false OR leidos.no_leidos>0)
+   ORDER BY COALESCE(w.fijado,0) DESC,w.creado_en::timestamptz DESC NULLS LAST,w.jid LIMIT 51 OFFSET $4`,[req.user?.rol==='direccion',q,req.query.pendientes==='1',offset,['clientes','internas'].includes(req.query.tipo)?req.query.tipo:'todos',String(req.user.username),req.query.no_leidos==='1']);
   const sync=await pool.query('SELECT actualizado_en,estado FROM wa_bandeja_sync WHERE id=1');
   res.json({ok:true,data:r.rows.slice(0,50),mas:r.rows.length>50,total:r.rows[0]?.total||0,sync:sync.rows[0]||null,connected:listo()});
  }));
@@ -61,10 +64,32 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
   }
   let cursor=null;try{cursor=req.query.cursor?JSON.parse(String(req.query.cursor)):null;}catch{}
   if(cursor&&(!Array.isArray(cursor)||cursor.length!==2||!Number.isFinite(Date.parse(cursor[0]))))return res.status(400).json({ok:false,error:'Página no válida'});
-  const r=await pool.query(`WITH ${ARCHIVO_CTE} SELECT clave AS id,mensaje,respuesta,tipo,fecha AS creado_en,adjuntos FROM eventos WHERE jid=$1 AND ($2::timestamptz IS NULL OR (fecha,clave)<($2::timestamptz,$3::text)) ORDER BY fecha DESC,clave DESC LIMIT 101`,[jid,cursor?.[0]||null,cursor?.[1]||'']);
+  const r=await pool.query(`WITH ${ARCHIVO_CTE} SELECT clave AS id,mensaje,respuesta,tipo,fecha AS creado_en,COALESCE((SELECT jsonb_agg(a.id) FROM wa_adjuntos a JOIN originales o ON o.canon=COALESCE((SELECT canon FROM alias WHERE jid=a.jid),a.jid) AND o.mensaje_id=a.mensaje_id WHERE 'w'||o.id=e.clave),adjuntos) AS adjuntos FROM eventos e WHERE jid=$1 AND ($2::timestamptz IS NULL OR (fecha,clave)<($2::timestamptz,$3::text)) ORDER BY fecha DESC,clave DESC LIMIT 101`,[jid,cursor?.[0]||null,cursor?.[1]||'']);
   const datos=r.rows.slice(0,100).reverse();
+  const ids=[...new Set(datos.flatMap(m=>Array.isArray(m.adjuntos)?m.adjuntos:[]))].filter(id=>/^[0-9a-f-]{36}$/i.test(id));
+  const archivos=ids.length?(await pool.query("SELECT id,nombre,mime FROM wa_adjuntos WHERE id=ANY($1::uuid[]) AND creado_en >= NOW()-INTERVAL '30 days'",[ids])).rows:[];
+  const porId=new Map(archivos.map(a=>[a.id,a]));
+  for(const m of datos)m.adjuntos=(Array.isArray(m.adjuntos)?m.adjuntos:[]).map(id=>porId.get(id)||{id,disponible:false});
   const tarea=(await pool.query('SELECT * FROM wa_atencion WHERE jid=$1',[jid])).rows[0]||null;
   res.json({ok:true,pendiente:conversacionPendiente(c.rows[0],tarea),data:datos,mas:r.rows.length>100,cursor:datos.length?[datos[0].creado_en,datos[0].id]:null,cliente:c.rows[0],atencion:tarea,connected:listo()});
+ }));
+ // Las lecturas pertenecen a cada usuario del panel, no al estado de atención de Sara.
+ app.post(ruta+'/leer',permiso,wrap(async(req,res)=>{
+  const {jid,hasta}=req.body||{};
+  if(!jidBandeja(jid)||!Array.isArray(hasta)||hasta.length!==2||!Number.isFinite(Date.parse(hasta[0]))||typeof hasta[1]!=='string')return res.status(400).json({ok:false,error:'Lectura no válida'});
+  const visible=await pool.query(`WITH ${ARCHIVO_CTE} SELECT e.fecha,e.clave FROM eventos e JOIN ultimos w ON w.jid=e.jid WHERE ${visibleSQL} AND w.jid=$2 AND e.fecha=$3::timestamptz AND e.clave=$4`,[req.user?.rol==='direccion',jid,hasta[0],hasta[1]]);
+  if(!visible.rows.length)return res.status(404).json({ok:false,error:'Mensaje no disponible'});
+  await pool.query(`INSERT INTO wa_bandeja_lecturas(usuario,jid,fecha,clave) VALUES($1,$2,$3,$4)
+   ON CONFLICT(usuario,jid) DO UPDATE SET fecha=EXCLUDED.fecha,clave=EXCLUDED.clave
+   WHERE (wa_bandeja_lecturas.fecha,wa_bandeja_lecturas.clave)<(EXCLUDED.fecha,EXCLUDED.clave)`,[String(req.user.username),jid,visible.rows[0].fecha,visible.rows[0].clave]);
+  res.json({ok:true});
+ }));
+ app.get(ruta+'/adjunto/:id',permiso,wrap(async(req,res)=>{
+  const jid=String(req.query.jid||''),id=String(req.params.id||'');
+  if(!jidBandeja(jid)||!/^[0-9a-f-]{36}$/i.test(id))return res.status(404).json({ok:false,error:'Archivo no disponible'});
+  const r=await pool.query(`WITH ${ARCHIVO_CTE} SELECT a.nombre,a.mime,a.datos FROM wa_adjuntos a LEFT JOIN alias x ON x.jid=a.jid JOIN ultimos w ON w.jid=COALESCE(x.canon,a.jid) WHERE ${visibleSQL} AND w.jid=$2 AND a.id=$3::uuid AND a.creado_en >= NOW()-INTERVAL '30 days'`,[req.user?.rol==='direccion',jid,id]);
+  const a=r.rows[0];if(!a)return res.status(404).json({ok:false,error:'El archivo ha caducado o no está disponible.'});
+  res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Type':a.mime,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(a.nombre)}`});res.send(a.datos);
  }));
  app.get(ruta+'/contactos',permiso,wrap(async(req,res)=>{
   const q=String(req.query.q||'').trim().slice(0,100);

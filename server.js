@@ -31,6 +31,7 @@ import { TANDAS_SCHEMA, TANDAS_RESULTADO_SCHEMA, crearTandas } from './src/modul
 import { leerDocumentoVerificado, driveDescargar } from './facturas.js';
 import {crearAvisosSolicitudes} from './src/modules/tienda/solicitudes.js';
 import {crearMensuales,desplazarMes} from './src/modules/informes/mensuales.js';
+import {leerMesVentas} from './src/modules/informes/ventas-mensuales.js';
 import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, registerRoutes as registerPepaEmailRoutes } from './src/modules/pepa-email/queue.js';
 import { BANDEJA_SCHEMA, crearArchivoBandeja } from './src/modules/messaging/bandeja-historial.js';
 import { setArchivoBandeja } from './whatsapp.js';
@@ -21037,7 +21038,7 @@ async function cupoWA() {
  * mañana. Y como al retomar se saltan los que ya recibieron (ver `dispatchCampana`), nadie
  * recibe el mismo mensaje dos veces.
  */
-async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 6000, maxMs = 15000, resolverMensaje = null, localCampana = null, promocion = null, baseUrl = "" }) {
+async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 300000, maxMs = 300000, resolverMensaje = null, localCampana = null, promocion = null, baseUrl = "" }) {
   let enviados = 0, errores = 0;
   const hoyEnv = hoyISO();
   const yaHoy = Number((await getConfig("wa_enviados_" + hoyEnv)) || 0);
@@ -21189,6 +21190,8 @@ async function dispatchCampana(campanaId) {
   const camp = await dbGet(`SELECT * FROM campanas_wa WHERE id = ?`, [campanaId]);
   if (!camp) return { ok: false };
   if (!isReady()) return { ok: false, motivo: "wa_off" };
+  const adjunto=cargarAdjunto(camp.adjunto_url);
+  if(camp.adjunto_url&&!adjunto)return {ok:false,motivo:'adjunto_no_disponible'};
   let seg = {}; try { seg = JSON.parse(camp.segmento_json || "{}"); } catch { /* noop */ }
   const params = []; const contactos = await contactosGeograficos(seg);
   const { aptos } = filtrarEnviablesWA(contactos, { soloOptIn: !!seg.soloOptIn });
@@ -21211,7 +21214,7 @@ async function dispatchCampana(campanaId) {
   await dbRun(`UPDATE campanas_wa SET estado='enviando' WHERE id = ?`, [campanaId]);
   const resolverMensaje = seg.traducir ? await construirResolverIdioma(camp.mensaje, pendientes) : null;
   const promocion = await promocionDeCampana(camp.promocion_id);
-  enviarLoteWA({ contactos: pendientes, mensaje: camp.mensaje, campanaId, adjunto: cargarAdjunto(camp.adjunto_url), resolverMensaje,
+  enviarLoteWA({ contactos: pendientes, mensaje: camp.mensaje, campanaId, adjunto, resolverMensaje,
     promocion, baseUrl: await baseEnlaces(),
     // Solo cuando la campaña va a UN establecimiento. Con varios («los de Tordera») no hay un
     // nombre que valga para todos, y cada uno recibe el suyo.
@@ -21221,10 +21224,16 @@ async function dispatchCampana(campanaId) {
 
 // Mensaje MASIVO al conjunto filtrado (excluye SIEMPRE bajas; consentimiento opcional).
 app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]), async (req, res) => {
-  const { mensaje, nombre_campana, soloOptIn } = req.body;
+  const { mensaje, nombre_campana, soloOptIn, adjunto_url = null } = req.body;
   if (!mensaje) return res.status(400).json({ ok: false, error: "Falta el mensaje" });
   if (!isReady()) return res.status(503).json({ ok: false, error: "WhatsApp no conectado" });
   try {
+    let adjunto=null;
+    if(adjunto_url){
+      if(typeof adjunto_url!=='string'||!/^\/uploads\/[a-zA-Z0-9._-]+\.(jpg|jpeg|png|webp|pdf|doc|docx|xls|xlsx|txt)$/i.test(adjunto_url))return res.status(400).json({ok:false,error:'Adjunto no válido.'});
+      adjunto=cargarAdjunto(adjunto_url);
+      if(!adjunto||!adjunto.buffer.length||adjunto.buffer.length>15*1024*1024)return res.status(400).json({ok:false,error:'No se puede leer el adjunto o supera 15 MB. Vuelve a seleccionarlo.'});
+    }
     const params = [];
     const { segmento } = segmentoDelBody({ ...req.body, soloOptIn });
     const contactos = await contactosGeograficos(segmento);
@@ -21233,11 +21242,11 @@ app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]
     // El MISMO segmento con el que se acaba de filtrar. Antes se guardaba una versión recortada
     // a cinco claves, así que la fila de `campanas_wa` no describía a quién se había escrito de
     // verdad: al mirarla un mes después, el registro mentía.
-    const row = await dbRun(`INSERT INTO campanas_wa (nombre, segmento_json, mensaje, total_enviados) VALUES (?, ?, ?, 0) RETURNING id`,
-      [nombre_campana || ("Mensaje rápido " + hoyISO()), JSON.stringify(segmento), mensaje]);
+    const row = await dbRun(`INSERT INTO campanas_wa (nombre, segmento_json, mensaje, adjunto_url, estado, total_enviados) VALUES (?, ?, ?, ?, 'enviando', 0) RETURNING id`,
+      [nombre_campana || ("Mensaje rápido " + hoyISO()), JSON.stringify(segmento), mensaje, adjunto_url]);
     const campanaId = row.id;
     res.json({ ok: true, total: contactos.length, enviables: aptos.length, omitidos, campana_id: campanaId });
-    enviarLoteWA({ contactos: aptos, mensaje, campanaId, localCampana: req.body.local || null });
+    enviarLoteWA({ contactos: aptos, mensaje, campanaId, adjunto, localCampana: req.body.local || null });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -26260,20 +26269,10 @@ const server = app.listen(PORT, async () => {
       return {rows,...avisos};
     },
     ventas: async mes => {
-      const locales=[...new Set(INV_LOCALES.filter(l=>!LOCALES_SIN_PUBLICO.has(l)).flatMap(l=>barrasDelCentro(l,'ventas')))];
-      const leer=async periodo=>{
-        const from=periodo+'-01';
-        const [year,month]=periodo.split('-').map(Number);
-        const to=new Date(Date.UTC(year,month,0)).toISOString().slice(0,10);
-        const rows=[];
-        for(const local of locales){
-          let serie;
-          try{serie=await ventasRangoLive(local,from,to);}catch{serie=null;}
-          const disponible=Array.isArray(serie) && serie.length>0 && serie.every(r=>r.ventas!=null && r.tickets!=null && Number.isFinite(Number(r.ventas)) && Number.isFinite(Number(r.tickets)));
-          rows.push({local,disponible,ventas:disponible?serie.reduce((n,r)=>n+Number(r.ventas),0):null,tickets:disponible?serie.reduce((n,r)=>n+Number(r.tickets),0):null});
-        }
-        return rows;
-      };
+      const locales=[...new Set(INV_LOCALES.filter(l=>!LOCALES_SIN_PUBLICO.has(l)&&l!=="Botiga d'en Mateu - Tordera").flatMap(l=>fuentesVentas(l)))];
+      const configurados=new Set((await loadAgoraConfigsActive()).filter(c=>c.usuario&&c.password).map(c=>c.local));
+      const leer=periodo=>leerMesVentas({mes:periodo,locales,configurados,leer:ventasRangoLive,
+        respaldo:(local,from,to)=>dbAll('SELECT dia, ventas::float ventas, tickets::int tickets FROM ventas_diarias WHERE local = ? AND dia >= ? AND dia <= ? ORDER BY dia',[local,from,to])});
       return {actual:await leer(mes),anterior:await leer(desplazarMes(mes,-1)),anual:await leer(desplazarMes(mes,-12))};
     }
   });

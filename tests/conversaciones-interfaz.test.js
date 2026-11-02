@@ -19,3 +19,35 @@ test('el detalle antiguo no sobrescribe el chat recién seleccionado',async()=>{
  vm.runInContext("CONV.jid='dos';CONV.version=2;CONV.cargandoHilo=false",c);resolver({});await tarea;
  assert.equal(vm.runInContext('CONV.cargandoHilo',c),false);
 });
+test('historial separa días y escapa el texto de los mensajes',()=>{
+ const c=entorno({esc:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')});
+ const html=c.convMensajes([
+  {tipo:'recibido',mensaje:'<script>hola</script>',creado_en:'2026-11-01T12:00:00Z'},
+  {tipo:'manual',respuesta:'Respuesta',creado_en:'2026-11-01T13:00:00Z'},
+  {tipo:'recibido',mensaje:'Otro día',creado_en:'2026-11-02T12:00:00Z'},
+ ]);
+ assert.equal((html.match(/class="conv-day"/g)||[]).length,2);
+ assert.ok(html.includes('&lt;script&gt;'));
+ assert.ok(!html.includes('<script>'));
+ assert.ok(html.includes('conv-bubble equipo'));
+});
+test('los adjuntos sin archivo no ofrecen una vista previa inexistente',()=>{
+ const c=entorno({esc:String});
+ const html=c.convMensajes([{tipo:'recibido',mensaje:'Documento',adjuntos:[23],creado_en:'2026-11-02T12:00:00Z'}]);
+ assert.ok(html.includes('consulta WhatsApp'));
+ assert.ok(!html.includes('<img'));
+});
+test('lectura solo en chat visible y no repite el mismo límite confirmado',async()=>{
+ const env={hidden:true},calls=[];const c=entorno({document:{get hidden(){return env.hidden},querySelector:()=>({})},apiSend:async(...args)=>calls.push(args)});
+ vm.runInContext("CONV.jid='uno';CONV.ultimo=['2026-11-02T12:00:00Z','w1'];CONV.version=1",c);
+ await c.convMarcarLeido();assert.equal(calls.length,0);
+ env.hidden=false;await c.convMarcarLeido();await c.convMarcarLeido();assert.equal(calls.length,1);
+ assert.equal(calls[0][1],'/api/conversaciones/leer');assert.equal(calls[0][2].hasta[1],'w1');
+ vm.runInContext("CONV.ultimo=['2026-11-02T12:01:00Z','w2']",c);await c.convMarcarLeido();assert.equal(calls.length,2);
+});
+test('un fallo al guardar lectura se puede reintentar',async()=>{
+ let attempts=0;const c=entorno({document:{hidden:false,querySelector:()=>({})},apiSend:async()=>{if(++attempts===1)throw Error('sin conexión');}});
+ vm.runInContext("CONV.jid='uno';CONV.ultimo=['2026-11-02T12:00:00Z','w1'];CONV.version=1",c);
+ await c.convMarcarLeido();assert.equal(vm.runInContext('CONV.lecturaBusy',c),false);
+ await c.convMarcarLeido();assert.equal(attempts,2);
+});

@@ -1,4 +1,5 @@
 import {agruparPorCentro} from '../locales/centros.js';
+import {ventasPendientes} from './ventas-mensuales.js';
 const DESTINO='622149946';
 const euros=n=>Number(n).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 const titulo=mes=>new Date(mes+'-15T12:00:00Z').toLocaleDateString('es-ES',{month:'long',year:'numeric',timeZone:'UTC'});
@@ -11,7 +12,7 @@ export function mensajeVentas(mes,rows) {
  const disponibles=rows.filter(r=>r.disponible), faltan=rows.filter(r=>!r.disponible);
  const agrupados=agruparPorCentro(rows.map(r=>({...r,ventas:r.disponible?r.ventas:0,tickets:r.disponible?r.tickets:0,faltan:r.disponible?0:1})),['ventas','tickets','faltan']);
  const total=suma(disponibles,'ventas'),tickets=suma(disponibles,'tickets');
- return `💶 *FACTURACIÓN · VENTAS TPV*\n${titulo(mes)}\n\n*${faltan.length?'Subtotal disponible':'Total vendido'}: ${disponibles.length?euros(total):'Sin datos'}*\n${tickets} tickets registrados\nTicket medio: ${tickets?euros(total/tickets):'No disponible'}\n\n📍 *Por local*\n${agrupados.map(r=>`• ${r.local}: ${r.faltan?'Datos incompletos':`*${euros(r.ventas)}* · ${r.tickets} tickets`}`).join('\n')}\n\n${faltan.length?`⚠️ Sin datos confirmados de: ${faltan.map(r=>r.local).join(', ')}. El subtotal no representa todo el grupo.\n\n`:''}Importes de ventas comunicados por los TPV. No son beneficio ni saldo bancario.\n\nDetalle: https://familiadelamor.org/panel/#dashboard`;
+ return `💶 *FACTURACIÓN · VENTAS TPV*\n${titulo(mes)}\n\n*${faltan.length?'Subtotal disponible':'Total vendido'}: ${disponibles.length?euros(total):'Sin datos'}*\n${tickets} tickets registrados\nTicket medio: ${tickets?euros(total/tickets):'No disponible'}\n\n📍 *Por local*\n${agrupados.map(r=>`• ${r.local}: ${r.faltan?'Datos incompletos':`*${euros(r.ventas)}* · ${r.tickets} tickets`}`).join('\n')}\n\n${faltan.length?`⚠️ Sin datos confirmados de: ${faltan.map(r=>r.local+(r.motivo==='sin_configurar'?' (sin TPV configurado)':'')).join(', ')}. El subtotal no representa todo el grupo.\n\n`:''}Importes de ventas comunicados por los TPV. No son beneficio ni saldo bancario.\n\nDetalle: https://familiadelamor.org/panel/#dashboard`;
 }
 export function mensajesCompras(mes,data) {
  const general=mensajeCompras(mes,data);
@@ -47,9 +48,9 @@ export function mensajesVentas(mes,data) {
 
 // Desde octubre de 2026. Ventas el día 1 y compras el 10 del siguiente; recuperar también
 // meses vencidos evita perder el envío si el servidor o WhatsApp estaban desconectados.
-export function mesesVencidos(now, dia=10) {
+export function mesesVencidos(now, dia=10, hora=9) {
  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(now).map(p=>[p.type,p.value]));
- if(+parts.hour<9 || +parts.hour>=21)return [];
+ if(+parts.hour<hora || +parts.hour>=21)return [];
  const limite=new Date(Date.UTC(+parts.year,+parts.month-(+parts.day>=dia?2:3),1));
  const result=[];
  for(let d=new Date('2026-10-01T00:00:00Z');d<=limite;d.setUTCMonth(d.getUTCMonth()+1))result.push(d.toISOString().slice(0,7));
@@ -62,7 +63,7 @@ export function crearMensuales({pool,enabled,conectado,compras,ventas,enviar,now
   busy=true;let c,lock=false;
   try {
    c=await pool.connect();lock=(await c.query('SELECT pg_try_advisory_lock(73992015) AS locked')).rows[0].locked;if(!lock)return;
-   for(const tipo of ['ventas','compras'])for(const mes of mesesVencidos(now(),tipo==='ventas'?1:10)){
+   for(const tipo of ['ventas','compras'])for(const mes of mesesVencidos(now(),tipo==='ventas'?1:10,tipo==='ventas'?11:9)){
     const key=`informe_${tipo}_${mes}_v1`;
     const stored=await c.query('SELECT value FROM config WHERE key=$1',[key]);
     let state=stored.rows.length?JSON.parse(stored.rows[0].value):{};
@@ -76,7 +77,15 @@ export function crearMensuales({pool,enabled,conectado,compras,ventas,enviar,now
     }
     try {
      if(!state.mensajes){
-      state.mensajes=state.mensaje?[state.mensaje]:(tipo==='compras'?mensajesCompras(mes,await compras(mes)):mensajesVentas(mes,await ventas(mes)));
+      let data;
+      if(tipo==='ventas'&&!state.mensaje){
+       data=await ventas(mes);
+       if(ventasPendientes(data)){
+        state.estado='pendiente';state.error='Ventas pendientes de confirmar';
+        state.retryAt=new Date(+now()+30*60000).toISOString();await save();continue;
+       }
+      }
+      state.mensajes=state.mensaje?[state.mensaje]:(tipo==='compras'?mensajesCompras(mes,await compras(mes)):mensajesVentas(mes,data));
       state.enviados=0;
      }
     }catch{state.error='No se pudo preparar el informe';state.retryAt=new Date(+now()+30*60000).toISOString();await save();continue;}

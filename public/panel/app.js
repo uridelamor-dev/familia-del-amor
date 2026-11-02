@@ -3018,18 +3018,33 @@ function cliWa(tel, nombre) {
 }
 // Envío masivo al conjunto filtrado.
 function cliMasivo() {
-  const ov = modal("Escribir a los contactos filtrados", `<div class="mut" style="margin-bottom:8px">Se enviará por WhatsApp a los <b>${num(CLI_TOTAL)}</b> contactos del filtro actual. Se <b>excluyen bajas</b> y sin teléfono; el ritmo es lento (anti-bloqueo).</div><textarea id="cmMsg" rows="4" style="width:100%" placeholder="Mensaje… Usa {nombre}, {apellidos} para personalizar"></textarea><label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:10px"><input type="checkbox" id="cmOptin" style="width:auto;height:auto"> Solo a quienes dieron consentimiento (opt-in)</label><div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="cmSend">Enviar a todos</button></div>`);
+  const ov = modal("Escribir a los contactos filtrados", `<div class="mut" style="margin-bottom:8px">Se enviará por WhatsApp a los <b>${num(CLI_TOTAL)}</b> contactos del filtro actual. Se <b>excluyen bajas</b> y sin teléfono; se enviará un mensaje cada 5 minutos.</div><textarea id="cmMsg" rows="4" style="width:100%" placeholder="Mensaje… Usa {nombre}, {apellidos} para personalizar"></textarea><div class="field" style="margin-top:12px"><label for="cmFile">Foto o documento (opcional)</label><input type="file" id="cmFile" style="width:100%;min-width:0" accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt"><small class="mut">Un archivo de hasta 15 MB. Se enviará junto al mensaje.</small><div style="display:flex;align-items:center;gap:8px"><span id="cmFileName" class="mut" style="overflow-wrap:anywhere"></span><button type="button" class="btn sm" id="cmFileRemove" hidden>Quitar</button></div></div><p id="cmError" role="alert"></p><label class="field" style="flex-direction:row;align-items:center;gap:7px;margin-top:10px"><input type="checkbox" id="cmOptin" style="width:auto;height:auto"> Solo a quienes dieron consentimiento (opt-in)</label><div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="cmSend">Enviar a todos</button></div>`);
+  const fileInput=ov.querySelector('#cmFile'),fileName=ov.querySelector('#cmFileName'),remove=ov.querySelector('#cmFileRemove'),error=ov.querySelector('#cmError');
+  fileInput.onchange=()=>{error.textContent='';const f=fileInput.files[0];if(f&&(f.size>15*1024*1024||! /\.(jpe?g|png|webp|pdf|docx?|xlsx?|txt)$/i.test(f.name))){error.textContent='Elige una foto o documento compatible de hasta 15 MB.';fileInput.value='';}fileName.textContent=fileInput.files[0]?.name||'';remove.hidden=!fileInput.files.length;};
+  remove.onclick=()=>{fileInput.value='';fileName.textContent='';remove.hidden=true;};
+  let ocupado=false,adjuntoUrl='',archivoSubido=null;
   ov.querySelector("#cmSend").addEventListener("click", async () => {
+    if(ocupado)return;
     const mensaje = (ov.querySelector("#cmMsg").value || "").trim(); if (!mensaje) { toast("Escribe el mensaje"); return; }
     const soloOptIn = ov.querySelector("#cmOptin").checked;
-    const ok = await confirmModal(`¿Enviar este mensaje al segmento filtrado (${num(CLI_TOTAL)} contactos) por WhatsApp?`, { ok: "Enviar", danger: false }); if (!ok) return;
+    ocupado=true;
+    const archivo=fileInput.files[0];
+    const ok = await confirmModal(`¿Enviar este mensaje al segmento filtrado (${num(CLI_TOTAL)} contactos) por WhatsApp${archivo ? " con el archivo «"+archivo.name+"»" : ""}?`, { ok: "Enviar", danger: false }); if (!ok) {ocupado=false;return;}
+    const boton=ov.querySelector('#cmSend');boton.disabled=true;fileInput.disabled=true;remove.disabled=true;error.textContent='';
     try {
-      const body = Object.assign({ mensaje, soloOptIn }, filtrosClienteBody());
+      if(archivo&&archivoSubido!==archivo){
+        boton.textContent='Subiendo archivo…';const fd=new FormData();fd.append('files',archivo);
+        const r=await fetch('/api/upload',{method:'POST',headers:{Authorization:'Bearer '+token()},body:fd});const j=await r.json();
+        if(!r.ok||!j.ok||!j.urls?.[0])throw Error(j.error||'No se pudo subir el archivo. No se ha iniciado el envío.');
+        adjuntoUrl=j.urls[0];archivoSubido=archivo;
+      }
+      boton.textContent='Preparando envío…';
+      const body = Object.assign({ mensaje, soloOptIn, adjunto_url: archivo ? adjuntoUrl : null }, filtrosClienteBody());
       const j = await apiSend("POST", "/api/contactos/mensaje-masivo", body);
       ov.remove();
       const om = j.omitidos || {}; const omTxt = [om.baja ? `${om.baja} baja(s)` : "", om.sin_telefono ? `${om.sin_telefono} sin teléfono` : "", om.sin_optin ? `${om.sin_optin} sin opt-in` : ""].filter(Boolean).join(", ");
       toast(j.enviables ? `Enviando a ${j.enviables} contacto(s)${omTxt ? " · omitidos: " + omTxt : ""} ✅` : (j.aviso || "No hay destinatarios enviables"));
-    } catch (e) { toast("Error: " + e.message); }
+    } catch (e) { error.textContent=e.message; } finally {ocupado=false;boton.disabled=false;boton.textContent="Enviar a todos";fileInput.disabled=false;remove.disabled=false;}
   });
 }
 /**
