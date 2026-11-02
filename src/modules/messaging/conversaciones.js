@@ -37,19 +37,21 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
   .replace('LEFT JOIN wa_contacto_vinculos v ON v.jid=t.jid',`LEFT JOIN LATERAL(SELECT x.* FROM wa_contacto_vinculos x LEFT JOIN alias a ON a.jid=x.jid WHERE COALESCE(a.canon,x.jid)=t.jid ORDER BY (x.jid=t.jid) DESC,x.actualizado_en DESC LIMIT 1)v ON true`);
  app.get(ruta,permiso,wrap(async(req,res)=>{
   const q=String(req.query.q||'').slice(0,100), offset=Math.max(0,Math.floor(Number(req.query.offset)||0));
-  const r=await pool.query(`WITH ${ARCHIVO_CTE}, ${identidadArchivo}
+  const r=await pool.query(`WITH ${ARCHIVO_CTE}, ${identidadArchivo},
+   no_leidos AS (SELECT e.jid,count(*)::int AS cantidad FROM eventos e
+    LEFT JOIN wa_bandeja_lecturas lectura ON lectura.jid=e.jid AND lectura.usuario=$6
+    WHERE e.tipo IN ('recibido','intercambio') AND (lectura.fecha IS NULL OR (e.fecha,e.clave)>(lectura.fecha,lectura.clave)) GROUP BY e.jid)
    SELECT w.*,w.telefono_visible AS telefono, a.estado AS atencion_estado,a.responsable,a.motivo AS atencion_motivo,
    (w.interno OR w.jid LIKE '%@g.us') AS solo_lectura,
    COALESCE(w.estado_ia,'activa') AS estado_ia,
    (a.estado IN ('pendiente','en_curso') OR COALESCE(w.estado_ia,'activa')='pausada' OR ((a.cerrada_en IS NULL OR a.cerrada_en<w.creado_en::timestamptz) AND COALESCE(w.tipo,'') IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)'))) AS pendiente,
-   leidos.no_leidos, count(*) OVER()::int AS total
+   COALESCE(leidos.cantidad,0) AS no_leidos, count(*) OVER()::int AS total
    FROM identidades w LEFT JOIN wa_atencion a ON a.jid=w.jid
-   LEFT JOIN wa_bandeja_lecturas lectura ON lectura.jid=w.jid AND lectura.usuario=$6
-   CROSS JOIN LATERAL(SELECT count(*)::int AS no_leidos FROM eventos e WHERE e.jid=w.jid AND e.tipo IN ('recibido','intercambio') AND (lectura.fecha IS NULL OR (e.fecha,e.clave)>(lectura.fecha,lectura.clave)))leidos
+   LEFT JOIN no_leidos leidos ON leidos.jid=w.jid
    WHERE ${visibleSQL} AND ($2='' OR w.nombre ILIKE '%'||$2||'%' OR COALESCE(w.telefono_visible,'') ILIKE '%'||$2||'%')
    AND ($3::boolean=false OR a.estado IN ('pendiente','en_curso') OR w.estado_ia='pausada' OR ((a.cerrada_en IS NULL OR a.cerrada_en<w.creado_en::timestamptz) AND w.tipo IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)')))
    AND ($5='todos' OR ($5='clientes' AND NOT w.interno AND w.jid NOT LIKE '%@g.us') OR ($5='internas' AND (w.interno OR w.jid LIKE '%@g.us')))
-   AND ($7::boolean=false OR leidos.no_leidos>0)
+   AND ($7::boolean=false OR leidos.cantidad>0)
    ORDER BY COALESCE(w.fijado,0) DESC,w.creado_en::timestamptz DESC NULLS LAST,w.jid LIMIT 51 OFFSET $4`,[req.user?.rol==='direccion',q,req.query.pendientes==='1',offset,['clientes','internas'].includes(req.query.tipo)?req.query.tipo:'todos',String(req.user.username),req.query.no_leidos==='1']);
   const sync=await pool.query('SELECT actualizado_en,estado FROM wa_bandeja_sync WHERE id=1');
   res.json({ok:true,data:r.rows.slice(0,50),mas:r.rows.length>50,total:r.rows[0]?.total||0,sync:sync.rows[0]||null,connected:listo()});

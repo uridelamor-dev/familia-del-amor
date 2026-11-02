@@ -926,7 +926,7 @@ window.addEventListener("scroll", dpClose, true);
 
 // ════════════════════════ ESTADO GLOBAL + COMPONENTES (lenguaje del prototipo) ════════════════════════
 let AVISOS_RR = [];
-let AVISOS_CARGA=null, AVISOS_SESION=null;
+let AVISOS_CARGA=null, AVISOS_SESION=null, AVISOS_HASTA=0;
 let DASH_LOCAL = "", SELECCION = [], COLLAPSED = false, PERIOD = "hoy";
 
 /**
@@ -2702,6 +2702,7 @@ let CLI_TOTAL = 0;
 /** La última ficha consultada. `"no"` = no existe: se dice igual que cualquier otro fallo. */
 let CLI_FID = null;
 let CLI_POBLACIONES = [];
+let CLI_POB_CARGA=null;
 let _cliTimer = null;
 async function apiRaw(path) { const r = await fetch(path, { headers: { Authorization: "Bearer " + token() } }); if (await fueraDeSesion(r)) throw new Error("noauth"); const j = await r.json(); if (!j.ok) throw new Error(j.error || "Error"); return j; }
 // El mes de HOY como «MM». El filtro «cumpleaños este mes» mandaba un `1` literal —la marca
@@ -2880,15 +2881,15 @@ async function cliFidVer() {
 async function loadClientes() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
   try {
-    // Las dos peticiones salen a la vez: encadenadas, la pantalla tardaba dos viajes de red
-    // en aparecer, y la lista de poblaciones (que solo llena un desplegable) no depende de nada.
-    const [pob, j] = await Promise.all([
-      CLI_POBLACIONES.length ? null : apiRaw("/api/contactos/poblaciones").catch(() => null),
-      apiRaw("/api/contactos" + (cliQS() ? "?" + cliQS() : "")),
-    ]);
-    // Si la lista de poblaciones llega con otra forma —o no llega—, la pantalla NO puede
-    // caerse: es un desplegable, no el dato que se viene a ver.
-    if (pob && Array.isArray(pob.data)) CLI_POBLACIONES = pob.data;
+    // El desplegable no bloquea la lista; su petición se comparte entre aperturas.
+    if(!CLI_POBLACIONES.length&&!CLI_POB_CARGA){
+      const sesion=token();
+      CLI_POB_CARGA=apiRaw("/api/contactos/poblaciones").then(pob=>{
+        if(token()===sesion&&Array.isArray(pob.data))CLI_POBLACIONES=pob.data;
+      }).catch(()=>{}).finally(()=>{CLI_POB_CARGA=null;});
+    }
+    const j=await apiRaw("/api/contactos"+(cliQS()?"?"+cliQS():""));
+    if(!view.isConnected||CURRENT!=="clientes")return;
     view.innerHTML = renderClientes(j);
     cliAvisoPropuestas();   // no se espera: es un aviso, no un dato de la lista
   } catch (e) { if (e.message !== "noauth") view.innerHTML = errorCard(e.message); }
@@ -3322,8 +3323,7 @@ async function revInformes() {
 async function revRepaso(automatico = false, offset = 0) {
   if (!revPuedeResponder()) return;
   if (automatico && document.querySelector('.modal-ov')) {
-    setTimeout(() => facRepasoUnico(true).catch(() => {}),10000);
-  setTimeout(() => revRepaso(true).catch(() => {}), 15000); return;
+    setTimeout(() => revRepaso(true).catch(() => {}), 15000); return;
   }
   const d = await apiSend('GET', '/api/reviews/repaso?offset=' + offset);
   if (!d.available) { if (!automatico) toast('El repaso se activará al publicar en producción.'); return; }
@@ -4620,12 +4620,13 @@ function renderRRResumen() {
 // aquí se ve de un vistazo a quién le falta, para poder recordárselo.
 function renderRRSinTelefono() { return ''; }
 let AVISOS_OCULTOS=[];
-async function refrescarAvisosRR(){
+async function refrescarAvisosRR(forzar=true){
  if(!USER||!['direccion','rrhh','encargado','contabilidad','marketing'].includes(USER.rol)){AVISOS_RR=[];return;}
  const sesion=token();
- if(AVISOS_SESION!==sesion){AVISOS_RR=[];AVISOS_OCULTOS=[];AVISOS_CARGA=null;AVISOS_SESION=sesion;}
+ if(AVISOS_SESION!==sesion){AVISOS_RR=[];AVISOS_OCULTOS=[];AVISOS_CARGA=null;AVISOS_SESION=sesion;AVISOS_HASTA=0;}
  if(AVISOS_CARGA)return AVISOS_CARGA;
- const carga=(async()=>{try{const r=await apiRaw('/api/panel/avisos');if(token()!==sesion)return false;const fallidas=new Set(r.fallidas||[]);AVISOS_RR=[...(r.data||[]),...AVISOS_RR.filter(a=>fallidas.has(a.fuente))];AVISOS_OCULTOS=[...(r.ocultos||[]),...AVISOS_OCULTOS.filter(a=>fallidas.has(a.fuente))];repintarBarra();return fallidas.size===0;}catch{return false;}})();
+ if(!forzar&&Date.now()<AVISOS_HASTA)return true;
+ const carga=(async()=>{try{const r=await apiRaw('/api/panel/avisos');if(token()!==sesion)return false;const antes=JSON.stringify([AVISOS_RR,AVISOS_OCULTOS]);const fallidas=new Set(r.fallidas||[]);AVISOS_RR=[...(r.data||[]),...AVISOS_RR.filter(a=>fallidas.has(a.fuente))];AVISOS_OCULTOS=[...(r.ocultos||[]),...AVISOS_OCULTOS.filter(a=>fallidas.has(a.fuente))];AVISOS_HASTA=fallidas.size?0:Date.now()+30000;if(antes!==JSON.stringify([AVISOS_RR,AVISOS_OCULTOS]))repintarBarra();return fallidas.size===0;}catch{return false;}})();
  AVISOS_CARGA=carga;try{return await carga;}finally{if(AVISOS_CARGA===carga)AVISOS_CARGA=null;}
 }
 async function abrirAvisos(ocultos=false){
@@ -7230,6 +7231,7 @@ async function loadFichajes() {
   if (FIC.tab === "revision") return ficPintarRevision();
   if (FIC.tab === "bolsa") return ficPintarBolsa();
   await ficPintarHoy();
+  if(!view.isConnected||CURRENT!=="fichajes"||FIC.tab!=="hoy")return;
   // Un minuto: lo bastante para que sirva de tablero y lo bastante poco para no molestar.
   FIC_TIMER = setInterval(() => {
     // Guarda: si el usuario ya se ha ido a otra vista, el temporizador no debe repintar nada.
@@ -17990,6 +17992,10 @@ function escribirUrl(view, sub) {
 
 function go(view, { desdeUrl = false } = {}) {
   if (!VIEWS[view]) view = "dashboard";
+  // Retirar los refrescos de la pantalla anterior antes de construir la nueva.
+  if(typeof CONV!=="undefined"){convGuardarBorrador();clearInterval(CONV.timer);CONV.timer=null;}
+  clearInterval(FIC_TIMER);FIC_TIMER=null;
+  clearInterval(WA_POLL);WA_POLL=null;
   // El calendario cuelga de <body>, así que sobrevive al repintado de la vista:
   // si no lo cerramos aquí, se queda flotando encima de la pantalla nueva.
   dpClose();
@@ -18000,7 +18006,7 @@ function go(view, { desdeUrl = false } = {}) {
     refreshWaPill(); return;
   }
   document.getElementById("root").innerHTML = shell(view, skeleton());
-  refrescarAvisosRR();
+  refrescarAvisosRR(false);
   refreshWaPill(view === "whatsapp"); // en la pantalla de Sara sí interesa el estado del momento
   return VIEWS[view]();
 }

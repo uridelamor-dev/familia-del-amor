@@ -40,7 +40,9 @@ async function loadConversaciones(){
  }
  CONV.actualizarLista=()=>lista(false,true);
  await lista(false);
- CONV.timer=setInterval(()=>{if(CURRENT!=='conversaciones'||!listaRoot.isConnected){clearInterval(CONV.timer);return;}if(!CONV.busy&&!document.hidden){if(CONV.jid)convRefrescar();lista(false,true);}},5000);
+ if(CURRENT!=='conversaciones'||!listaRoot.isConnected)return;
+ const timer=setInterval(()=>{if(CURRENT!=='conversaciones'||!listaRoot.isConnected){clearInterval(timer);return;}if(!CONV.busy&&!document.hidden){if(CONV.jid)convRefrescar();lista(false,true);}},5000);
+ CONV.timer=timer;
 }
 function convHoraLista(v){if(!v)return '';const d=new Date(v);if(Number.isNaN(+d))return '';return d.toDateString()===new Date().toDateString()?d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString('es-ES',{day:'numeric',month:'short'});}
 function convFecha(v){if(!v)return '';const d=new Date(v);return Number.isNaN(+d)?String(v||''):d.toLocaleString('es-ES',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
