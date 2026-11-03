@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import fs from 'node:fs';
+const code=fs.readFileSync(new URL('../public/panel/campanas-vista.js',import.meta.url),'utf8');
+function vista(){const c=vm.createContext({esc:String,num:String,Date});vm.runInContext(code,c);return c;}
+test('unifica canales sin inventar entregas de email ni audiencia histórica',()=>{const c=vista(),r=c.campFilas({list:[{id:1,total_enviados:2,enviados_reales:7}],correos:[{id:2,destinatarios:10}],comunicaciones:[{id:3,destinatarios:8,progreso:{entregados:3,fallidos:1}}]});assert.equal(r.find(x=>x.id===1).enviados,7);assert.equal(r.find(x=>x.id===1).total,null);assert.equal(r.find(x=>x.id===2).enviados,null);assert.equal(r.find(x=>x.id===3).errores,1);});
+test('explica desconexión, pausa, cupo y horario según el circuito',()=>{const c=vista(),fila={estado:'enviando',origen:'permiso',canal:'whatsapp',total:8,enviados:1,errores:0};assert.match(c.campEspera(fila,{wa:false}),/conexión/);assert.match(c.campEspera(fila,{cupo:{agotado:true}}),/diario/);assert.match(c.campEspera(fila,{cola:{parada:true}}),/pausada/);assert.match(c.campEspera(fila,{cola:{fuera_horario:true}}),/horario/);assert.match(c.campEspera({...fila,origen:'campana'},{cola:{parada:true}}),/cada 5/);});
+test('estimación usa restantes y cuota, nunca promete una hora de llegada',()=>{const c=vista();assert.match(c.campEstimacion({canal:'whatsapp',estado:'enviando',total:120,enviados:25,errores:2},{cupo:{max:40,quedan:15}}),/7 h 40 min · al menos 3 días/);assert.equal(c.campEstimacion({canal:'email',estado:'enviando'}),'');});
+test('filtros combinados excluyen los otros canales y estados',()=>{const c=vista();vm.runInContext("CAMP_FILTROS={estado:'terminados',canal:'email',q:'club'}",c);const html=c.campRenderLista({list:[{nombre:'WA club',estado:'enviada'}],correos:[{asunto:'Email club',estado:'enviado',destinatarios:2},{asunto:'Otro email',estado:'enviado'}]});assert.match(html,/1 de 3/);assert.match(html,/Email club/);assert.doesNotMatch(html,/WA club|Otro email/);});

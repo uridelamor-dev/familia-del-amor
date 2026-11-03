@@ -41,8 +41,14 @@ async function loadConversaciones(){
  CONV.actualizarLista=()=>lista(false,true);
  await lista(false);
  if(CURRENT!=='conversaciones'||!listaRoot.isConnected)return;
+ const destino=convDestinoUrl(typeof location==='undefined'?'':location.hash);
+ if(destino)await convAbrir(destino,'Conversación');
+ if(CURRENT!=='conversaciones'||!listaRoot.isConnected)return;
  const timer=setInterval(()=>{if(CURRENT!=='conversaciones'||!listaRoot.isConnected){clearInterval(timer);return;}if(!CONV.busy&&!document.hidden){if(CONV.jid)convRefrescar();lista(false,true);}},5000);
  CONV.timer=timer;
+}
+function convDestinoUrl(hash){
+ try{const ruta=String(hash||'').replace(/^#\/?/,'').split('/');const jid=decodeURIComponent(ruta[1]||'');return ruta[0]==='conversaciones'&&/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(jid)?jid:null;}catch{return null;}
 }
 function convHoraLista(v){if(!v)return '';const d=new Date(v);if(Number.isNaN(+d))return '';return d.toDateString()===new Date().toDateString()?d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString('es-ES',{day:'numeric',month:'short'});}
 function convFecha(v){if(!v)return '';const d=new Date(v);return Number.isNaN(+d)?String(v||''):d.toLocaleString('es-ES',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
@@ -105,7 +111,7 @@ async function convRefrescar(anteriores=false){
   const pendiente=r.pendiente??(r.atencion&&r.atencion.estado!=='resuelta');
   document.getElementById('convResolver').hidden=!!r.cliente.solo_lectura||!pendiente;
   document.getElementById('convTarea').textContent=pendiente?
-   `Necesita atención · ${r.atencion?.responsable||'Equipo'}. ${r.atencion?.resumen||'Revisa el último mensaje del cliente y comprueba si la gestión se ha completado.'}${r.atencion?.aviso_error?' No se pudo confirmar el aviso por WhatsApp; revisar esta consulta.':''}`:'';
+   `Necesita atención · ${r.atencion?.responsable||'Equipo'}. ${r.motivo_pendiente||r.atencion?.resumen||'Consulta sin motivo registrado; revisa el historial.'}${r.atencion?.aviso_error?' No se pudo confirmar el aviso por WhatsApp; revisar esta consulta.':''}`:'';
   document.getElementById('convTarea').hidden=!pendiente;
   CONV.connected=r.connected;document.getElementById('convSend').disabled=!r.connected||CONV.busy||!document.getElementById('convTexto').value.trim();
   document.getElementById('convControl').disabled=false;

@@ -51,5 +51,17 @@ test('no leídos por usuario, lectura acotada y adjuntos privados del chat',asyn
  assert.equal((await call('GET','/adjunto/:id',{query:{jid:grupo},params:{id}})).code,404);
  await db.raw("UPDATE wa_adjuntos SET creado_en=now()-interval '31 days'");assert.equal((await call('GET','/adjunto/:id',{query:{jid},params:{id}})).code,404);
  assert.equal((await call('GET','/detalle',{query:{jid}})).body.data[0].adjuntos[0].disponible,false);
+ // El filtro humano no confunde mensajes recibidos, grupos ni tareas históricas automáticas.
+ await db.raw("INSERT INTO wa_atencion(jid,motivo,resumen) VALUES($1,'sin_respuesta','Hola'),($2,'consulta','Grupo interno')",[jid,grupo]);
+ assert.equal((await call('GET','',{rol:'direccion',query:{pendientes:'1'}})).body.data.length,0);
+ assert.equal((await call('GET','/detalle',{query:{jid}})).body.pendiente,false);
+ await db.raw("UPDATE wa_atencion SET motivo='consulta',resumen='Autorizar presupuesto especial' WHERE jid=$1",[jid]);
+ const pendientes=await call('GET','',{rol:'direccion',query:{pendientes:'1'}});
+ assert.deepEqual(pendientes.body.data.map(c=>c.jid),[jid]);
+ const humano=await call('GET','/detalle',{query:{jid}});
+ assert.equal(humano.body.pendiente,true);assert.equal(humano.body.motivo_pendiente,'Autorizar presupuesto especial');
+ await db.raw("UPDATE wa_atencion SET estado='resuelta' WHERE jid=$1",[jid]);
+ assert.equal((await call('GET','',{query:{pendientes:'1'}})).body.data.length,0);
+
  }finally{await db.fin();}
 });

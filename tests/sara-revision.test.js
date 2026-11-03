@@ -59,12 +59,14 @@ function conversacion({ respuesta = 'Dime algo', revision = { ...valido, respues
   vm.runInNewContext(wa.slice(a, b), env);
   return { run: m => env.responderConIA('test', m, null, null), acciones, llamadas: () => llamadas };
 }
-test('turno real: excepción se deriva antes del modelo, confirma solo si se ha registrado', async () => {
+test('turno real: preguntar por otro día consulta condiciones antes de decidir una derivación', async () => {
+  const c = conversacion({ revision: { ...valido, respuesta: 'La promoció és el dia 1.' } });
+  assert.equal(await c.run('Puc venir un altre dia?'), 'La promoció és el dia 1.');
+  assert.equal(c.llamadas(), 1); assert.deepEqual(c.acciones, []);
   for (const falloDerivacion of [true, false]) {
-    const c = conversacion({ falloDerivacion });
-    const r = await c.run('Puc venir un altre dia?');
-    assert.equal(c.llamadas(), 0); assert.deepEqual(c.acciones, ['pasar_a_persona']);
-    assert.equal(r, textoSeguro(falloDerivacion ? 'error' : 'consulta', 'ca'));
+    const d = conversacion({ falloDerivacion, revision: { ...valido, decision:'consultar',motivo:'Solicita una excepción que requiere autorización',respuesta:'',evidencias:[] } });
+    assert.equal(await d.run('Puc venir un altre dia?'), textoSeguro(falloDerivacion ? 'error' : 'consulta', 'ca'));
+    assert.equal(d.llamadas(), 1); assert.deepEqual(d.acciones, ['pasar_a_persona']);
   }
 });
 test('turno real: al cliente llega la revisión en catalán, no el borrador mezclado', async () => {

@@ -5,18 +5,19 @@ import { readFileSync } from 'node:fs';
 const source=readFileSync(new URL('../public/panel/app.js',import.meta.url),'utf8');
 function fn(name) { const i=source.indexOf(`function ${name}(`); const begin=source.slice(Math.max(0,i-6),i)==='async '?i-6:i;return source.slice(begin,source.indexOf('\n}',i)+2); }
 function setup({section='envios',request}={}) {
- const paths=[],node={innerHTML:''};
+ const paths=[],node={innerHTML:'',querySelectorAll:()=>[],addEventListener(){},isConnected:true};
  const apiRaw=async path=>{paths.push(path);return request ? request(path) : {data:[]};};
  const context=vm.createContext({
   CAMP_SECCION:section,CURRENT:'campanas',CAMP:{list:[],plantillas:[],audiencias:[],cfg:null},PROMO:{list:[]},FID:{locales:[]},FIDG:{},Map,
-  document:{getElementById:()=>node},apiRaw,api:async path=>(await apiRaw(path)).data,apiOptional:async path=>(await apiRaw(path)).data,
+  CAMP_TIMER:null,clearInterval(){},setInterval(){return 1},campConectarFiltros(){},campRefrescarEnvios(){},document:{getElementById:()=>node},apiRaw,api:async path=>(await apiRaw(path)).data,apiOptional:async path=>(await apiRaw(path)).data,
   puedeVer:()=>true,skeleton:()=> 'cargando',errorCard:m=>`error:${m}`,renderCampanas:()=>JSON.stringify(context.CAMP),campFaltan:()=>{},esc:String,toast:()=>{},
  });
+ vm.runInContext(readFileSync(new URL('../public/panel/campanas-vista.js',import.meta.url),'utf8').replace('let CAMP_FILTROS=', 'CAMP_FILTROS=').replace(',CAMP_TIMER=null;', ';'),context);
  vm.runInContext('let CAMP_LOAD_ID = 0;'+fn('loadFidGestion')+'\n'+fn('loadCampanas'),context);
  return {context,paths,node};
 }
 test('mensajes no consulta datos de puntos o formularios que no se muestran',async()=>{
- const h=setup();await h.context.loadCampanas();assert.equal(h.paths.filter(p=>p.startsWith('/api/fidelizacion/')).length,0);
+ const h=setup();await h.context.loadCampanas();assert.deepEqual(h.paths.filter(p=>p.startsWith('/api/fidelizacion/')),['/api/fidelizacion/comunicaciones']);
 });
 test('fallo al leer cumpleaños se presenta como error, nunca como desactivado',async()=>{
  const h=setup({section:'auto',request:async p=>{if(p==='/api/campanas-config')throw Error('Sin conexión');return {data:[]};}});
@@ -46,7 +47,7 @@ test('un fallo de formularios no aparece como una lista vacía lista para editar
  assert.equal(await h.context.loadCampanas(),false);assert.match(h.node.innerHTML,/error:/);
 });
 test('un listado de cupones tardío no reemplaza los cupones más recientes',async()=>{
- let first,queries=0;const node={innerHTML:''};
+ let first,queries=0;const node={innerHTML:'',querySelectorAll:()=>[]};
  const c=vm.createContext({PROMO:{tab:'qr',list:[]},document:{getElementById:()=>node},skeleton:()=>'',errorCard:m=>m,renderPromos:()=>JSON.stringify(c.PROMO.qrs),apiRaw:async p=>{if(p==='/api/promos/qr'){if(++queries===1)return new Promise(r=>first=r);return {data:[{id:2}]};}return {data:[]};}});
  vm.runInContext('let PROMO_LOAD_ID=0;'+fn('loadPromos'),c);
  const pending=c.loadPromos();while(!first)await Promise.resolve();await c.loadPromos();first({data:[{id:1}]});await pending;assert.equal(c.PROMO.qrs[0].id,2);assert.match(node.innerHTML,/2/);

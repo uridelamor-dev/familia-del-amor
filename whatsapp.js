@@ -10,7 +10,7 @@ import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
   from "./src/modules/messaging/contexto.js";
 import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan }
   from "./src/modules/messaging/sara.js";
-import { revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, confirmacionAcciones, acuseTrasIncidencia, pideExcepcionPromocion, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
+import { revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, confirmacionAcciones, acuseTrasIncidencia, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
 import { mensajeNormalizado, prepararAdjunto } from "./src/modules/messaging/sara-adjuntos.js";
 import { respuestaTrasHerramientas } from "./src/modules/messaging/respuesta-herramientas.js";
 import path from "path";
@@ -187,10 +187,10 @@ Cuando el cliente usa "Responder" de WhatsApp verás el mensaje citado marcado c
 Entender de qué promoción habla NO es saber sus condiciones.
 Si la condición que te preguntan está en el mensaje anterior, en el citado o en la configuración del equipo, respóndela.
 Si NO la tienes —si vale otro día, si se puede cambiar la fecha, si hay excepciones, hasta cuándo dura—, NO la supongas y NO improvises una respuesta amable: no te la inventes ni para decir que sí ni para decir que no.
-Dile con naturalidad, en su idioma, que con la información que tienes no se lo puedes confirmar y que lo consultas con el equipo, y usa \`pasar_a_persona\`.
+Consulta primero las fuentes y herramientas disponibles. Si falta identificar la promoción o un dato del cliente, pregúntalo. Si las condiciones ya delimitan las fechas, explícalas sin derivar; preguntar por otro día no es solicitar una excepción. Solo usa \`pasar_a_persona\` si el cliente pide una excepción que no puedes autorizar o necesita una decisión imprescindible que solo puede tomar el equipo.
 
 ## Recoger solicitudes antes de derivar
-Tu objetivo es resolver la consulta tú siempre que tengas respaldo y herramientas para hacerlo. Distingue entre un dato que debe aportar el cliente y una decisión que requiere al equipo. Pregunta directamente el dato que falte; no uses pasar_a_persona para pedir un local, fecha, nombre o identificar una promoción. Si las condiciones oficiales responden la pregunta, explícalas aunque la respuesta sea negativa. No derives solo porque el borrador necesite reformularse. Una excepción no autorizada, un resultado de gestión incierto o una petición expresa de persona sí requieren intervención.
+Tu objetivo es resolver la consulta tú siempre que tengas respaldo y herramientas para hacerlo. Distingue entre un dato que debe aportar el cliente y una decisión que requiere al equipo. Pregunta directamente el dato que falte; no uses pasar_a_persona para pedir un local, fecha, nombre o identificar una promoción. Si las condiciones oficiales responden la pregunta, explícalas aunque la respuesta sea negativa. No derives solo porque el borrador necesite reformularse. Una solicitud expresa de excepción no autorizada, un resultado de gestión incierto o una petición expresa de persona sí requieren intervención. Responde también a las partes que sí puedes resolver. Nunca prometas que alguien contactará ni un plazo de respuesta sin confirmación real. No utilices la derivación como cierre genérico de una duda.
 Cuando falten datos de una reserva (local, día, hora, personas, nombre), pregúntalos. No derives solo por faltar esos datos ni porque alguien diga que ha llamado sin éxito. Si requiere un menú o presupuesto especial, recoge lo que ya sabe y pregunta solo los datos que faltan antes de pasar la propuesta al equipo. No prometas disponibilidad, precio ni confirmación sin respaldo.
 
 ## Reservas: sus horarios son SOLO suyos
@@ -220,10 +220,10 @@ const TOOLS = [
   {
     name: "pasar_a_persona",
     description:
-      "Pasa la conversación a una persona del equipo y DEJA DE responder automáticamente. "
+      "Registra una intervención humana imprescindible. Solo detiene las respuestas si el cliente pide una persona. "
       + "Úsala en dos casos: (1) el cliente pide hablar con una persona, con alguien, con un "
       + "trabajador o con el encargado — esa petición manda sobre cualquier otra cosa y no hay "
-      + "que intentar convencerle de seguir contigo; (2) te preguntan algo que no puedes "
+      + "que intentar convencerle de seguir contigo; (2) hay una decisión imprescindible que solo puede tomar el equipo y no puedes "
       + "responder con lo que tienes —condiciones de una promoción, excepciones, si algo vale "
       + "otro día— y no te lo dice ni el mensaje anterior, ni el citado, ni la configuración. "
       + "Antes de usarla por el segundo motivo, mira bien el contexto: si la respuesta está ahí, "
@@ -728,7 +728,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
 
   const parteCampana = campana?.texto ? ` ${campana.texto}` : "";
   const parteFallo = falloContexto
-    ? " [CONTEXTO INTERNO: no se ha podido recuperar todo el contexto. Si se refiere a una invitación o a una promoción y falta el dato, no adivines: consulta al equipo con pasar_a_persona.]" : "";
+    ? " [CONTEXTO INTERNO: no se ha podido recuperar todo el contexto. Si se refiere a una invitación o a una promoción y falta el dato, no adivines: pide al cliente identificar la promoción o el dato que falta; deriva solo si requiere una decisión exclusiva del equipo.]" : "";
   const contenidoUsuario =
     `${partesFecha}${partesRetraso}${reservaCtx}${parteCampana}${parteFallo}${partesPrimer}${parteIdioma} ${mensajeUsuario}${parteAdjunto}`;
 
@@ -745,12 +745,8 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
 
-  if (pideExcepcionPromocion(mensajeUsuario, (campana?.texto || '') + ' ' + JSON.stringify(citado || '') + ' ' + JSON.stringify(historial.slice(-6)))) {
-    const derivacion = await ejecutarHerramienta({ name: 'pasar_a_persona', input: { motivo: mensajeUsuario.slice(0, 300), pidio_persona: false } }, adjuntoUrl, jid);
-    const respuesta = textoSeguro(derivacion.is_error ? 'error' : 'consulta', pista.idioma);
-    historial.push({ role: 'assistant', content: respuesta });
-    return respuesta;
-  }
+  // Preguntar por otra fecha no equivale a pedir una excepción: consultar primero
+  // las condiciones oficiales y mantener la revisión antes de enviar.
   const ultimoAviso=[...historial].reverse().find(m=>m.role==='assistant')?.content;
   const acuse=acuseTrasIncidencia(mensajeUsuario,ultimoAviso,pista.idioma);
   if(acuse)return acuse;

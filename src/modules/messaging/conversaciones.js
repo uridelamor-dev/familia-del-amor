@@ -1,13 +1,22 @@
+import {tareaHumana,motivoAtencion} from './motivo-atencion.js';
 import { ARCHIVO_CTE, jidBandeja } from './bandeja-historial.js';
 import { IDENTIDAD_CTE, telefonoContacto } from './contacto-conversacion.js';
 // Las conversaciones internas y los grupos nunca entran en la bandeja de clientes.
 export const CLIENTE_SQL = `w.jid ~ '^[0-9]+@(s[.]whatsapp[.]net|lid)$'
  AND NOT EXISTS (SELECT 1 FROM whatsapp_messages i WHERE i.jid=w.jid AND i.tipo='interno')`;
 export function jidValido(jid) { return /^\d+@(s\.whatsapp\.net|lid)$/.test(String(jid || '')); }
+// Un mensaje sin respuesta o sin leer no implica una gestión humana.
+const PENDIENTE_SQL = `(NOT w.interno AND w.jid NOT LIKE '%@g.us' AND
+ ((a.estado IN ('pendiente','en_curso') AND (a.motivo<>'sin_respuesta' OR a.estado='en_curso')) OR
+ (w.estado_ia='pausada' AND (COALESCE(w.pausado_por,'')<>'sara' OR w.pausa_motivo='pidio_persona'))))`;
 export function conversacionPendiente(cliente,tarea){
- if(['pendiente','en_curso'].includes(tarea?.estado)||cliente.estado_ia==='pausada')return true;
- const nuevo=!tarea?.cerrada_en||new Date(tarea.cerrada_en)<new Date(cliente.creado_en);
- return nuevo&&['intercambio','recibido'].includes(cliente.tipo)&&(!cliente.respuesta||cliente.respuesta==='(sin respuesta registrada)');
+ if(cliente.solo_lectura||cliente.interno||cliente.jid?.endsWith('@g.us'))return false;
+ return Boolean(tareaHumana(tarea)||
+ (cliente.estado_ia==='pausada'&&(cliente.pausado_por!=='sara'||cliente.pausa_motivo==='pidio_persona')));
+}
+export function motivoPendiente(cliente,tarea){
+ if(!conversacionPendiente(cliente,tarea))return null;
+ return motivoAtencion(tarea||{},cliente);
 }
 export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquear, olvidar, resolverTelefono,atencion}) {
  const permiso=auth(['direccion','marketing']);
@@ -44,12 +53,12 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
    SELECT w.*,w.telefono_visible AS telefono, a.estado AS atencion_estado,a.responsable,a.motivo AS atencion_motivo,
    (w.interno OR w.jid LIKE '%@g.us') AS solo_lectura,
    COALESCE(w.estado_ia,'activa') AS estado_ia,
-   (a.estado IN ('pendiente','en_curso') OR COALESCE(w.estado_ia,'activa')='pausada' OR ((a.cerrada_en IS NULL OR a.cerrada_en<w.creado_en::timestamptz) AND COALESCE(w.tipo,'') IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)'))) AS pendiente,
+   COALESCE(${PENDIENTE_SQL},false) AS pendiente,
    COALESCE(leidos.cantidad,0) AS no_leidos, count(*) OVER()::int AS total
    FROM identidades w LEFT JOIN wa_atencion a ON a.jid=w.jid
    LEFT JOIN no_leidos leidos ON leidos.jid=w.jid
    WHERE ${visibleSQL} AND ($2='' OR w.nombre ILIKE '%'||$2||'%' OR COALESCE(w.telefono_visible,'') ILIKE '%'||$2||'%')
-   AND ($3::boolean=false OR a.estado IN ('pendiente','en_curso') OR w.estado_ia='pausada' OR ((a.cerrada_en IS NULL OR a.cerrada_en<w.creado_en::timestamptz) AND w.tipo IN ('intercambio','recibido') AND (NULLIF(w.respuesta,'') IS NULL OR w.respuesta='(sin respuesta registrada)')))
+   AND ($3::boolean=false OR ${PENDIENTE_SQL})
    AND ($5='todos' OR ($5='clientes' AND NOT w.interno AND w.jid NOT LIKE '%@g.us') OR ($5='internas' AND (w.interno OR w.jid LIKE '%@g.us')))
    AND ($7::boolean=false OR leidos.cantidad>0)
    ORDER BY COALESCE(w.fijado,0) DESC,w.creado_en::timestamptz DESC NULLS LAST,w.jid LIMIT 51 OFFSET $4`,[req.user?.rol==='direccion',q,req.query.pendientes==='1',offset,['clientes','internas'].includes(req.query.tipo)?req.query.tipo:'todos',String(req.user.username),req.query.no_leidos==='1']);
@@ -73,7 +82,7 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
   const porId=new Map(archivos.map(a=>[a.id,a]));
   for(const m of datos)m.adjuntos=(Array.isArray(m.adjuntos)?m.adjuntos:[]).map(id=>porId.get(id)||{id,disponible:false});
   const tarea=(await pool.query('SELECT * FROM wa_atencion WHERE jid=$1',[jid])).rows[0]||null;
-  res.json({ok:true,pendiente:conversacionPendiente(c.rows[0],tarea),data:datos,mas:r.rows.length>100,cursor:datos.length?[datos[0].creado_en,datos[0].id]:null,cliente:c.rows[0],atencion:tarea,connected:listo()});
+  res.json({ok:true,pendiente:conversacionPendiente(c.rows[0],tarea),motivo_pendiente:motivoPendiente(c.rows[0],tarea),data:datos,mas:r.rows.length>100,cursor:datos.length?[datos[0].creado_en,datos[0].id]:null,cliente:c.rows[0],atencion:tarea,connected:listo()});
  }));
  // Las lecturas pertenecen a cada usuario del panel, no al estado de atención de Sara.
  app.post(ruta+'/leer',permiso,wrap(async(req,res)=>{

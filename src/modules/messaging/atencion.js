@@ -1,3 +1,4 @@
+import {tareaHumana,motivoAtencion,enlaceConversacion} from './motivo-atencion.js';
 import { ARCHIVO_CTE } from './bandeja-historial.js';
 import { IDENTIDAD_CTE, telefonoContacto } from './contacto-conversacion.js';
 
@@ -31,7 +32,7 @@ export function accionPendiente(t) {
  return 'Resolver la duda indicada y responder al cliente.';
 }
 export function avisoAtencion(tareas,nivel,ahora=new Date()) {
- const validas=tareas.filter(t=>contactoAtendible(t.jid));
+ const validas=tareas.filter(t=>contactoAtendible(t.jid)&&tareaHumana(t)&&!t.interno);
  if(!validas.length)return '';
  const antiguas=t=>+ahora-Date.parse(t.fecha_cliente||t.ultimo_cliente)>24*60*60000;
  const lineas=[`📩 *${nivel===3?'Atención pendiente · Dirección':nivel===2?'Recordatorio · Atención al cliente':'Atención al cliente'}*`,
@@ -48,14 +49,15 @@ export function avisoAtencion(tareas,nivel,ahora=new Date()) {
    lineas.push('',`• *${etiqueta}*${tel&&etiqueta!=='+'+tel?' · +'+tel:''}`,cuando);
    if(t.ultimo_texto)lineas.push(`Último mensaje: «${breve(t.ultimo_texto,140)}»`);
    else if(t.resumen&&!t.resumen.startsWith('Consulta anterior pendiente'))lineas.push(`Contexto: ${breve(t.resumen,140)}`);
-   if(t.resumen && t.motivo!=='sin_respuesta' && !t.resumen.startsWith('Consulta anterior pendiente')) lineas.push(`Motivo de revisión: ${breve(t.resumen,240)}`);
+   lineas.push(`Motivo de revisión: ${breve(motivoAtencion(t),240)}`);
    lineas.push(`Qué falta: ${accionPendiente(t)}`);
-   if(t.estado==='en_curso')lineas.push('El equipo ya está atendiendo esta conversación.');
+   lineas.push(`Estado: ${t.estado==='en_curso'?'En curso':'Pendiente'} · Responsable: ${breve(t.responsable==='marketing'?'Laura':t.responsable||'Laura',60)}`);
+   lineas.push(enlaceConversacion(t.jid));
   }
   if(grupo.length>3)lineas.push('',`Y ${grupo.length-3} más en el panel.`);
  }
  lineas.push('','*Revisar en el panel*','https://familiadelamor.org/panel/#conversaciones',
-  'Filtra «Solo necesitan atención». Comprueba el historial; marca «Resuelta» cuando esté atendida.');
+  'Abre el enlace de la consulta. Pulsa «Tomar el control» para atenderla y «Resuelta» al terminar; así se detienen los recordatorios.');
  return lineas.join('\n');
 }
 export function pausaBloqueante(ficha) {
@@ -64,7 +66,9 @@ export function pausaBloqueante(ficha) {
 export function nivelAviso(tarea, ahora = new Date()) {
  const hora = Number(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Madrid',hour:'2-digit',hourCycle:'h23'}).format(ahora));
  if(tarea.aviso_en && +ahora-Date.parse(tarea.aviso_en)<5*60000)return 0;
- if(hora<10 || hora>=21 || tarea.estado==='resuelta')return 0;
+ if(hora<10 || hora>=21 || !tareaHumana(tarea))return 0;
+ // Dar margen real a quien ya está atendiendo; el cliente no reinicia este reloj.
+ if(tarea.estado==='en_curso' && +ahora-Date.parse(tarea.actualizada_en||tarea.abierta_en)<240*60000)return 0;
  const minutos=(+ahora-Date.parse(tarea.abierta_en))/60000;
  const previo=Number(tarea.aviso_nivel||0);
  // Siempre avisar primero a Laura, también al recuperar una tarea antigua.
@@ -77,29 +81,33 @@ export function nivelAviso(tarea, ahora = new Date()) {
  if(previo===2 && desdeAviso>=60 && minutos>=120 && espera>=(tarea.estado==='en_curso'?240:120))return 3;
  return 0;
 }
-export function crearAtencion({pool,enviar,listo,recuperar}) {
+export function crearAtencion({pool,enviar,listo,recuperar,ahora=()=>new Date()}) {
  const canon=async jid=>(await pool.query('SELECT COALESCE(telefono_jid,jid) AS jid FROM wa_bandeja_chats WHERE jid=$1',[jid])).rows[0]?.jid||jid;
  async function abrir(jid,motivo,resumen,fecha=new Date()) {
   jid=await canon(jid);
   if(!contactoAtendible(jid))return;
   await pool.query(`INSERT INTO wa_atencion(jid,motivo,resumen,ultimo_cliente) VALUES($1,$2,$3,$4)
    ON CONFLICT(jid) DO UPDATE SET
-    estado=CASE WHEN wa_atencion.estado='resuelta' THEN 'pendiente' ELSE wa_atencion.estado END,
+    estado=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN 'pendiente' ELSE wa_atencion.estado END,
     motivo=EXCLUDED.motivo,resumen=EXCLUDED.resumen,ultimo_cliente=GREATEST(wa_atencion.ultimo_cliente,EXCLUDED.ultimo_cliente),
-    abierta_en=CASE WHEN wa_atencion.estado='resuelta' THEN now() ELSE wa_atencion.abierta_en END,
-    cerrada_en=NULL,actualizada_en=now(),version=wa_atencion.version+1,aviso_nivel=CASE WHEN wa_atencion.estado='resuelta' THEN 0 ELSE wa_atencion.aviso_nivel END
+    abierta_en=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN now() ELSE wa_atencion.abierta_en END,
+    cerrada_en=NULL,actualizada_en=now(),version=wa_atencion.version+1,aviso_nivel=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN 0 ELSE wa_atencion.aviso_nivel END,
+    aviso_en=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN NULL ELSE wa_atencion.aviso_en END,
+    acuse_en=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN NULL ELSE wa_atencion.acuse_en END,
+    aviso_error=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN false ELSE wa_atencion.aviso_error END,
+    responsable=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN 'marketing' ELSE wa_atencion.responsable END
    WHERE EXCLUDED.ultimo_cliente>COALESCE(wa_atencion.cerrada_en,wa_atencion.ultimo_cliente)`,
    [jid,motivo,String(resumen||'').slice(0,1000),fecha]);
  }
  async function control(jid,accion,usuario) {
   jid=await canon(jid);
   if(accion==='tomar') {
-   await abrir(jid,'manual','Conversación tomada desde el panel');
-   await pool.query("UPDATE wa_atencion SET estado='en_curso',responsable=$2,actualizada_en=now() WHERE jid=$1",[jid,usuario]);
+   await pool.query(`INSERT INTO wa_atencion(jid,motivo,resumen) VALUES($1,'manual','Conversación tomada desde el panel') ON CONFLICT(jid) DO NOTHING`,[jid]);
+   await pool.query("UPDATE wa_atencion SET estado='en_curso',responsable=$2,actualizada_en=now(),version=version+1, cerrada_en=NULL, motivo=CASE WHEN estado='resuelta' THEN 'manual' ELSE motivo END, resumen=CASE WHEN estado='resuelta' THEN 'Conversación tomada desde el panel' ELSE resumen END, abierta_en=CASE WHEN estado='resuelta' THEN now() ELSE abierta_en END, aviso_error=false, aviso_nivel=CASE WHEN estado='resuelta' THEN 0 ELSE aviso_nivel END, aviso_en=CASE WHEN estado='resuelta' THEN NULL ELSE aviso_en END WHERE jid=$1",[jid,usuario]);
   } else if(accion==='resolver') {
    await pool.query(`INSERT INTO wa_atencion(jid,estado,motivo,responsable,cerrada_en)
     VALUES($1,'resuelta','manual',$2,now()) ON CONFLICT(jid) DO UPDATE
-    SET estado='resuelta',cerrada_en=now(),actualizada_en=now()`,[jid,usuario]);
+    SET estado='resuelta',cerrada_en=now(),actualizada_en=now(),version=wa_atencion.version+1`,[jid,usuario]);
   }
  }
  async function entrada(jid,texto,fecha=new Date()) {
@@ -107,7 +115,7 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
   const r=await pool.query("SELECT estado,motivo FROM wa_atencion WHERE jid=$1 AND estado<>'resuelta'",[jid]);
   // Conservar el motivo del bloqueo: el siguiente «gracias» no lo sustituye.
   if(r.rows[0])await pool.query(`UPDATE wa_atencion SET ultimo_cliente=GREATEST(ultimo_cliente,$2),
-   actualizada_en=now(),version=version+1 WHERE jid=$1 AND estado<>'resuelta'`,[jid,fecha]);
+   version=version+1 WHERE jid=$1 AND estado<>'resuelta'`,[jid,fecha]);
  }
  async function iniciar(jid,items) {
   jid=await canon(jid);const nuevos=[];
@@ -146,14 +154,9 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
   });
  }
  async function barrer() {
-  // Solo crea tareas: jamás reproduce herramientas ni responde a mensajes antiguos.
-  const r=await pool.query(`WITH ${ARCHIVO_CTE} SELECT w.jid,w.mensaje,w.creado_en FROM ultimos w
-   WHERE NOT w.interno AND w.jid ~ '^[0-9]+@(s[.]whatsapp[.]net|lid)$'
-   AND w.tipo='recibido' AND w.creado_en::timestamptz BETWEEN now()-interval '7 days' AND now()-interval '5 minutes'
-   AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=w.jid AND (a.estado<>'resuelta' OR a.cerrada_en>=w.creado_en::timestamptz))
-   ORDER BY w.creado_en::timestamptz DESC LIMIT 100`);
-  for(const m of r.rows.filter(m=>!cierreCortesia(m.mensaje)))await abrir(m.jid,'sin_respuesta',m.mensaje,new Date(m.creado_en));
-  const pausadas=await pool.query(`SELECT c.jid,c.pausa_motivo FROM wa_clientes c WHERE c.estado_ia='pausada'
+  // No convertir mensajes sin respuesta en incidencias: recuperarRecientes los atiende.
+  // Las tareas históricas sin_respuesta se conservan, pero no generan avisos humanos.
+  const pausadas=await pool.query(`SELECT c.jid,c.pausa_motivo FROM wa_clientes c WHERE c.estado_ia='pausada' AND (COALESCE(c.pausado_por,'')<>'sara' OR c.pausa_motivo='pidio_persona')
    AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=COALESCE((SELECT telefono_jid FROM wa_bandeja_chats WHERE jid=c.jid),c.jid)) LIMIT 100`);
   for(const c of pausadas.rows)await abrir(c.jid,c.pausa_motivo||'manual','Consulta anterior pendiente de revisión; consultar el historial antes de responder.');
  }
@@ -169,10 +172,10 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
     SELECT a.*,i.nombre,i.telefono_visible,e.mensaje AS ultimo_texto,COALESCE(e.fecha,a.ultimo_cliente) AS fecha_cliente
     FROM wa_atencion a LEFT JOIN identidades i ON i.jid=a.jid
     LEFT JOIN LATERAL(SELECT mensaje,fecha FROM eventos WHERE jid=a.jid AND tipo='recibido' ORDER BY fecha DESC,clave DESC LIMIT 1)e ON true
-    WHERE a.estado<>'resuelta' AND a.jid ~ '^([1-9][0-9]{9,14}@s[.]whatsapp[.]net|[1-9][0-9]*@lid)$'
+    WHERE a.estado<>'resuelta' AND (a.motivo<>'sin_respuesta' OR a.estado='en_curso') AND a.jid ~ '^([1-9][0-9]{9,14}@s[.]whatsapp[.]net|[1-9][0-9]*@lid)$'
     AND NOT COALESCE(i.interno,false) ORDER BY a.abierta_en LIMIT 500`);
    for(const nivel of [1,2,3]) {
-    const candidatas=rows.filter(t=>nivelAviso(t)===nivel).slice(0,20),tomadas=[];
+    const candidatas=rows.filter(t=>nivelAviso(t,ahora())===nivel).slice(0,20),tomadas=[];
     for(const t of candidatas) {
      // Reclamar antes de enviar: una entrega incierta no se repite al reiniciar.
      const r=await pool.query(`UPDATE wa_atencion SET aviso_nivel=$3,aviso_en=now(),aviso_error=false
@@ -180,7 +183,11 @@ export function crearAtencion({pool,enviar,listo,recuperar}) {
      if(r.rows.length)tomadas.push(t);
     }
     if(!tomadas.length)continue;
-    const texto=avisoAtencion(tomadas,nivel);
+    if(!listo())return;
+    // Volver a comprobar antes del envío: un cierre o toma reciente invalida el aviso.
+    const vigentes=[];
+    for(const t of tomadas){const r=await pool.query("SELECT jid FROM wa_atencion WHERE jid=$1 AND version=$2 AND estado<>'resuelta'",[t.jid,t.version]);if(r.rows.length)vigentes.push(t);}
+    const texto=avisoAtencion(vigentes,nivel,ahora());if(!texto)continue;
     try{await enviar(nivel===3?'34622149946':'34633018834',texto);}
     catch(e){for(const t of tomadas)await pool.query('UPDATE wa_atencion SET aviso_error=true WHERE jid=$1 AND version=$2',[t.jid,t.version]);throw e;}
    }

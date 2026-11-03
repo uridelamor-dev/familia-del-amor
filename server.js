@@ -193,7 +193,7 @@ import { enlaceGuardar as googleEnlaceGuardar, normalizarClave as googleNormaliz
 import { cifrar as secCifrar, abrir as secAbrir, pista as secPista, DOMINIOS } from "./src/modules/seguridad/secretos.js";
 import { cargarLlavero, lineaArranque } from "./src/modules/seguridad/clave-datos.js";
 // Captación por campaña: la ruta a la que apunta un anuncio de pago, con su cola de envíos.
-import { validarRitmo, reservarSalida } from "./src/modules/captacion/ritmo.js";
+import { validarRitmo, reservarSalida, enHorario } from "./src/modules/captacion/ritmo.js";
 import { ensureSchemaCaptacion } from "./src/modules/captacion/schema.js";
 import { lineaErrorSql } from "./src/modules/seguridad/redactar.js";
 import { construirContexto as waConstruirContexto, LIMITES as WA_CTX_LIMITES,
@@ -1929,7 +1929,7 @@ async function initDB() {
     // Ampliación de campañas (multicanal + estados + programación). Aditivo.
     for (const col of [
       "canal TEXT DEFAULT 'whatsapp'", "estado TEXT DEFAULT 'enviada'", "programada_para TEXT",
-      "plantilla_id INTEGER", "adjunto_url TEXT", "asunto TEXT",
+      "plantilla_id INTEGER", "adjunto_url TEXT", "asunto TEXT", "total_destinatarios INTEGER",
     ]) {
       try { await client.query(`ALTER TABLE campanas_wa ADD COLUMN IF NOT EXISTS ${col}`); } catch (e) { console.error("[DB] alter campanas_wa:", e.message); }
     }
@@ -16240,6 +16240,7 @@ app.get("/api/captacion/campanas", requireAuth(PROMOS_ROLES), async (req, res) =
          FROM cap_campanas c LEFT JOIN pro_promociones p ON p.id = c.promocion_id
         ORDER BY c.activa DESC, c.creado_en DESC`);
     const hoy = hoyISO();
+    const ritmo = await dbGet("SELECT desde, hasta, minutos, cantidad, proximo_ms FROM cap_envio_control WHERE id = 1");
     res.json({
       ok: true,
       data: filas.map((c) => ({
@@ -16250,7 +16251,8 @@ app.get("/api/captacion/campanas", requireAuth(PROMOS_ROLES), async (req, res) =
       cupo: await cupoWA(),
       wa: isReady(),
       parada: (await getConfig("captacion_cola_parada")) === "1",
-      ritmo: await dbGet("SELECT desde, hasta, minutos, cantidad, proximo_ms FROM cap_envio_control WHERE id = 1"),
+      ritmo,
+      fuera_horario: ritmo ? !enHorario(ritmo) : false,
       pixel: (await getConfig("meta_pixel_id")) || "",
     });
   } catch (e) {
@@ -21039,6 +21041,7 @@ async function cupoWA() {
  * recibe el mismo mensaje dos veces.
  */
 async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 300000, maxMs = 300000, resolverMensaje = null, localCampana = null, promocion = null, baseUrl = "" }) {
+  if(campanaId)await dbRun(`UPDATE campanas_wa SET total_destinatarios = (SELECT COUNT(*) FROM campana_envios WHERE campana_id=?) + ? WHERE id=?`,[campanaId,contactos.length,campanaId]);
   let enviados = 0, errores = 0;
   const hoyEnv = hoyISO();
   const yaHoy = Number((await getConfig("wa_enviados_" + hoyEnv)) || 0);
@@ -21305,8 +21308,13 @@ app.post("/api/campanas/preview", requireAuth(["direccion", "marketing"]), async
 // todo eso bien—, así que era una puerta abierta y nada más.
 app.get("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
-    const rows = await dbAll(`SELECT * FROM campanas_wa ORDER BY creado_en DESC LIMIT 50`);
-    res.json({ ok: true, data: rows || [] });
+    const rows = await dbAll(`SELECT c.*, GREATEST(COALESCE(c.total_enviados,0),COALESCE(e.enviados,0)) AS enviados_reales,
+      GREATEST(COALESCE(c.total_errores,0),COALESCE(e.errores,0)) AS errores_reales
+      FROM campanas_wa c LEFT JOIN (SELECT campana_id,COUNT(*) FILTER(WHERE estado='enviado')::int enviados,
+      COUNT(*) FILTER(WHERE estado='error')::int errores FROM campana_envios GROUP BY campana_id)e ON e.campana_id=c.id
+      ORDER BY c.creado_en DESC LIMIT 200`);
+    res.set('Cache-Control','no-store');
+    res.json({ ok: true, data: rows || [], contexto:{wa:isReady(),cupo:await cupoWA(),ritmo_minutos:5} });
   } catch (e) {
     res.status(500).json({ ok: false });
   }
@@ -21677,7 +21685,11 @@ app.delete("/api/marketing/faltan/:id", requireAuth(["direccion", "marketing"]),
 });
 
 app.get("/api/campanas-config", requireAuth(["direccion", "marketing"]), async (req, res) => {
-  try { res.json({ ok: true, cumple_auto: (await getConfig("cumple_auto")) === "1", cumple_plantilla: (await getConfig("cumple_plantilla")) || "" }); }
+  try {
+    const resumen=await dbGet(`SELECT COUNT(*) FILTER(WHERE estado='enviado')::int enviados,COUNT(*) FILTER(WHERE estado='pendiente')::int pendientes,COUNT(*) FILTER(WHERE estado='fallido')::int fallidos FROM cap_cola WHERE campana=?`,['cumple:'+hoyISO()]);
+    const ultimo=await dbGet("SELECT MAX(enviado_en) ultimo FROM cap_cola WHERE campana LIKE 'cumple:%' AND estado='enviado'");
+    res.json({ ok: true, cumple_auto: (await getConfig("cumple_auto")) === "1", cumple_plantilla: (await getConfig("cumple_plantilla")) || "",resumen,ultimo_envio:ultimo?.ultimo });
+  }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 app.post("/api/campanas-config", requireAuth(["direccion", "marketing"]), async (req, res) => {

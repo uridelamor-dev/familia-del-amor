@@ -51,3 +51,10 @@ test('un fallo al guardar lectura se puede reintentar',async()=>{
  await c.convMarcarLeido();assert.equal(vm.runInContext('CONV.lecturaBusy',c),false);
  await c.convMarcarLeido();assert.equal(attempts,2);
 });
+
+test('enlaces de avisos abren solo un chat válido y soportan URLs codificadas',()=>{
+ const c=entorno({});
+ assert.equal(c.convDestinoUrl('#conversaciones/34600000000%40s.whatsapp.net'),'34600000000@s.whatsapp.net');
+ assert.equal(c.convDestinoUrl('#conversaciones/123%40lid'),'123@lid');
+ for(const hash of ['#conversaciones',' #clientes/123@lid','#conversaciones/%ZZ','#conversaciones/<script>','#conversaciones/1@g.us'])assert.equal(c.convDestinoUrl(hash),null);
+});
