@@ -15605,10 +15605,12 @@ function construirSegmento(input = {}, mesActual) {
   const excl = Array.isArray(input.excluir_telefonos) ? input.excluir_telefonos.filter(Boolean) : [];
   if (excl.length) seg.excluir_telefonos = excl;
   if (input.soloOptIn) seg.soloOptIn = true;
+  if(input.seguimiento_id)seg.seguimiento_id=String(input.seguimiento_id);
   return seg;
 }
 function describirAudiencia(f = {}) {
   const p = [];
+  if(f.seguimiento_id)p.push("Seguimiento: selección original con recorrido actualizado");
   if (f.local) p.push(`Local: ${f.local}`);
   if (f.cerca_de) p.push(`Cerca de ${f.cerca_de} · ${f.radio_km} km`);
   if (f.poblacion) p.push(`Pobl.: ${f.poblacion}`);
@@ -16016,14 +16018,14 @@ function openCampana(mode = "nueva", pre = {}) {
   // reservaron entre el 20 y el 25» se convertía en «todos los del local» al pulsar continuar:
   // el contador subía —lo que parece que por fin funciona— y el mensaje salía a gente que no
   // tocaba. Sin error, sin aviso y sin vuelta atrás.
-  const HEREDABLES = ["q", "locales", "visitas_min", "visitas_max", "sin_venir_desde", "visito_desde", "valor_min", "nunca_ha_venido", "es_nuevo", "cerca_de", "radio_km", "estado_comunicaciones", "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
+  const HEREDABLES = ["seguimiento_id", "q", "locales", "visitas_min", "visitas_max", "sin_venir_desde", "visito_desde", "valor_min", "nunca_ha_venido", "es_nuevo", "cerca_de", "radio_km", "estado_comunicaciones", "reservo_from", "reservo_to", "edad_min", "edad_max", "cumple_en_dias",
                       "hecho_etiqueta", "hecho_valor", "sin_nacimiento", "sin_email", "sin_poblacion"];
   const heredados = {};
   for (const k of HEREDABLES) if (s[k] != null && s[k] !== "" && s[k] !== false) heredados[k] = s[k];
 
   const filtros = () => {
     const f = Object.fromEntries(new FormData(ov.querySelector("#fCamp")).entries());
-    const base = { ...heredados, genero: f.genero, poblacion: f.poblacion, local: f.local, idioma: f.idioma, origen: f.origen, from: f.from, to: f.to, con_email: !!f.con_email, con_telefono: !!f.con_telefono, cumple_mes: !!f.cumple_mes, soloOptIn: ov.querySelector("#campOptin").checked, excluir_telefonos: [...excluir] };
+    const base = { ...heredados, ...(s.seguimiento_id?{seguimiento_id:s.seguimiento_id}:{}), genero: f.genero, poblacion: f.poblacion, local: f.local, idioma: f.idioma, origen: f.origen, from: f.from, to: f.to, con_email: !!f.con_email, con_telefono: !!f.con_telefono, cumple_mes: !!f.cumple_mes, soloOptIn: ov.querySelector("#campOptin").checked, excluir_telefonos: [...excluir] };
     return construirSegmento(base);
   };
 
@@ -16033,8 +16035,8 @@ function openCampana(mode = "nueva", pre = {}) {
     const caja = ov.querySelector("#campHeredados");
     if (!caja) return;
     const chips = Object.keys(heredados).map((k) => `<span class="chip on" data-heredado="${esc(k)}" style="cursor:default">
-        ${esc(etiquetaFiltro(k, heredados[k]))}
-        <button type="button" class="chipx" data-quitar="${esc(k)}" title="Quitar este filtro">×</button></span>`).join("");
+        ${k==="seguimiento_id"?"Seguimiento: selección original revisada antes de enviar":esc(etiquetaFiltro(k, heredados[k]))}
+        ${k==="seguimiento_id"?"":`<button type="button" class="chipx" data-quitar="${esc(k)}" title="Quitar este filtro">×</button>`}</span>`).join("");
     caja.innerHTML = chips
       ? `<div class="mut" style="font-size:12px;margin-bottom:6px">Además, de la propuesta:</div><div class="chips">${chips}</div>`
       : "";
@@ -18496,6 +18498,7 @@ document.addEventListener("click", (e) => {
   else if (act === "camp-redactar") campRedactar();
   else if (act === "camp-usar-propuesta") campUsarPropuesta();
   else if (act === "camp-detectar-idiomas") campDetectarIdiomas();
+  else if (act === "camp-resultados") campResultados(t.getAttribute("data-origen"),t.getAttribute("data-id"));
   else if (act === "camp-detalle") campDetalle(t.getAttribute("data-id"));
   else if (act === "camp-editar") campEditar(t.getAttribute("data-id"));
   else if (act === "camp-dup") campDuplicar(t.getAttribute("data-id"));

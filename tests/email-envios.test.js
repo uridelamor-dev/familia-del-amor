@@ -67,3 +67,9 @@ test('fallo de proveedor no filtra respuesta sensible ni reintenta',async()=>{
  await assert.rejects(api('/segments','POST',{}),e=>e.message.includes('429')&&!e.message.includes('secreto'));
  assert.equal(calls,1);
 });
+
+test('conserva identidad histórica del destinatario sin adjudicar emails compartidos',()=>{
+ const c={correo:'a@example.com',telefono:'600111222',opt_in_email:1};
+ assert.equal(destinatariosCorreo([c]).data[0].telefono,'34600111222');
+ assert.equal(destinatariosCorreo([c],[c,{...c,telefono:'600111223'}]).data[0].telefono,undefined);
+});

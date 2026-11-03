@@ -1,3 +1,4 @@
+import {telefono as telefonoIdentidad} from './recorrido.js';
 import { consultarDominioResend, htmlCorreo } from './email.js';
 
 export const ENVIOS_SCHEMA = `CREATE TABLE IF NOT EXISTS correo_envios (
@@ -12,6 +13,8 @@ const tel = c => String(c.telefono || '').replace(/\D/g,'').slice(-9);
 export function destinatariosCorreo(seleccionados, todos = seleccionados) {
  const bajasEmail = new Set(todos.filter(c=>Number(c.baja)===1).map(email).filter(Boolean));
  const bajasTel = new Set(todos.filter(c=>Number(c.baja)===1).map(tel).filter(Boolean));
+ const identidades=new Map();
+ for(const c of todos){const correo=email(c),t=telefonoIdentidad(c.telefono);if(!correo||!t)continue;if(!identidades.has(correo))identidades.set(correo,new Set());identidades.get(correo).add(t);}
  const vistos = new Set(), data = [];
  const resumen = {seleccionados:seleccionados.length, baja:0, sin_permiso:0, sin_email:0, duplicados:0};
  for (const c of seleccionados) {
@@ -20,7 +23,7 @@ export function destinatariosCorreo(seleccionados, todos = seleccionados) {
    if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(correo)) {resumen.sin_email++;continue;}
    if (Number(c.opt_in_email)!==1) {resumen.sin_permiso++;continue;}
    if (vistos.has(correo)) {resumen.duplicados++;continue;}
-   vistos.add(correo); data.push({correo,nombre:String(c.nombre||'')});
+   vistos.add(correo); data.push({correo,nombre:String(c.nombre||''),...(identidades.get(correo)?.size===1?{telefono:[...identidades.get(correo)][0]}:{})});
  }
  return {data,resumen};
 }

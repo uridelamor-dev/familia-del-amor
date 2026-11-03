@@ -1,0 +1,42 @@
+import {registrarRecorrido} from '../../src/modules/campaigns/recorrido-rutas.js';
+import test from 'node:test';import assert from 'node:assert/strict';
+import {conEsquema,disponible,motivoSalto} from '../helpers/pgtmp.js';
+import {RECORRIDO_SCHEMA,obtenerRecorrido,prepararSeguimiento,destinatariosSeguimiento,permisoSeguimiento} from '../../src/modules/campaigns/recorrido.js';
+test('SQL real: todos los orígenes, identidades, consumo, reseñas y seguimiento que se reduce al volver',async t=>{
+ if(!await disponible())return t.skip(motivoSalto());const db=await conEsquema();try{
+ await db.raw(RECORRIDO_SCHEMA);
+ await db.raw(`CREATE TABLE campanas_wa(id SERIAL PRIMARY KEY,nombre TEXT,creado_en TEXT DEFAULT '2026-10-01',mensaje TEXT,segmento_json TEXT,canal TEXT,estado TEXT,total_enviados INTEGER);
+ CREATE TABLE campana_envios(id SERIAL,campana_id INTEGER,nombre TEXT,telefono TEXT,correo TEXT,estado TEXT,enviado_en TEXT);
+ CREATE TABLE correo_envios(id UUID,autor INTEGER,asunto TEXT,estado TEXT,destinatarios JSONB,creado_en TIMESTAMPTZ,actualizado_en TIMESTAMPTZ);
+ CREATE TABLE fid_comunicaciones(id INTEGER,nombre TEXT,creado_en TEXT);CREATE TABLE cap_cola(id INTEGER,enviado_en TEXT);CREATE TABLE fid_comunicacion_envios(id INTEGER,comunicacion_id INTEGER,telefono TEXT,estado TEXT,cola_id INTEGER,actualizado_en TEXT);
+ CREATE TABLE leads(correo TEXT,telefono TEXT);CREATE TABLE pro_qr(id INTEGER,clase TEXT,telefono TEXT,creado_en TEXT);
+ CREATE TABLE pro_canjes(id INTEGER,telefono TEXT,canjeado_en TEXT,local TEXT);CREATE TABLE fid_facturas(id INTEGER,es_prueba BOOLEAN);
+ CREATE TABLE fid_movimientos(id INTEGER,qr_id INTEGER,concepto TEXT,creado_en TEXT,local TEXT,importe NUMERIC,unidades INTEGER,factura_id INTEGER);
+ CREATE TABLE google_reviews(id TEXT,fecha TEXT,location_name TEXT);CREATE TABLE marketing_prefs(telefono TEXT,baja INTEGER,opt_in_wa INTEGER);
+ INSERT INTO campanas_wa(nombre) VALUES('Girona octubre');
+ INSERT INTO campana_envios(campana_id,nombre,telefono,estado,enviado_en) VALUES(1,'Ana','600111222','enviado','2026-10-01T10:00:00Z'),(1,'Luis','600111223','enviado','2026-10-01T10:00:00Z');
+ INSERT INTO pro_qr VALUES(1,'carnet','+34600111222','2026-09-01'),(2,'carnet','600111223','2026-10-02');
+ INSERT INTO pro_canjes VALUES(1,'0034600111222','2026-10-03','Girona');
+ INSERT INTO fid_movimientos VALUES(1,1,'consumo','2026-10-03','Girona',25,0,1),(2,1,'consumo','2026-10-03','Girona',500,0,2);
+ INSERT INTO fid_facturas VALUES(1,FALSE),(2,TRUE);
+ INSERT INTO google_reviews VALUES('r1','2026-10-04','Girona');
+ INSERT INTO campana_recorrido_resenas(review_id,telefono,evidencia,autor) VALUES('r1','34600111222','Verificado con el cliente',7);
+ INSERT INTO leads VALUES('ana@example.com','600111222');
+ INSERT INTO correo_envios VALUES('11111111-1111-1111-1111-111111111111',7,'Correo','enviado','[{"correo":"ana@example.com"}]','2026-10-01','2026-10-01');
+ INSERT INTO fid_comunicaciones VALUES(3,'Con aprobación','2026-10-01');INSERT INTO cap_cola VALUES(4,'2026-10-01');INSERT INTO fid_comunicacion_envios VALUES(4,3,'600111222','entregado',4,'2026-10-01');`);
+ const rutas=new Map();const app=Object.fromEntries(['get','post','put'].map(m=>[m,(ruta,auth,handler)=>rutas.set(m+' '+ruta,handler)]));registrarRecorrido(app,{auth:()=>{},...db});
+ const invocar=async(ruta,body)=>{let status=200,resultado;const res={status(n){status=n;return this;},sendStatus(n){status=n;return this;},json(j){resultado=j;return this;}};await rutas.get('post /api/campanas-resultados/:origen/:id/'+ruta)({params:{origen:'campana',id:'1'},user:{id:7},body},res);return {status,resultado};};
+ assert.equal((await invocar('resenas',{persona:'34600111222',review_id:'r1',evidencia:'Identidad confirmada en el local',confirmar:true})).status,409);
+ assert.equal((await invocar('resenas/desvincular',{persona:'34600111222',review_id:'r1'})).status,200);
+ assert.equal((await db.get("SELECT revocado_por FROM campana_recorrido_resenas WHERE review_id='r1'")).revocado_por,7);
+ assert.equal((await invocar('resenas',{persona:'34600111222',review_id:'r1',evidencia:'Identidad confirmada en el local',confirmar:true})).status,200);
+ const f={desde:'2026-10-01',hasta:'2026-10-31'};let d=await obtenerRecorrido(db,'campana','1',{id:7},f);assert.equal(d.resumen.consumo,25);assert.equal(d.resumen.resenas,1);assert.equal(d.resumen.visitantes,1);assert.equal(d.resumen.altas,1);
+ assert.equal((await obtenerRecorrido(db,'correo','11111111-1111-1111-1111-111111111111',{id:7},f)).resumen.visitantes,1);
+ assert.equal(await obtenerRecorrido(db,'correo','11111111-1111-1111-1111-111111111111',{id:8},f),null);
+ assert.equal((await obtenerRecorrido(db,'permiso','3',{id:7},f)).resumen.visitantes,1);
+ const follow=await prepararSeguimiento(db,'campana','1',{id:7},{...f,grupo:'sin_visita'});const row=await db.get('SELECT * FROM campanas_wa WHERE id=?',[follow.id]);assert.equal(row.estado,'borrador');const ref=JSON.parse(row.segmento_json).seguimiento_id;
+ assert.deepEqual([...await destinatariosSeguimiento(db,ref)],['34600111223']);
+ await db.run("INSERT INTO pro_canjes VALUES(2,'600111223','2026-10-28','Girona')");assert.equal((await destinatariosSeguimiento(db,ref)).size,0);
+ await db.run("INSERT INTO marketing_prefs VALUES('600111223',1,1)");assert.equal(await permisoSeguimiento(db,'+34600111223'),false);
+ }finally{await db.fin();}
+});

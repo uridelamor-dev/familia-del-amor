@@ -85,12 +85,14 @@ export function construirSegmento(input = {}, { mesActual } = {}) {
   const excl = Array.isArray(input.excluir_telefonos) ? input.excluir_telefonos.filter(Boolean) : [];
   if (excl.length) seg.excluir_telefonos = excl;
   if (input.soloOptIn) seg.soloOptIn = true;
+  if(input.seguimiento_id)seg.seguimiento_id=String(input.seguimiento_id);
   return seg;
 }
 
 // Descripción humana corta de una audiencia (para chips/etiquetas en el panel).
 export function describirAudiencia(filtros = {}) {
   const p = [];
+  if(filtros.seguimiento_id)p.push("Seguimiento: selección original con recorrido actualizado");
   if (filtros.local) p.push(`Local: ${filtros.local}`);
   if (filtros.estado_comunicaciones) p.push(filtros.estado_comunicaciones === "baja" ? "Dados de baja" : "Aceptan comunicaciones");
   if (filtros.cerca_de) p.push(`Cerca de ${filtros.cerca_de} · ${filtros.radio_km} km`);

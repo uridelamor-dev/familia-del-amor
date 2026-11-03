@@ -57,6 +57,8 @@ import { sanearPerfil, guardarPerfil } from "./src/modules/tarjeta/perfil.js";
 import { PERMISOS_CONFIRMADOS_SCHEMA, registrarPermisosConfirmados } from "./src/modules/clientes/permisos-confirmados.js";
 import { SQL_CANJES, filtrarCanjes, resumenCanjes, destinatariosCanjes } from "./src/modules/fidelizacion/actividad-canjes.js";
 import { EMAIL_SCHEMA, validarCorreo, enviarPruebaCorreo, configuracionCorreo, consultarDominioResend } from "./src/modules/campaigns/email.js";
+import { RECORRIDO_SCHEMA, destinatariosSeguimiento, permisoSeguimiento, telefono as telefonoRecorrido } from "./src/modules/campaigns/recorrido.js";
+import { registrarRecorrido } from "./src/modules/campaigns/recorrido-rutas.js";
 import { ENVIOS_SCHEMA, destinatariosCorreo, validarSeleccionCorreo, prepararCorreoResend, confirmarCorreoResend } from "./src/modules/campaigns/email-envios.js";
 import { FICHA_COMERCIAL_SCHEMA, validarFichaComercial } from "./src/modules/facturas/ficha-comercial.js";
 import { puedePropagarUnidad } from "./src/modules/facturas/correccion-unidades.js";
@@ -1924,6 +1926,7 @@ async function initDB() {
     `);
     await client.query(EMAIL_SCHEMA);
     await client.query(ENVIOS_SCHEMA);
+    await client.query(RECORRIDO_SCHEMA);
     await client.query(PEPA_EMAIL_SCHEMA);
     await client.query(PERMISOS_CONFIRMADOS_SCHEMA);
     // Ampliación de campañas (multicanal + estados + programación). Aditivo.
@@ -5322,7 +5325,10 @@ async function contactosGeograficos(filtros = {}) {
   filtrarGeografia([], filtros); // Validate before fetching; never broaden an invalid radius.
   const params = [];
   const sql = sqlContactosUnificados({ ...filtros, poblacion: "" }, params);
-  return filtrarGeografia(await dbAll(sql, params), filtros);
+  const rows=filtrarGeografia(await dbAll(sql, params), filtros);
+  if(!filtros.seguimiento_id)return rows;
+  const permitidos=await destinatariosSeguimiento({all:dbAll,get:dbGet},filtros.seguimiento_id);
+  return rows.filter(c=>permitidos.has(telefonoRecorrido(c.telefono)));
 }
 
 function sqlContactosUnificados(filtros = {}, params = []) {
@@ -21048,10 +21054,13 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
   const maxDiario = Number(await getConfig("wa_max_diario")) || 40;
   const { aEnviar, pospuestos } = dividirPorTope(contactos, { maxDiario, yaEnviadosHoy: yaHoy });
   if (pospuestos.length) console.log(`[campaña ${campanaId || "-"}] tope diario (${maxDiario}): ${pospuestos.length} se quedan para mañana`);
+  const seguimientoCamp=campanaId?await dbGet('SELECT segmento_json FROM campanas_wa WHERE id=?',[campanaId]):null;
+  const seguimientoRef=seguimientoCamp?JSON.parse(seguimientoCamp.segmento_json||'{}').seguimiento_id:null;
   for (const c of aEnviar) {
     let estado = "enviado", err = null;
     let qrEmitido = null;
     try {
+      if(seguimientoRef){const actuales=await destinatariosSeguimiento({all:dbAll,get:dbGet},seguimientoRef);if(!actuales.has(telefonoRecorrido(c.telefono))||!await permisoSeguimiento({all:dbAll},c.telefono)){await dbRun('UPDATE campanas_wa SET total_destinatarios=GREATEST(0,total_destinatarios-1) WHERE id=?',[campanaId]);continue;}}
       const base = resolverMensaje ? resolverMensaje(c) : mensaje;
 
       // ── El cupón personal, si la campaña lleva promoción y el texto lo pide ──────────
@@ -21148,10 +21157,11 @@ function segmentoDelBody(body = {}, { mesActual } = {}) {
   if (Array.isArray(crudo.excluir_telefonos) && crudo.excluir_telefonos.length) segmento.excluir_telefonos = crudo.excluir_telefonos;
   if (crudo.soloOptIn) segmento.soloOptIn = true;
   if (body.traducir) segmento.traducir = true;
+  if(body.seguimiento_id){if(!/^[a-f0-9-]{36}$/i.test(body.seguimiento_id))throw Error("Seguimiento no válido");segmento.seguimiento_id=body.seguimiento_id;}
   // Nunca a quien se dio de baja. Va aquí y no en cada endpoint porque olvidarlo en uno solo
   // es escribir a quien pidió que no le escribieran.
   segmento.excluir_baja = 1;
-  return { segmento, descartados: (descartados || []).filter((d) => !["excluir_telefonos", "soloOptIn", "traducir", "excluir_baja"].includes(d.campo)) };
+  return { segmento, descartados: (descartados || []).filter((d) => !["excluir_telefonos", "soloOptIn", "traducir", "excluir_baja", "seguimiento_id"].includes(d.campo)) };
 }
 
 /** ¿El cuerpo de una petición trae algún filtro? Para no borrar el segmento de un PATCH parcial. */
@@ -21358,6 +21368,8 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
   }
 });
 
+registrarRecorrido(app,{auth:requireAuth(["direccion","marketing"]),all:dbAll,get:dbGet,run:dbRun});
+
 // Detalle de una campaña con resultados por destinatario.
 app.get("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {
   try {
@@ -21407,7 +21419,7 @@ app.patch("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (r
     // segmento — incluido lo que se ha quitado, por ausencia.
     if (traeSegmento(b)) {
       const { segmento } = segmentoDelBody(b);
-      seg = segmento;
+      seg = {...segmento,...(seg.seguimiento_id?{seguimiento_id:seg.seguimiento_id}:{})};
     } else {
       // Un PATCH que solo cambia el nombre o la fecha no puede vaciar la audiencia.
       seg.excluir_baja = 1;

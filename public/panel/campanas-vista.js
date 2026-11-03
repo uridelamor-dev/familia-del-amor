@@ -32,7 +32,7 @@ function campEstimacion(c,ctx={}){
  return `Tiempo mínimo de envío: ${tiempo}${dias>1?` · al menos ${dias} días con el cupo actual`:''}. Puede aumentar por otros envíos, horario o desconexión.`;
 }
 function campFecha(v){if(!v)return 'Sin fecha';const d=new Date(v);return Number.isNaN(+d)?String(v):d.toLocaleString('es-ES',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
-function campAcciones(c){
+function campAccionesBase(c){
  const id=esc(c.id);
  if(c.origen==='correo')return `<button class="btn sm" data-act="camp-correo-detalle" data-id="${id}">Detalle</button>`;
  if(c.origen==='permiso'){
@@ -62,3 +62,5 @@ async function campCorreoDetalle(id){try{const {data:c}=await apiRaw('/api/corre
 function campPermisoDetalle(id){const c=(CAMP.comunicaciones||[]).find(c=>String(c.id)===String(id));if(c)modal(c.nombre,`<p>${esc(campEstadoTexto(c))}</p><div style="white-space:pre-wrap">${esc(c.plantilla||c.mensaje||'')}</div><p>${num(c.destinatarios)} destinatarios</p><div class="camp-actions">${campAcciones({...c,origen:'permiso'})}</div>`);}
 
 function campCumpleResumen(cfg){const r=cfg.resumen||{};return `<div class="card" style="margin-bottom:12px"><div class="ch"><h3>Felicitaciones de cumpleaños</h3><span class="pill">${cfg.cumple_auto?'Activa':'Desactivada'}</span></div><p class="mut">${cfg.cumple_auto?'Se preparan cada día desde las 10:00, hora peninsular.':'No se preparan nuevas felicitaciones.'}</p><p>${num(r.enviados||0)} enviados hoy · ${num(r.pendientes||0)} pendientes · ${num(r.fallidos||0)} errores</p><p class="mut">Último envío: ${cfg.ultimo_envio?esc(campFecha(cfg.ultimo_envio)):'Sin envíos registrados'}</p></div>`;}
+
+function campAcciones(c){return `<button class="btn sm" data-act="camp-resultados" data-origen="${esc(c.origen)}" data-id="${esc(c.id)}">Resultados</button>`+campAccionesBase(c);}
