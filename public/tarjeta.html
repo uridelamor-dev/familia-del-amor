@@ -9,6 +9,7 @@
     <title>Tu tarjeta · Familia del Amor</title>
     <link rel="stylesheet" href="/css/base.css" />
     <link rel="stylesheet" href="tarjeta.css" />
+    <link rel="stylesheet" href="tarjeta-club.css" />
   </head>
   <!-- La tarjeta de cliente: su cuenta. La abre el CLIENTE en su móvil, desde el enlace de
        WhatsApp o desde el pase que tiene guardado en la wallet.
@@ -16,17 +17,24 @@
        Sin sesión: la llave es el token de la URL, como en el cupón, el pulso y el kiosco. NO
        carga app.js ni auth.js. `noindex` y `no-referrer` para que el token no se filtre ni a
        un buscador ni por la cabecera Referer al pulsar un enlace. -->
-  <body class="tj-body">
+  <body class="tj-body tj-account">
     <main class="tj-wrap">
-      <p class="tj-marca">Familia del Amor</p>
+      <a class="tj-marca" href="/">Familia del Amor <span>El Club</span></a>
 
       <div class="tj-cargando" id="tjCargando">Un momento…</div>
 
       <!-- El QR primero: es lo que se hace con esta página cuando hay alguien esperando. -->
       <section class="tj-card tj-centro hidden" id="tjCard">
+        <div class="tj-presentacion">
+        <p class="tj-kicker">Tu sitio en la familia</p>
         <h1 class="tj-titular" id="tjTitular">Tu tarjeta</h1>
         <p class="tj-sub">Enséñala cuando vengas y te reconocemos al momento.</p>
 
+        <div class="tj-foto" aria-hidden="true"><span>Un sitio para ti.</span></div>
+        <p class="tj-miembro">Familia del Amor · Miembro del Club</p>
+        </div>
+        <div class="tj-identificacion">
+        <p class="tj-kicker">Tu tarjeta del Club</p>
         <div class="tj-qr" id="tjQrCaja"><img id="tjQr" alt="Tu código" /></div>
 
         <p class="tj-codigo-eti">Si no lo lee, dile este número:</p>
@@ -35,7 +43,8 @@
         <p class="tj-estado hidden" id="tjEstado"></p>
 
         <div class="tj-wallet hidden" id="tjWallet">
-          <p class="tj-wallet-eti">Llévala siempre encima:</p>
+          <p class="tj-wallet-eti">Guárdala en tu móvil:</p>
+        </div>
         </div>
       </section>
 

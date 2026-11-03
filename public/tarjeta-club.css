@@ -1,0 +1,43 @@
+/* Identidad del Club, aislada del formulario de alta que comparte tarjeta.css. */
+.tj-account { background:var(--bg); color:#233c32; padding:32px 24px 48px; }
+.tj-account .tj-wrap { max-width:900px; display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+.tj-account .tj-marca { grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; text-decoration:none; margin:0 0 6px; color:#2c4a3e; font-size:12px; }
+.tj-marca span { font-size:11px; font-weight:500; letter-spacing:.08em; }
+.tj-account .tj-card { margin:0; background:#fbfaf6; border:1px solid #dedacf; border-radius:24px; padding:26px; box-shadow:0 4px 18px #20372e06; min-width:0; overflow-wrap:anywhere; }
+.tj-account #tjCard { grid-column:1/-1; display:grid; grid-template-columns:1fr 1fr; padding:0; overflow:hidden; text-align:left; }
+.tj-presentacion { background:#eaeedf; padding:34px; display:flex; flex-direction:column; justify-content:center; }
+.tj-kicker { margin:0 0 18px; font-size:10px; font-weight:700; letter-spacing:.15em; text-transform:uppercase; }
+.tj-account .tj-titular { font-family:Georgia,serif; font-size:40px; font-weight:400; line-height:1.12; letter-spacing:-.03em; }
+.tj-account .tj-sub { margin-top:14px; font-size:14px; line-height:1.65; color:#526458; }
+.tj-foto { min-height:172px; margin-top:28px; border-radius:16px; display:flex; align-items:end; padding:22px; background:linear-gradient(115deg,#0d231ac7,#0d231a40),url('/uploads/gallery/Cooperativa_1.jpg') center 60%/cover; }
+.tj-foto span { font-family:Georgia,serif; font-size:28px; color:#fff9e9; text-shadow:0 2px 8px #0008; }
+.tj-miembro { margin:16px 0 0; font-size:10px; letter-spacing:.08em; color:#526458; }
+.tj-identificacion { padding:30px; text-align:center; }
+.tj-identificacion .tj-kicker { margin-bottom:16px; }
+.tj-account .tj-qr { margin:0 auto; max-width:260px; border:1px solid #e4dfd1; padding:12px; border-radius:16px; }
+.tj-account .tj-codigo-eti { font-size:12px; margin-top:16px; }
+.tj-account .tj-codigo { color:#2c4a3e; font-size:28px; }
+.tj-account .tj-h { font-family:Georgia,serif; font-size:25px; font-weight:400; letter-spacing:-.02em; }
+.tj-account .tj-pts-n { color:#2c4a3e; margin-top:18px; }
+.tj-account .tj-wallet { padding-top:18px; border-top:1px solid #e4dfd1; }
+.tj-account .tj-badge { font-size:14px; min-height:48px; border-radius:12px; }
+.tj-account .tj-hist li { flex-wrap:wrap; padding:10px 0; }
+.tj-account .tj-pts-mas summary { min-height:44px; padding:12px 0; }
+.tj-account .tj-profile { grid-column:1/-1; justify-self:center; padding:12px 24px; border:1px solid #d3cdbb; border-radius:12px; color:#2c4a3e; font-size:14px; text-decoration:none; background:#fbfaf6; }
+.tj-account a:focus-visible,.tj-account summary:focus-visible { outline:3px solid #b77e30; outline-offset:4px; }
+.tj-account .tj-profile:hover { background:#eaeedf; }
+.tj-account .tj-cargando,.tj-account .tj-aviso { grid-column:1/-1; }
+@media(max-width:650px) {
+ .tj-account { padding:20px 16px 32px; }
+ .tj-account .tj-wrap { grid-template-columns:1fr; gap:14px; }
+ .tj-account #tjCard { grid-template-columns:1fr; }
+ .tj-presentacion { padding:24px; }
+ .tj-account .tj-titular { font-size:32px; }
+ .tj-presentacion .tj-kicker { margin-bottom:10px; }
+ .tj-account .tj-sub { margin-top:8px; }
+ .tj-foto,.tj-miembro { display:none; }
+ .tj-identificacion { padding:24px; }
+ .tj-identificacion .tj-kicker { margin-bottom:12px; }
+ .tj-account .tj-qr { max-width:240px; }
+ .tj-account .tj-card { padding:24px; }
+}

@@ -244,7 +244,7 @@
       var profileLink = document.createElement("a");
       profileLink.href = "/?club=perfil#t=" + encodeURIComponent(TOKEN);
       profileLink.textContent = "Completar mi perfil";
-      profileLink.style.cssText = "display:block;text-align:center;margin:20px 0;color:#2c4a3e;text-decoration:underline";
+      profileLink.className = "tj-profile";
       document.querySelector("main").append(profileLink);
     })
     .catch(function () {
