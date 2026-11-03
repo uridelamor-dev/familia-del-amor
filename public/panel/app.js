@@ -13269,7 +13269,7 @@ function renderFidgPromos() {
   // Una publicada sigue visible aunque haya un borrador posterior. Nada se elimina.
   const visibles = lista.filter(p => (["publicada", "pausada"].includes(p.estado) && !vencida(p)) || (p.estado === "borrador" && ultimas.get(p.clave) === p));
   const anteriores = lista.filter(p => !visibles.includes(p));
-  const fila = (p) => fgFila(`<div class="t1">${esc(p.nombre)}</div><div class="mut" style="font-size:12px">${fidgPromoResumen(p)}</div>`, `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${p.estado === "publicada" ? "ok" : p.estado === "pausada" ? "warn" : ""}">${esc(vencida(p) && p.estado !== "finalizada" ? "Periodo terminado" : p.estado)}</span><button class="btn sm" data-act="fidg-promo-nueva" data-id="${p.id}">${p.estado === "borrador" ? "Continuar borrador" : p.estado === "finalizada" ? "Reutilizar" : "Editar"}</button>${p.estado === "publicada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="pausada">Pausar</button>` : ""}${p.estado === "pausada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="publicada">Reanudar</button>` : ""}</span>`);
+  const fila = (p) => fgFila(`<div class="t1">${esc(p.nombre)}</div><div class="mut" style="font-size:12px">${fidgPromoResumen(p)}</div>`, `<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill ${p.estado === "publicada" ? "ok" : p.estado === "pausada" ? "warn" : ""}">${esc(vencida(p) && p.estado !== "finalizada" ? "Periodo terminado" : p.estado)}</span><button class="btn sm" data-act="promo-resultados" data-id="${p.id}">Resultados</button><button class="btn sm" data-act="fidg-promo-nueva" data-id="${p.id}">${p.estado === "borrador" ? "Continuar borrador" : p.estado === "finalizada" ? "Reutilizar" : "Editar"}</button>${p.estado === "publicada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="pausada">Pausar</button>` : ""}${p.estado === "pausada" ? `<button class="btn sm" data-act="fidg-promo-estado" data-id="${p.id}" data-e="publicada">Reanudar</button>` : ""}</span>`);
   return `<div class="promo-actions"><button class="btn primary" data-act="fidg-promo-nueva">Crear promoción</button></div>
     <div class="rows promo-list">${visibles.map(fila).join("") || '<p class="mut">Crea tu primera promoción para ofrecer un beneficio al escanear el carnet.</p>'}</div>
     ${anteriores.length ? `<details class="promo-help"><summary>Historial y borradores anteriores (${anteriores.length})</summary><div class="rows promo-list">${anteriores.map(p => `<div><small class="mut">Versión ${esc(String(p.version))}</small>${fila(p)}</div>`).join("")}</div></details>` : ""}
@@ -18498,6 +18498,7 @@ document.addEventListener("click", (e) => {
   else if (act === "camp-redactar") campRedactar();
   else if (act === "camp-usar-propuesta") campUsarPropuesta();
   else if (act === "camp-detectar-idiomas") campDetectarIdiomas();
+  else if (act === "promo-resultados") promoResultados(t.getAttribute("data-id"));
   else if (act === "camp-resultados") campResultados(t.getAttribute("data-origen"),t.getAttribute("data-id"));
   else if (act === "camp-detalle") campDetalle(t.getAttribute("data-id"));
   else if (act === "camp-editar") campEditar(t.getAttribute("data-id"));

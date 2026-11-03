@@ -58,6 +58,7 @@ import { PERMISOS_CONFIRMADOS_SCHEMA, registrarPermisosConfirmados } from "./src
 import { SQL_CANJES, filtrarCanjes, resumenCanjes, destinatariosCanjes } from "./src/modules/fidelizacion/actividad-canjes.js";
 import { EMAIL_SCHEMA, validarCorreo, enviarPruebaCorreo, configuracionCorreo, consultarDominioResend } from "./src/modules/campaigns/email.js";
 import { RECORRIDO_SCHEMA, destinatariosSeguimiento, permisoSeguimiento, telefono as telefonoRecorrido } from "./src/modules/campaigns/recorrido.js";
+import { PROMOCION_RESULTADOS_SCHEMA } from "./src/modules/campaigns/promocion-resultados.js";
 import { registrarRecorrido } from "./src/modules/campaigns/recorrido-rutas.js";
 import { ENVIOS_SCHEMA, destinatariosCorreo, validarSeleccionCorreo, prepararCorreoResend, confirmarCorreoResend } from "./src/modules/campaigns/email-envios.js";
 import { FICHA_COMERCIAL_SCHEMA, validarFichaComercial } from "./src/modules/facturas/ficha-comercial.js";
@@ -1927,6 +1928,7 @@ async function initDB() {
     await client.query(EMAIL_SCHEMA);
     await client.query(ENVIOS_SCHEMA);
     await client.query(RECORRIDO_SCHEMA);
+    await client.query(PROMOCION_RESULTADOS_SCHEMA);
     await client.query(PEPA_EMAIL_SCHEMA);
     await client.query(PERMISOS_CONFIRMADOS_SCHEMA);
     // Ampliación de campañas (multicanal + estados + programación). Aditivo.

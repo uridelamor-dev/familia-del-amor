@@ -1,3 +1,4 @@
+import {obtenerPromocion} from './promocion-resultados.js';
 import {randomUUID} from 'node:crypto';
 // Hechos posteriores a una comunicación, no atribución causal ni reservas = visitas.
 export const OBJETIVOS = ['visitas','club','descuentos','regalos','resenas','puntos','reactivacion','otro'];
@@ -10,6 +11,7 @@ export const RECORRIDO_SCHEMA = `CREATE TABLE IF NOT EXISTS campana_analisis (
  id UUID PRIMARY KEY, origen TEXT NOT NULL, envio_id TEXT NOT NULL, autor INTEGER NOT NULL,
  filtros JSONB NOT NULL, personas JSONB NOT NULL, creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`;
+
 export function telefono(v) {
  let t=String(v||'').replace(/\D/g,'').replace(/^00/,'');
  if (/^[6789]\d{8}$/.test(t))t='34'+t;
@@ -22,7 +24,7 @@ export function validarFiltros(q={},hoy=dia(new Date().toISOString())) {
  const f={desde:String(q.desde||''),hasta:String(q.hasta||hoy),local:String(q.local||''),grupo:String(q.grupo||'todos'),q:String(q.q||'').slice(0,150)};
  for(const k of ['desde','hasta'])if(f[k]&&(!/^\d{4}-\d{2}-\d{2}$/.test(f[k])||new Date(f[k]+'T12:00:00Z').toISOString().slice(0,10)!==f[k]))throw Error('Fecha no válida');
  if(f.desde&&f.desde>f.hasta)throw Error('El inicio debe ser anterior al final');
- if(!['todos','con_tarjeta','alta_posterior','visita','sin_visita','repite','canje','resena','puntos','sin_identificar'].includes(f.grupo))throw Error('Filtro no válido');
+ if(!['todos','con_tarjeta','alta_posterior','visita','sin_visita','repite','canje','resena','puntos','sin_identificar','sin_canje'].includes(f.grupo))throw Error('Filtro no válido');
  if(f.local.length>160)throw Error('Local no válido');
  return f;
 }
@@ -67,7 +69,7 @@ export function analizarRecorrido(personas,tarjetas,eventos,filtros={}) {
  const alta=primera&&p.enviado&&fecha(primera)>envio&&(!f.desde||dia(primera)>=f.desde)&&dia(primera)<=f.hasta;
  return {...p,tarjeta:primera?(envio==null?'existente':fecha(primera)<=envio?'previa':'posterior'):'sin_registro',fecha_tarjeta:primera||null,alta_periodo:!!alta,visitas:visitas.size,canjes:ev.filter(e=>e.tipo==='canje').length,consumo:consumo.length?Math.round(consumo.reduce((s,e)=>s+Number(e.tipo==='devolucion'?-Math.abs(e.importe):e.importe||0),0)*100)/100:null,puntos:ev.filter(e=>e.tipo==='puntos').reduce((s,e)=>s+Number(e.unidades||0),0),eventos:ev.sort((a,b)=>fecha(a.fecha)-fecha(b.fecha))};
  });
- const coincide=p=>({todos:true,con_tarjeta:p.tarjeta!=='sin_registro',alta_posterior:p.alta_periodo,visita:p.visitas>0,sin_visita:p.enviado&&!!p.telefono&&!p.visitas,repite:p.visitas>1,canje:p.canjes>0,resena:p.eventos.some(e=>e.tipo==='resena'),puntos:p.eventos.some(e=>e.tipo==='puntos'),sin_identificar:!p.telefono})[f.grupo];
+ const coincide=p=>({todos:true,con_tarjeta:p.tarjeta!=='sin_registro',alta_posterior:p.alta_periodo,visita:p.visitas>0,sin_visita:p.enviado&&!!p.telefono&&!p.visitas,repite:p.visitas>1,canje:p.canjes>0,resena:p.eventos.some(e=>e.tipo==='resena'),puntos:p.eventos.some(e=>e.tipo==='puntos'),sin_identificar:!p.telefono,sin_canje:p.enviado&&!!p.telefono&&!p.canjes})[f.grupo];
  filas=filas.filter(p=>coincide(p)&&(!f.q||[p.nombre,p.telefono,p.correo].join(' ').toLowerCase().includes(f.q.toLowerCase())));
  const enviados=filas.filter(p=>p.enviado),visitantes=enviados.filter(p=>p.visitas>0),importes=filas.filter(p=>p.consumo!==null);
  const serie=new Map();for(const p of filas)for(const e of p.eventos){const d=dia(e.fecha);if(!serie.has(d))serie.set(d,{fecha:d,personas:new Set(),consumo:null});const x=serie.get(d);if(['visita','canje'].includes(e.tipo))x.personas.add(p.id);if(['consumo','devolucion'].includes(e.tipo))x.consumo=(x.consumo||0)+Number(e.tipo==='devolucion'?-Math.abs(e.importe):e.importe||0);}
@@ -79,6 +81,33 @@ export async function obtenerRecorrido(db,origen,id,usuario,filtros={}) {
  const leads=mails.length?await db.all('SELECT correo,telefono FROM leads WHERE lower(trim(correo))=ANY(?)',[mails]):[];
  const personas=resolverIdentidades(fuente.envios,leads),tels=[...new Set(personas.map(p=>p.telefono).filter(Boolean))];
  const config=await db.get('SELECT objetivo FROM campana_analisis WHERE origen=? AND envio_id=?',[origen,id]);
+ const {tarjetas,eventos}=await cargarActividad(db,tels);
+ const f=validarFiltros(filtros);if(!f.desde)f.desde=personas.filter(p=>p.enviado).map(p=>dia(p.fecha_envio)).sort()[0]||dia(fuente.campana.creado_en)||f.hasta;
+ return {...analizarRecorrido(personas,tarjetas,eventos,f),campana:fuente.campana,objetivo:config?.objetivo||'visitas',actualizado_en:new Date().toISOString()};
+}
+
+export async function prepararSeguimiento(db,origen,id,usuario,filtros) {
+ const d=origen==='promocion'?await obtenerPromocion(db,id,usuario,filtros):await obtenerRecorrido(db,origen,id,usuario,filtros);if(!d)throw Error('Envío no encontrado');
+ const personas=d.filas.filter(p=>(origen==='promocion'||p.enviado)&&p.telefono).map(p=>p.telefono);if(!personas.length)throw Error('No hay personas identificadas para preparar el seguimiento');
+ const ref=randomUUID();
+ await db.run('INSERT INTO campana_seguimientos(id,origen,envio_id,autor,filtros,personas) VALUES (?,?,?,?,?,?)',[ref,origen,id,usuario.id,JSON.stringify(d.filtros),JSON.stringify(personas)]);
+ const c=await db.run(`INSERT INTO campanas_wa(nombre,mensaje,segmento_json,canal,estado,total_enviados) VALUES (?,?,?,'whatsapp','borrador',0) RETURNING id`,['Seguimiento · '+(d.promocion?.nombre||d.campana.nombre),'Hola {nombre}, ¿qué tal? Nos encantará volver a verte en Familia del Amor.',JSON.stringify({seguimiento_id:ref,excluir_baja:1,soloOptIn:true})]);
+ return {id:c.id,personas:personas.length};
+}
+export async function destinatariosSeguimiento(db,ref) {
+ if(!/^[a-f0-9-]{36}$/i.test(ref))throw Error('Seguimiento no válido');
+ const s=await db.get('SELECT * FROM campana_seguimientos WHERE id=?',[ref]);if(!s)throw Error('Seguimiento no encontrado');
+ const leer=v=>typeof v==='string'?JSON.parse(v):v;
+ const f=leer(s.filtros);const user={id:s.autor};const actual={...f,hasta:dia(new Date().toISOString())};const d=s.origen==='promocion'?await obtenerPromocion(db,s.envio_id,user,actual):await obtenerRecorrido(db,s.origen,s.envio_id,user,actual);if(!d)throw Error('No se puede comprobar la campaña de origen');
+ const originales=new Set(leer(s.personas));return new Set(d.filas.filter(p=>(s.origen==='promocion'||p.enviado)&&p.telefono&&originales.has(p.telefono)).map(p=>p.telefono));
+}
+
+export async function permisoSeguimiento(db,tel){
+ const prefs=await db.all(`SELECT baja,opt_in_wa FROM marketing_prefs WHERE ${sqlTel('telefono')}=?`,[telefono(tel)]);
+ return !prefs.some(p=>Number(p.baja)===1||Number(p.opt_in_wa)===0);
+}
+
+export async function cargarActividad(db,tels){
  let tarjetas=[],eventos=[];
  if(tels.length){
  tarjetas=await db.all(`SELECT id,telefono,creado_en FROM pro_qr WHERE clase='carnet' AND ${sqlTel('telefono')}=ANY(?)`,[tels]);
@@ -86,27 +115,5 @@ export async function obtenerRecorrido(db,origen,id,usuario,filtros={}) {
  const resenas=await db.all(`SELECT 'resena' AS tipo,r.id,r.fecha,r.location_name AS local,v.telefono,0 AS importe,0 AS unidades FROM campana_recorrido_resenas v JOIN google_reviews r ON r.id=v.review_id WHERE v.revocado_en IS NULL AND v.telefono=ANY(?)`,[tels]);
  eventos.push(...resenas);
  }
- const f=validarFiltros(filtros);if(!f.desde)f.desde=personas.filter(p=>p.enviado).map(p=>dia(p.fecha_envio)).sort()[0]||dia(fuente.campana.creado_en)||f.hasta;
- return {...analizarRecorrido(personas,tarjetas,eventos,f),campana:fuente.campana,objetivo:config?.objetivo||'visitas',actualizado_en:new Date().toISOString()};
-}
-
-export async function prepararSeguimiento(db,origen,id,usuario,filtros) {
- const d=await obtenerRecorrido(db,origen,id,usuario,filtros);if(!d)throw Error('Envío no encontrado');
- const personas=d.filas.filter(p=>p.enviado&&p.telefono).map(p=>p.telefono);if(!personas.length)throw Error('No hay personas identificadas para preparar el seguimiento');
- const ref=randomUUID();
- await db.run('INSERT INTO campana_seguimientos(id,origen,envio_id,autor,filtros,personas) VALUES (?,?,?,?,?,?)',[ref,origen,id,usuario.id,JSON.stringify(d.filtros),JSON.stringify(personas)]);
- const c=await db.run(`INSERT INTO campanas_wa(nombre,mensaje,segmento_json,canal,estado,total_enviados) VALUES (?,?,?,'whatsapp','borrador',0) RETURNING id`,['Seguimiento · '+d.campana.nombre,'Hola {nombre}, ¿qué tal? Nos encantará volver a verte en Familia del Amor.',JSON.stringify({seguimiento_id:ref,excluir_baja:1,soloOptIn:true})]);
- return {id:c.id,personas:personas.length};
-}
-export async function destinatariosSeguimiento(db,ref) {
- if(!/^[a-f0-9-]{36}$/i.test(ref))throw Error('Seguimiento no válido');
- const s=await db.get('SELECT * FROM campana_seguimientos WHERE id=?',[ref]);if(!s)throw Error('Seguimiento no encontrado');
- const leer=v=>typeof v==='string'?JSON.parse(v):v;
- const f=leer(s.filtros);const d=await obtenerRecorrido(db,s.origen,s.envio_id,{id:s.autor},{...f,hasta:dia(new Date().toISOString())});if(!d)throw Error('No se puede comprobar la campaña de origen');
- const originales=new Set(leer(s.personas));return new Set(d.filas.filter(p=>p.enviado&&p.telefono&&originales.has(p.telefono)).map(p=>p.telefono));
-}
-
-export async function permisoSeguimiento(db,tel){
- const prefs=await db.all(`SELECT baja,opt_in_wa FROM marketing_prefs WHERE ${sqlTel('telefono')}=?`,[telefono(tel)]);
- return !prefs.some(p=>Number(p.baja)===1||Number(p.opt_in_wa)===0);
+ return {tarjetas,eventos};
 }
