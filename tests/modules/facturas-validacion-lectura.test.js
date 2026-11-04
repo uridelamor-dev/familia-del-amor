@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {controlesLectura,compararLecturas,datosRevision} from '../../src/modules/facturas/validacion-lectura.js';
 import {leerDocumentoVerificado} from '../../facturas.js';
-const buena={tipo:'factura',proveedor:'Proveedor de prueba',nif_proveedor:'B12345674',fecha:'2026-09-10',numero_factura:'123',base_imponible:100,cuota_iva:21,porcentaje_iva:21,total:121,lineas:[]};
+const buena={tipo:'factura',proveedor:'Proveedor de prueba',nif_proveedor:'B12345674',fecha:'2026-09-10',fecha_texto:'10/09/2026',numero_factura:'123',base_imponible:100,cuota_iva:21,porcentaje_iva:21,total:121,lineas:[]};
 test('no confunde importes ausentes con cero ni unidad ausente con documento inválido',()=>{
  assert.deepEqual(controlesLectura({...buena,lineas:[{cantidad:2,precio_unitario:50,importe:100,unidad:null}]}),[]);
  assert.ok(controlesLectura({...buena,base_imponible:null}).some(a=>a.campo==='base_imponible'));
@@ -39,4 +39,22 @@ test('solo pide otra foto automáticamente si ambas lecturas ven mala calidad y 
  assert.equal(new RevisionDocumento({...buena,total:null,calidad_imagen:'ilegible'},[],{...buena,total:null,calidad_imagen:'ilegible'}).resultado.solicitarFoto,true);
  assert.equal(new RevisionDocumento({...buena,total:null},[],{...buena,total:null}).resultado.solicitarFoto,false);
  assert.equal(new RevisionDocumento({...buena,total:null,calidad_imagen:'ilegible'},[],{...buena,calidad_imagen:'legible'}).resultado.solicitarFoto,false);
+});
+
+test('Lindamer: tres lecturas iguales no validan día y mes invertidos',async()=>{
+ const mal={...buena,proveedor:'Lindamer',fecha:'2026-03-11',fecha_texto:'03/11/2026'};
+ await assert.rejects(leerDocumentoVerificado(Buffer.from('prueba'),'image/jpeg',{leer:async()=>structuredClone(mal)}),e=>e.revisionDocumento&&e.resultado.avisos.some(a=>a.campo==='fecha'&&a.texto.includes('2026-11-03')));
+});
+test('la fecha literal correcta permite registrar aunque día y mes sean intercambiables',async()=>{
+ const bien={...buena,fecha:'2026-11-03',fecha_texto:'03/11/2026'};
+ const r=await leerDocumentoVerificado(Buffer.from('prueba'),'image/jpeg',{leer:async()=>structuredClone(bien)});
+ assert.equal(r.fecha,'2026-11-03');
+});
+test('sin transcripción ni evidencia del original, una fecha ambigua queda en revisión',async()=>{
+ const ambigua={...buena,fecha:'2026-03-11',fecha_texto:null};
+ await assert.rejects(leerDocumentoVerificado(Buffer.from('prueba'),'image/jpeg',{leer:async()=>structuredClone(ambigua)}),e=>e.revisionDocumento&&e.resultado.avisos.some(a=>a.campo==='fecha'));
+});
+test('la capa PDF descubre la inversión aunque la transcripción repita el error',async()=>{
+ const mal={...buena,fecha:'2026-03-11',fecha_texto:'11/03/2026',_pistasFecha:{hayTexto:true,anios:[2026],fechas:['2026-11-03']}};
+ await assert.rejects(leerDocumentoVerificado(Buffer.from('prueba'),'application/pdf',{leer:async()=>structuredClone(mal)}),e=>e.revisionDocumento&&e.resultado.avisos.some(a=>a.campo==='fecha'));
 });

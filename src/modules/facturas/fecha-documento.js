@@ -259,3 +259,19 @@ export function revisarFecha(doc = {}, ctx = {}) {
     fuentes,
   };
 }
+
+// Dos lecturas pueden repetir la misma inversión. Contrastamos la fecha completa,
+// no solo su año, con la transcripción literal y la capa de texto del original.
+export function contrastarFechaEmision(doc={}) {
+ const fecha=String(doc.fecha||''),m=fecha.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+ if(!m)return [];
+ const aviso=texto=>[{campo:'fecha',texto}];
+ const literales=fechasDelTexto(doc.fecha_texto||'').map(f=>f.iso);
+ if(literales.length===1 && literales[0]!==fecha)return aviso(`La fecha escrita «${doc.fecha_texto}» corresponde a ${literales[0]}, pero se ha leído ${fecha}. Comprueba día y mes.`);
+ if(literales.length>1)return aviso('Hay varias fechas en la transcripción de emisión. Confirma cuál corresponde al documento.');
+ const papel=doc._pistasFecha?.fechas||[];
+ const invertida=`${m[1]}-${m[3]}-${m[2]}`;
+ if(m[2]!==m[3] && Number(m[3])<=12 && papel.includes(invertida) && !papel.includes(fecha))return aviso(`El original contiene ${invertida}, pero se ha leído ${fecha}. Posible inversión de día y mes.`);
+ if(Number(m[3])<=12 && m[2]!==m[3] && !literales.length && !papel.includes(fecha))return aviso('Fecha con día y mes intercambiables: falta una transcripción verificable de la fecha de emisión. Comprueba el original.');
+ return [];
+}

@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {prepararContraste,nifComprobable,elegirLecturaContrastada} from '../../src/modules/facturas/contraste-dirigido.js';
 import {leerDocumentoVerificado} from '../../facturas.js';
-const buena={tipo:'factura',proveedor:'ASIA HIPER STORE',nif_proveedor:'B12345674',fecha:'2026-09-10',numero_factura:'123',base_imponible:100,cuota_iva:21,porcentaje_iva:21,total:121,lineas:[{descripcion:'Producto',importe:100}]};
+const buena={tipo:'factura',proveedor:'ASIA HIPER STORE',nif_proveedor:'B12345674',fecha:'2026-09-10',fecha_texto:'10/09/2026',numero_factura:'123',base_imponible:100,cuota_iva:21,porcentaje_iva:21,total:121,lineas:[{descripcion:'Producto',importe:100}]};
 const dbAll=async()=>[];
 function lector(valores){let n=0;return async()=>{const v=valores[n++];if(v instanceof Error)throw v;assert.ok(v,'No debe pedir más lecturas');return structuredClone(v);};}
 test('comprueba el control del CIF antes de relajar una variante de nombre',()=>{

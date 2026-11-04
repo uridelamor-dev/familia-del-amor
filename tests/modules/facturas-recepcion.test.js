@@ -27,3 +27,23 @@ test('diagnóstico seguro distingue fallos permanentes sin exponer el error orig
  assert.equal(diagnosticarRecepcion(new Error('fetch failed')).codigo,'conexion');
  assert.equal(diagnosticarRecepcion(new Error('SECRETO')).codigo,'sin_clasificar');
 });
+
+test('nombre uniforme antes y después de leer, sin inventar datos ni cambiar formato',async()=>{
+ const {nombreRecepcion}=await import('../../src/modules/facturas/recepcion.js');
+ const f={id:19,local:'Girona',mime:'image/png',nombre:'imagen_ABC.jpg'};
+ const pendiente=nombreRecepcion(f);
+ assert.equal(pendiente,'Sin fecha · Documento · Proveedor sin identificar · Sin número · Girona · ID-Recepción-19.png');
+ const leido=nombreRecepcion({...f,resultado:{datos:{fecha:'2026-11-04',tipo:'albaran',proveedor:'Mera',numero_factura:'A/123'}}});
+ assert.equal(leido,'2026-11-04 · Albarán · Mera · A-123 · Girona · ID-Recepción-19.png');
+ assert.notEqual(nombreRecepcion({...f,id:20}),pendiente);
+});
+
+test('revisión sin explicación conserva autor y antes/después',async()=>{
+ const {crearRecepcion}=await import('../../src/modules/facturas/recepcion.js');
+ const antes={proveedor:'Delsa',tipo:'factura',fecha:'2026-11-04',numero_factura:'1',base_imponible:100,porcentaje_iva:21,cuota_iva:21,total:121};
+ const f={id:19,hash:'hash',estado:'revision',original:Buffer.from('original'),resultado:{datos:antes},local:'Girona',mime:'application/pdf'};
+ let guardado;
+ const cola=crearRecepcion({db:{get:async()=>f,run:async(sql,args)=>{guardado=JSON.parse(args[0]);}},lock:async(_k,fn)=>fn(),procesar:async()=>{}});
+ await cola.aprobar(19,{...antes,proveedor:'Mera'},{autor:'Contabilidad',confirmado:true,aceptarAvisos:true});
+ assert.equal(guardado.aprobacion.antes.proveedor,'Delsa');assert.equal(guardado.aprobacion.despues.proveedor,'Mera');assert.equal(guardado.aprobacion.autor,'Contabilidad');assert.match(guardado.aprobacion.motivo,/Corrección/);
+});

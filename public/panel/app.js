@@ -294,6 +294,21 @@ function detalleCentroFE(local, ambito) {
 const VARIOS = "*varios*";
 // La lista completa entre la que se puede elegir: los suyos si tiene asignados, todos si no.
 function localesBase() { const m = misLocales(); return visiblesFE(ambitoDeVista(), m.length ? m : LOCALES); }
+// «Todos» reúne únicamente los centros permitidos en esta pantalla.
+function localesElegibles() { return MODULOS_SOLO_PUBLICO.has(CURRENT) ? localesBase().filter((l) => !sinPublico(l)) : localesBase(); }
+function seleccionarTodosEstablecimientos() {
+  const locales = localesElegibles();
+  if (!locales.length) return false;
+  SELECCION = misLocales().length ? locales : [];
+  DASH_LOCAL = misLocales().length ? (locales.length > 1 ? VARIOS : locales[0]) : "";
+  return true;
+}
+function todosEstablecimientosSeleccionados() {
+  if (!misLocales().length) return DASH_LOCAL === "";
+  const locales = localesElegibles();
+  return locales.length > 1 && viendoVarios() && locales.length === localesDelAmbito().length
+    && locales.every((l) => localesDelAmbito().includes(l));
+}
 // Los establecimientos en juego cuando se ven varios a la vez. Se filtra siempre contra la
 // base: una selección guardada de hace meses puede nombrar un local que ya no le toca.
 function localesDelAmbito() {
@@ -458,12 +473,10 @@ function shell(active, bodyHtml) {
       </button>
       <div class="nitems">${botones}</div></div>`;
   }).join("");
-  // Quien tiene local asignado no ve «Todos los establecimientos» ni de rótulo: no es cierto,
-  // porque el servidor le devuelve solo los suyos. Un rótulo que promete más de lo que hay es
-  // peor que no tenerlo — el encargado leía sus reservas creyendo que eran las del grupo.
+  // El selector conserva siempre el alcance autorizado del usuario.
   const fijado = localFijadoFE();
   const actual = localActualFE();
-  const estabLbl = fijado ? nombreCortoLocal(fijado)
+  const estabLbl = todosEstablecimientosSeleccionados() ? "Todos los establecimientos" : fijado ? nombreCortoLocal(fijado)
     : viendoVarios() ? etiquetaAmbito()
     : actual ? nombreCortoLocal(actual) : "Todos los establecimientos";
   // Qué lleva dentro este establecimiento en ESTA pantalla. Sin decirlo, alguien mira el gasto
@@ -491,9 +504,7 @@ function shell(active, bodyHtml) {
               el botón no servía para abrirlo: lo que hacía era plegarlo a modo icono, y eso
               nadie lo pedía ni se adivinaba mirándolo. */""}
         <button class="iconbtn solosm" data-act="mtoggle" aria-label="Menú">${ic("menu")}</button>
-        ${fijado
-          ? `<span class="pick fijo" title="Tu usuario está asignado a este establecimiento${estabDet ? " · " + estabDet : ""}"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span>${estabDet ? `<span class="pick-det">${esc(estabDet)}</span>` : ""}</span>`
-          : `<button class="pick" data-act="estabmenu" aria-haspopup="dialog" aria-expanded="false" title="Cambiar establecimiento${estabDet ? " · " + estabDet : ""}"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span>${estabDet ? `<span class="pick-det">${esc(estabDet)}</span>` : ""}<span class="car">▾</span></button>`}
+        <button class="pick" data-act="estabmenu" aria-haspopup="dialog" aria-expanded="false" title="Cambiar establecimiento${estabDet ? " · " + estabDet : ""}"><span class="dot"></span><span class="lbl">${esc(estabLbl)}</span>${estabDet ? `<span class="pick-det">${esc(estabDet)}</span>` : ""}<span class="car">▾</span></button>
         ${seg ? `<div class="seg hidesm">${seg}</div>` : ""}
         ${/* Aquí estaba el cuadro «Buscar o ir a…». Fuera: no se usaba, y una barra se mide
               por lo que se usa. Lo que abría sigue existiendo en «Acción rápida», en el
@@ -1244,10 +1255,8 @@ function openDrawer(title, bodyHtml) { document.getElementById("drawer").classLi
 function closeDrawer() { document.querySelector('[data-act="estabmenu"]')?.setAttribute("aria-expanded","false"); const d = document.getElementById("drawer"), o = document.getElementById("ovl"); if (d) {d.classList.remove("open");d.setAttribute("aria-hidden","true");} if (o) o.classList.remove("open"); }
 function openEstabMenu() {
   // En Reservas y Analítica no ofrecemos los centros sin público: no tendrían datos.
-  const fijado = localFijadoFE();
-  if (fijado) return;   // un solo local: no hay nada que elegir
   const mios = misLocales();
-  const elegibles = MODULOS_SOLO_PUBLICO.has(CURRENT) ? localesBase().filter((l) => !sinPublico(l)) : localesBase();
+  const elegibles = localesElegibles();
   // LO QUE SE ESTÁ MARCANDO MANDA. Antes esto solo miraba el ámbito ya aplicado, así que el
   // contador del botón se quedaba clavado en 1 —el local actual— por muchas casillas que
   // marcaras: «Marca dos o más para juntarlos», deshabilitado, para siempre. Juntar dos
@@ -1276,13 +1285,12 @@ function openEstabMenu() {
     </div>`;
   };
 
-  // «Todos» solo para dirección: al que tiene locales asignados no se le ofrece un ámbito que
-  // el servidor no le va a dar.
-  const todos = mios.length ? "" : `<div class="row">
-    <button class="grow" data-act="estab-pick" data-local="" style="display:flex;align-items:center;gap:13px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer">
-      <span class="sdot ${DASH_LOCAL === "" ? "st-ok" : "st-off"}"></span>
-      <span class="t1">Todos los establecimientos</span>
-    </button>${DASH_LOCAL === "" ? '<span class="pill brand">Actual</span>' : ""}</div>`;
+  const todosActual = todosEstablecimientosSeleccionados();
+  const todos = `<div class="row">
+    <button class="grow" data-act="estab-todos" ${elegibles.length ? "" : "disabled"} style="display:flex;align-items:center;gap:13px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer">
+      <span class="sdot ${todosActual ? "st-ok" : "st-off"}"></span>
+      <span><span class="t1">Todos los establecimientos</span>${mios.length ? `<span class="mut" style="display:block;font-size:12px">Solo los establecimientos a los que tienes acceso</span>` : ""}</span>
+    </button>${todosActual ? '<span class="pill brand">Actual</span>' : ""}</div>`;
 
   const n = marcados.size;
   const pie = `<div style="padding:14px 16px;border-top:1px solid var(--border)">
@@ -8455,13 +8463,12 @@ async function facDuplicados() {
   const par = (f) => `<div class="dupcard">
       <p class="dupmot">${esc(f.motivos.length ? f.motivos.join(", ").replace(/^./, (c) => c.toUpperCase()) + "." : "Se parecen.")}</p>
       <div class="dupgrid">
-        ${f.original ? ficha(f.original, "vieja") : '<div class="dupcol vieja"><div class="t2">La original ya no está</div></div>'}
-        <div class="dupvs">¿la misma?</div>
+        ${f.original ? ficha(f.original, "vieja") : `<div class="dupcol vieja"><div class="t2">${f.original_estado==='sin_acceso'?'La factura anterior requiere acceso a otro establecimiento.':'No se encuentra la factura anterior para compararla.'}</div></div>`}
+        <div class="dupvs">${f.original?'¿la misma?':''}</div>
         ${ficha(f, "nueva")}
       </div>
       <div class="dupacts">
-        <button class="btn sm" data-act="fac-dup" data-id="${f.id}" data-accion="duplicada" ${!f.original?'disabled':''}>Conservar la anterior</button><button class="btn sm" data-act="fac-dup" data-id="${f.id}" data-accion="conservar_nueva" ${f.original?'':'disabled'}>Conservar la nueva</button>
-        <button class="btn sm" data-act="fac-dup" data-id="${f.id}" data-accion="distinta">Son distintas: conservar ambas</button>
+        ${f.original ? `<button class="btn sm" data-act="fac-dup" data-id="${f.id}" data-accion="duplicada">Conservar la anterior</button><button class="btn sm" data-act="fac-dup" data-id="${f.id}" data-accion="conservar_nueva">Conservar la nueva</button><button class="btn sm" data-act="fac-dup" data-id="${f.id}" data-accion="distinta">Son distintas: conservar ambas</button>` : f.original_estado==='ausente' ? `<button class="btn sm" data-act="fac-dup" data-id="${f.id}" data-accion="conservar_unica">Conservar esta factura y cerrar aviso</button>` : '<span class="mut">Debe revisarlo una persona con acceso a ambos establecimientos.</span>'}
       </div>
     </div>`;
 
@@ -8469,7 +8476,7 @@ async function facDuplicados() {
 }
 
 async function facDupResolver(id, accion) {
-  const mensajes={duplicada:'Se conservará la factura anterior. La nueva quedará excluida de los totales.',conservar_nueva:'Se conservará la factura nueva. La anterior quedará excluida de los totales.',distinta:'Las dos facturas se conservarán y contarán en los totales.'};
+  const mensajes={conservar_unica:'La factura anterior no existe. Esta factura contará en los totales y se cerrará el aviso de duplicado.',duplicada:'Se conservará la factura anterior. La nueva quedará excluida de los totales.',conservar_nueva:'Se conservará la factura nueva. La anterior quedará excluida de los totales.',distinta:'Las dos facturas se conservarán y contarán en los totales.'};
   const ok=await confirmModal(mensajes[accion],{ok:'Guardar decisión'});
   if (!ok) return;
   try { const r = await apiSend("POST", `/api/facturas/duplicados/${id}/resolver`, { accion }); toast(r.mensaje || "Hecho ✅"); loadFacturas(); }
@@ -8637,17 +8644,84 @@ async function proveedoresUnirSeleccion(nombres=[...PROV_SEL]) {
   };
  }catch(e){toast(e.message);}
 }
+// El NIF confirmado manda; un histórico contradictorio no permite adivinarlo.
+function facNifProveedorElegido(ficha) {
+ const confirmado=String(ficha.alias?.nif||'').trim();
+ if(confirmado)return confirmado;
+ const nifs=[...new Set((ficha.nifs||[]).map(x=>String(x.nif||'').trim()).filter(Boolean))];
+ return nifs.length===1?nifs[0]:'';
+}
+function facFechaISO(texto) {
+ const t=String(texto||'').trim();if(!t)return '';
+ const m=t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/), iso=t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+ if(!m&&!iso)return null;
+ const [y,mes,dia]=m?[Number(m[3]),Number(m[2]),Number(m[1])]:iso.slice(1).map(Number);
+ return y>=1900&&y<=9999&&mes>=1&&mes<=12&&dia>=1&&dia<=dpDim(y,mes)?`${y}-${dp2(mes)}-${dp2(dia)}`:null;
+}
+function facFechasEditables(ov) {
+ ov.querySelectorAll('[data-fic="fecha"], [data-pf="fecha"], #hist-fecha, #rev-fecha').forEach((original,i)=>{
+  if(original.dataset.fechaEditable)return;
+  original.dataset.fechaEditable='1';
+  if(!original.id)original.id='facFechaEditable'+Date.now()+'_'+i;
+  let wrap=original.closest('.dp');
+  if(!wrap){wrap=document.createElement('div');wrap.className='dp';original.before(wrap);wrap.append(original);original.type='hidden';wrap.insertAdjacentHTML('beforeend',`<button type="button" class="dpt" data-act="dp-open" data-for="${esc(original.id)}" aria-label="Abrir calendario" aria-haspopup="dialog">${ic('cal',16)}<span class="dpl"></span></button>`);}
+  wrap.classList.add('fac-date-entry');wrap.querySelector('.dpt').setAttribute('aria-label','Abrir calendario');
+  const texto=document.createElement('input');texto.type='text';texto.placeholder='dd/mm/aaaa';texto.inputMode='numeric';texto.setAttribute('aria-label','Fecha (día/mes/año)');texto.autocomplete='off';texto.required=original.required;
+  wrap.prepend(texto);
+  const sync=()=>{texto.value=original.value?original.value.split('-').reverse().join('/'):'';texto.setCustomValidity('');texto.removeAttribute('aria-invalid');};
+  original.addEventListener('change',sync);sync();
+  texto.addEventListener('input',()=>{const iso=facFechaISO(texto.value);texto.setCustomValidity(iso===null?'Escribe una fecha válida: dd/mm/aaaa.':'');texto.setAttribute('aria-invalid',String(iso===null));original.value=iso||'';original.dispatchEvent(new Event('input',{bubbles:true}));});
+  texto.addEventListener('change',()=>{if(texto.checkValidity())dpSet(original.id,original.value);});
+ });
+ if(ov.dataset.fechasValidadas)return;ov.dataset.fechasValidadas='1';
+ const validar=e=>{const mal=[...ov.querySelectorAll('.fac-date-entry input[type="text"]')].find(x=>!x.checkValidity());if(mal){e.preventDefault();e.stopImmediatePropagation();mal.reportValidity();mal.focus();}};
+ ov.addEventListener('submit',validar,true);
+ ov.addEventListener('click',e=>{if(e.target.closest('#ficSave, #prAsignar, button[type="submit"]'))validar(e);},true);
+}
 function facSelectorProveedor(ov,selector) {
  const input=ov.querySelector(selector);if(!input)return;
+ facFechasEditables(ov);input.removeAttribute('list');
+ const nif=ov.querySelector('[data-fic="nif"], [data-pf="nif"], #hist-nif, #rev-nif_proveedor');
+ let proveedorAnterior=input.value, revision=0;
+ const aviso=document.createElement('small');aviso.className='mut';aviso.setAttribute('role','status');
+ input.insertAdjacentElement('afterend',aviso);
+ const guardar=[...ov.querySelectorAll('#ficSave, #prAsignar, button[type="submit"]')];
+ let bloqueados=null;
+ input.addEventListener('change',async()=>{
+  const nombre=input.value.trim();if(nombre===proveedorAnterior&&!bloqueados)return;
+  const version=++revision;
+  if(!nif)return;
+  if(!bloqueados)bloqueados=guardar.map(b=>b.disabled);
+  guardar.forEach(b=>b.disabled=true);
+  aviso.textContent='Consultando el NIF del proveedor…';
+  // No arrastrar el NIF de otro proveedor, tampoco si la consulta falla.
+  nif.value='';nif.dispatchEvent(new Event('input',{bubbles:true}));
+  try{
+   const ficha=nombre?await apiRaw('/api/facturas/proveedor?nombre='+encodeURIComponent(nombre)):{};
+   if(version!==revision)return;
+   if(input.value.trim()!==nombre){aviso.textContent='Termina de elegir el proveedor para consultar su NIF.';return;}
+   nif.value=facNifProveedorElegido(ficha);
+   nif.dispatchEvent(new Event('input',{bubbles:true}));
+   nif.dispatchEvent(new Event('change',{bubbles:true}));
+   proveedorAnterior=nombre;
+   aviso.textContent=nif.value?'NIF actualizado con los datos del proveedor.':'Este proveedor no tiene un NIF único confirmado. Revísalo e introdúcelo antes de guardar.';
+   guardar.forEach((b,i)=>b.disabled=bloqueados[i]);bloqueados=null;
+  }catch(e){
+   if(version!==revision)return;
+   aviso.textContent='No se pudo consultar el NIF. Vuelve a elegir el proveedor para reintentar.';
+  }
+ });
  const boton=document.createElement('button');boton.type='button';boton.className='btn sm';boton.textContent='Elegir proveedor';input.insertAdjacentElement('afterend',boton);
  boton.onclick=async()=>{
   boton.disabled=true;
   try{
-   const nombres=(await apiRaw('/api/facturas/proveedores-unir')).proveedores||[];
-   const sel=modal('Elegir proveedor','<div class="field"><label for="elegirProveedorQ">Buscar proveedor</label><input id="elegirProveedorQ" type="search" placeholder="Nombre del proveedor" autocomplete="off"></div><div id="elegirProveedorLista" class="rows supplier-picker"></div><p class="mut">El cambio se guardará al guardar la factura. Revisa también su NIF.</p>');
+   const respuesta=await apiRaw('/api/facturas/proveedores-unir?detalles=1');
+   const proveedores=respuesta.detalles||(respuesta.proveedores||[]).map(nombre=>({nombre,nif:''}));
+   const sel=modal('Elegir proveedor',`<div class="supplier-search">${ic('search',18)}<input id="elegirProveedorQ" type="search" aria-label="Buscar por nombre o NIF" placeholder="Buscar por nombre o NIF…" autocomplete="off"></div><div class="supplier-picker-meta" id="elegirProveedorCount" role="status"></div><div id="elegirProveedorLista" class="supplier-picker-list"></div><p class="supplier-picker-help">Al elegir un proveedor, su NIF se completa con los datos guardados. Guarda la factura para confirmar el cambio.</p>`);
+   sel.querySelector('.modal').classList.add('supplier-picker-modal');
    const q=sel.querySelector('#elegirProveedorQ'),lista=sel.querySelector('#elegirProveedorLista');
-   const norm=v=>v.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-   const pintar=()=>{lista.innerHTML=nombres.filter(n=>norm(n).includes(norm(q.value))).map(n=>`<button type="button" class="btn" data-elegir="${esc(n)}">${esc(n)}</button>`).join('')||'<p class="mut">No hay proveedores con ese nombre.</p>';};
+   const norm=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+   const pintar=()=>{const visibles=proveedores.filter(p=>norm(p.nombre+' '+p.nif).includes(norm(q.value)));sel.querySelector('#elegirProveedorCount').textContent=visibles.length+' proveedores';lista.innerHTML=visibles.map(p=>`<button type="button" class="supplier-option ${p.nombre===input.value?'selected':''}" data-elegir="${esc(p.nombre)}"><span class="supplier-avatar" aria-hidden="true">${esc(p.nombre.slice(0,2).toUpperCase())}</span><span class="supplier-option-copy"><strong>${esc(p.nombre)}</strong><small>${p.nif?'NIF '+esc(p.nif):'Sin NIF confirmado'}</small></span><span class="supplier-option-end">${p.nombre===input.value?'Actual':'Elegir →'}</span></button>`).join('')||'<p class="supplier-picker-empty">No encontramos ese proveedor. Prueba con otro nombre o NIF.</p>';};
    q.oninput=pintar;lista.onclick=e=>{const b=e.target.closest('[data-elegir]');if(!b)return;input.value=b.dataset.elegir;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));sel.remove();input.focus();};pintar();q.focus();
   }catch(e){toast(e.message);}finally{boton.disabled=false;}
  };
@@ -9652,25 +9726,26 @@ async function facSelExport() {
   } catch { toast("No se pudo exportar"); }
 }
 /** El documento de una factura, en grande, dentro de su ficha. */
+function facVistaDocumento(caja,url,mime) {
+ if(!caja)return;
+ if(!mime.startsWith('image/')&&mime!=='application/pdf'){caja.textContent='Vista previa no disponible. Descarga el original para revisarlo.';return;}
+ caja.classList.remove('fic-ph');caja.classList.add('fac-viewer');
+ caja.innerHTML=`<div class="fac-viewer-tools" role="group" aria-label="Tamaño de la vista previa"><button type="button" class="btn sm" data-zoom="menos" aria-label="Reducir documento">−</button><output aria-live="polite">100 %</output><button type="button" class="btn sm" data-zoom="mas" aria-label="Ampliar documento">+</button><button type="button" class="btn sm" data-zoom="normal">100 %</button><button type="button" class="btn sm" data-zoom="ajustar">Ajustar</button></div><div class="fac-viewer-scroll" tabindex="0" aria-label="Documento; desplázate para ver las zonas ampliadas"><div class="fac-viewer-space"><div class="fac-viewer-page">${mime.startsWith('image/')?`<img src="${url}" alt="Original de la compra">`:`<iframe src="${url}#view=FitH" title="Original de la compra"></iframe>`}</div></div></div>`;
+ const scroll=caja.querySelector('.fac-viewer-scroll'),space=caja.querySelector('.fac-viewer-space'),page=caja.querySelector('.fac-viewer-page'),media=page.firstElementChild;
+ let zoom=1;
+ const dibujar=()=>{const w=scroll.clientWidth;if(!w)return;page.style.width=w+'px';media.style.height=media.tagName==='IMG'?'auto':'520px';page.style.transform=`scale(${zoom})`;space.style.width=w*zoom+'px';space.style.height=page.offsetHeight*zoom+'px';caja.querySelector('output').textContent=Math.round(zoom*100)+' %';caja.querySelector('[data-zoom=menos]').disabled=zoom<=.5;caja.querySelector('[data-zoom=mas]').disabled=zoom>=3;};
+ caja.querySelector('.fac-viewer-tools').onclick=e=>{const b=e.target.closest('[data-zoom]');if(!b)return;zoom=b.dataset.zoom==='mas'?Math.min(3,zoom+.25):b.dataset.zoom==='menos'?Math.max(.5,zoom-.25):1;dibujar();if(['normal','ajustar'].includes(b.dataset.zoom))scroll.scrollTo(0,0);};
+ media.addEventListener('load',dibujar);const resize=new ResizeObserver(dibujar);resize.observe(scroll);dibujar();
+ const cleanup=new MutationObserver(()=>{if(!caja.isConnected){resize.disconnect();cleanup.disconnect();URL.revokeObjectURL(url);}});cleanup.observe(document.body,{childList:true,subtree:true});
+}
 async function facPintarPapel(caja, id) {
-  if (!caja) return;
-  try {
-    const r = await fetch(`/api/facturas/${encodeURIComponent(id)}/miniatura`, { headers: { Authorization: "Bearer " + token() } });
-    // Que conteste no basta: si lo que vuelve no es una imagen —un error en JSON, por ejemplo—
-    // pintarlo daría el icono de foto rota, que parece un fallo del panel y no una factura sin
-    // vista previa. Se dice con palabras.
-    const esImagen = r.ok && (r.headers.get("content-type") || "").startsWith("image/");
-    if (!esImagen) {
-      caja.classList.add("nofoto");
-      caja.innerHTML = '<span class="mut" style="font-size:12px;text-align:center;padding:10px">Sin vista previa. El original sigue en Drive.</span>';
-      return;
-    }
-    const url = URL.createObjectURL(await r.blob());
-    const img = new Image();
-    img.className = "fic-img"; img.alt = "Documento de la factura"; img.src = url;
-    img.onload = () => URL.revokeObjectURL(url);
-    caja.replaceWith(img);
-  } catch { caja.classList.add("nofoto"); }
+ if(!caja)return;
+ try{
+  const r=await fetch(`/api/facturas/${encodeURIComponent(id)}/archivo`,{headers:{Authorization:'Bearer '+token()}});
+  if(!r.ok)throw new Error('Original no disponible');
+  const blob=await r.blob();if(!caja.isConnected)return;
+  facVistaDocumento(caja,URL.createObjectURL(blob),blob.type.split(';')[0]);
+ }catch{if(caja.isConnected)caja.textContent='No se pudo cargar el original. Puedes reabrir la factura o descargarlo.';}
 }
 
 /**
@@ -9726,7 +9801,7 @@ function facFicha(id) {
     <div class="ficha">
       <div class="fic-doc">
         ${f.drive_url
-          ? `<a href="${esc(f.drive_url)}" target="_blank" rel="noopener" title="Abrir el original en Drive"><span class="fic-ph" data-ficthumb="${esc(String(f.id))}"></span></a>
+          ? `<div data-ficthumb="${esc(String(f.id))}">Cargando original…</div>
              <div style="display:flex;gap:6px">
                <a class="btn sm" href="${esc(f.drive_url)}" target="_blank" rel="noopener" style="flex:1;justify-content:center">Ver ↗</a>
                <button class="btn sm" id="ficBajar" style="flex:1">Descargar</button>
@@ -10192,17 +10267,17 @@ async function facRepasoDocumento(item,volver){
  const campos=[['tipo','Tipo'],['proveedor','Proveedor'],['nif','NIF'],['fecha','Fecha'],['numero_factura','Número'],['base_imponible','Base'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['total','Total']];
  const numeros=new Set(['base_imponible','porcentaje_iva','cuota_iva','total']);
  const editables=item.origen!=='recepcion'&&!d.revision_humana;
- const ov=modal('Revisar documento · #'+item.documento_id,`<div class="hist-revision"><section><h3>Original</h3><div id="histOriginal">Cargando…</div><p id="histDescarga"></p><p class="mut">La lectura es una propuesta. Comprueba cada cambio con el documento.</p></section><section><h3>Datos y propuesta</h3>${(d.resultado?.avisos||[]).map(a=>`<p>${esc(a.texto)}</p>`).join('')}<form id="histForm">${campos.map(([k,l])=>{const valor=propuesta[k==='nif'?'nif_proveedor':k],distinto=String(valor??'')!==String(actual[k]??'');return `<div class="field" style="margin:12px 0"><label for="hist-${k}">${l}</label>${editables?k==='tipo'?`<select id="hist-${k}">${['factura','ticket','albaran','otro'].map(t=>`<option ${actual[k]===t?'selected':''}>${t}</option>`).join('')}</select>`:`<input id="hist-${k}" type="${numeros.has(k)?'number':k==='fecha'?'date':'text'}" ${numeros.has(k)?'step="any"':''} value="${esc(actual[k]??'')}">`:`<p>${esc(actual[k]??actual[k==='nif'?'nif_proveedor':k]??'—')}</p>`}${distinto?`<small>Propuesta: ${esc(valor??'No leído')}</small>`:''}${editables&&valor!=null&&distinto?` <button class="btn sm" type="button" data-propuesta="${k}">Usar propuesta</button>`:''}</div>`;}).join('')}${d.revision_humana?`<h3>Revisión guardada</h3><p>${esc(d.revision_humana.autor)} · ${esc(new Date(d.revision_humana.fecha).toLocaleString('es-ES'))}</p><p>${esc(d.revision_humana.motivo)}</p><details><summary>Ver cambios confirmados</summary>${(d.historial||[]).map(h=>`<p>${h.decision==='corregir'?'Corrección':'Se conservaron los datos'}</p>${campos.map(([k,l])=>`<p>${l}: ${esc(h.antes?.[k]??'—')} → ${esc(h.despues?.[k]??'—')}</p>`).join('')}`).join('')}</details>`:`${!editables?'<p>Esta recepción se corrige y registra desde Compras → Documentos recibidos. Aquí puedes dejar constancia de que has comprobado el aviso.</p>':''}<div class="field"><label for="histMotivo">Qué has comprobado o corregido</label><textarea id="histMotivo" required minlength="5" maxlength="2000"></textarea></div><p><label><input type="checkbox" id="histConfirmado" required> He comprobado el original y confirmo esta decisión.</label></p>${editables?'<p><label><input type="checkbox" id="histExcepcion"> Si persiste un aviso, he verificado la excepción y la explico en el motivo.</label></p><p class="mut">Cambiar importes requiere revisar también el desglose de IVA y los productos en la ficha. No se modifican automáticamente.</p>':''}<p id="histGuardarError" role="alert"></p><div class="toolbar"><button class="btn" type="submit" value="conservar">Conservar datos actuales</button>${editables?'<button class="btn primary" type="submit" value="corregir">Confirmar corrección</button>':''}</div>`}</form></section></div><div class="toolbar" style="margin-top:16px"><button class="btn" id="histVolver">Volver al repaso</button></div>`);
+ const ov=modal('Revisar documento · #'+item.documento_id,`<div class="hist-revision"><section><h3>Original</h3><div id="histOriginal">Cargando…</div><p id="histDescarga"></p><p class="mut">La lectura es una propuesta. Comprueba cada cambio con el documento.</p></section><section><h3>Datos y propuesta</h3>${(d.resultado?.avisos||[]).map(a=>`<p>${esc(a.texto)}</p>`).join('')}<form id="histForm">${campos.map(([k,l])=>{const valor=propuesta[k==='nif'?'nif_proveedor':k],distinto=String(valor??'')!==String(actual[k]??'');return `<div class="field" style="margin:12px 0"><label for="hist-${k}">${l}</label>${editables?k==='tipo'?`<select id="hist-${k}">${['factura','ticket','albaran','otro'].map(t=>`<option ${actual[k]===t?'selected':''}>${t}</option>`).join('')}</select>`:`<input id="hist-${k}" type="${numeros.has(k)?'number':k==='fecha'?'date':'text'}" ${numeros.has(k)?'step="any"':''} value="${esc(actual[k]??'')}">`:`<p>${esc(actual[k]??actual[k==='nif'?'nif_proveedor':k]??'—')}</p>`}${distinto?`<small>Propuesta: ${esc(valor??'No leído')}</small>`:''}${editables&&valor!=null&&distinto?` <button class="btn sm" type="button" data-propuesta="${k}">Usar propuesta</button>`:''}</div>`;}).join('')}${d.revision_humana?`<h3>Revisión guardada</h3><p>${esc(d.revision_humana.autor)} · ${esc(new Date(d.revision_humana.fecha).toLocaleString('es-ES'))}</p><p>${esc(d.revision_humana.motivo)}</p><details><summary>Ver cambios confirmados</summary>${(d.historial||[]).map(h=>`<p>${h.decision==='corregir'?'Corrección':'Se conservaron los datos'}</p>${campos.map(([k,l])=>`<p>${l}: ${esc(h.antes?.[k]??'—')} → ${esc(h.despues?.[k]??'—')}</p>`).join('')}`).join('')}</details>`:`${!editables?'<p>Esta recepción se corrige y registra desde Compras → Documentos recibidos. Aquí puedes dejar constancia de que has comprobado el aviso.</p>':''}<p><label><input type="checkbox" id="histConfirmado" required> He comprobado el original y confirmo esta decisión.</label></p>${editables?'<p><label><input type="checkbox" id="histExcepcion"> Si persiste un aviso, he verificado que es una excepción válida.</label></p><p class="mut">Cambiar importes requiere revisar también el desglose de IVA y los productos en la ficha. No se modifican automáticamente.</p>':''}<p id="histGuardarError" role="alert"></p><div class="toolbar"><button class="btn" type="submit" value="conservar">Conservar datos actuales</button>${editables?'<button class="btn primary" type="submit" value="corregir">Confirmar corrección</button>':''}</div>`}</form></section></div><div class="toolbar" style="margin-top:16px"><button class="btn" id="histVolver">Volver al repaso</button></div>`);
  ov.querySelector('.modal').style.cssText+=';width:min(1100px,96vw);max-width:1100px';
  ov.insertAdjacentHTML('beforeend','<style>.hist-revision{display:grid;grid-template-columns:1fr 1fr;gap:24px}.hist-revision section{min-width:0;overflow-wrap:anywhere}.hist-revision section:first-child{position:sticky;top:0;align-self:start}.hist-revision [data-propuesta]{width:auto;margin-top:6px}.hist-revision input:not([type=checkbox]),.hist-revision select,.hist-revision textarea{width:100%}.hist-revision small{display:block}@media(max-width:700px){.hist-revision{grid-template-columns:1fr}.hist-revision section:first-child{position:static}}</style>');
  if(editables)facSelectorProveedor(ov,'#hist-proveedor');
  ov.querySelector('#histVolver').onclick=()=>{ov.remove();volver().catch(e=>toast(e.message));};
- ov.querySelectorAll('[data-propuesta]').forEach(b=>b.onclick=()=>{const k=b.dataset.propuesta;ov.querySelector('#hist-'+k).value=propuesta[k==='nif'?'nif_proveedor':k];});
+ ov.querySelectorAll('[data-propuesta]').forEach(b=>b.onclick=()=>{const k=b.dataset.propuesta;const campo=ov.querySelector('#hist-'+k);campo.value=propuesta[k==='nif'?'nif_proveedor':k];campo.dispatchEvent(new Event('change',{bubbles:true}));});
  if(!d.revision_humana)ov.querySelector('#histForm').onsubmit=async e=>{
   e.preventDefault();const decision=e.submitter?.value;if(!decision)return;
   const botones=[...ov.querySelectorAll('button[type=submit]')];botones.forEach(b=>b.disabled=true);
   const valores=editables?Object.fromEntries(campos.map(([k])=>{const v=ov.querySelector('#hist-'+k).value;return[k,v===''?null:numeros.has(k)?Number(v):v.trim()];})):null;
-  try{await apiSend('POST',ruta,{decision,campos:valores,esperado:actual,motivo:ov.querySelector('#histMotivo').value,confirmado:ov.querySelector('#histConfirmado').checked,excepcion:ov.querySelector('#histExcepcion')?.checked===true});ov.remove();await volver();}
+  try{await apiSend('POST',ruta,{decision,campos:valores,esperado:actual,confirmado:ov.querySelector('#histConfirmado').checked,excepcion:ov.querySelector('#histExcepcion')?.checked===true});ov.remove();await volver();}
   catch(err){ov.querySelector('#histGuardarError').textContent=err.message;botones.forEach(b=>b.disabled=false);}
  };
  const archivo=item.origen==='factura'?`/api/facturas/${item.documento_id}/archivo`:item.origen==='pendiente'?`/api/facturas/pendientes/${item.documento_id}/archivo`:`/api/facturas/recepciones/${item.documento_id}/original`;
@@ -10210,7 +10285,7 @@ async function facRepasoDocumento(item,volver){
   if(!r.ok)throw new Error('Original no disponible. No confirmes datos que no has podido comprobar.');
   const blob=await r.blob();if(!ov.isConnected)return;
   const url=URL.createObjectURL(blob),mime=blob.type.split(';')[0];
-  ov.querySelector('#histOriginal').innerHTML=['image/jpeg','image/png','image/webp'].includes(mime)?`<img src="${url}" alt="Original del documento" style="max-width:100%">`:mime==='application/pdf'?`<iframe src="${url}" title="Original del documento" style="width:100%;height:440px;border:0"></iframe>`:'Vista previa no disponible; descarga el archivo para comprobarlo.';
+  facVistaDocumento(ov.querySelector('#histOriginal'),url,mime);
   ov.querySelector('#histDescarga').innerHTML=`<a href="${url}" download="documento-${item.documento_id}">Descargar original</a>`;
   const observer=new MutationObserver(()=>{if(!ov.isConnected){URL.revokeObjectURL(url);observer.disconnect();}});observer.observe(document.body,{childList:true});
  }).catch(e=>{if(ov.isConnected)ov.querySelector('#histOriginal').textContent=e.message;});
@@ -10265,7 +10340,7 @@ async function facRevisionRecepcion(id) {
     const campos=[['proveedor','Proveedor'],['nif_proveedor','NIF del proveedor'],['fecha','Fecha de emisión'],['numero_factura','Número de documento'],['base_imponible','Base imponible'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['retencion','Retención'],['recargo_equivalencia','Recargo de equivalencia'],['otros_cargos','Otros cargos'],['total','Total']];
     const numericos=new Set(['base_imponible','porcentaje_iva','cuota_iva','retencion','recargo_equivalencia','otros_cargos','total']);
     const avisos=f.resultado?.avisos || [];
-    const ov=modal('Comprobar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${k==='fecha'?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<div class="field"><label for="revMotivo">Qué has comprobado o corregido</label><textarea id="revMotivo" required maxlength="2000" placeholder="Por ejemplo: el total del original es 121 €, la primera lectura confundió un dígito."></textarea></div><label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida y he explicado el motivo.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" data-close>Revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
+    const ov=modal('Comprobar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${k==='fecha'?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" data-close>Revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
     ov.querySelector('.modal').style.width='min(1050px, 96vw)';
     ov.querySelector('.modal').style.maxWidth='1050px';
     ov.querySelector('.grid').classList.add('fac-revision-grid');
@@ -10276,7 +10351,7 @@ async function facRevisionRecepcion(id) {
     const r=await fetch(`/api/facturas/recepciones/${encodeURIComponent(id)}/original?ver=1`,{headers:{Authorization:'Bearer '+token()}});
     if(r.ok && ov.isConnected) {
       const blob=await r.blob(); url=URL.createObjectURL(blob);
-      ov.querySelector('#revOriginal').innerHTML=blob.type.startsWith('image/') ? `<img src="${url}" alt="Original del documento" style="width:100%;height:auto">` : blob.type==='application/pdf' ? `<iframe src="${url}" title="Original del documento" style="width:100%;height:480px;border:0"></iframe>` : '<p>Descarga el original para comprobarlo.</p>';
+      facVistaDocumento(ov.querySelector('#revOriginal'),url,blob.type.split(';')[0]);
       const observer=new MutationObserver(()=>{if(!ov.isConnected){URL.revokeObjectURL(url);observer.disconnect();}}); observer.observe(document.body,{childList:true,subtree:true});
     } else if(ov.isConnected) ov.querySelector('#revOriginal').textContent='No se ha podido cargar el original. Descárgalo para revisarlo.';
     facSelectorProveedor(ov,'#rev-proveedor');
@@ -10285,7 +10360,7 @@ async function facRevisionRecepcion(id) {
       const datos={tipo:ov.querySelector('#revTipo').value};
       for(const [k] of campos){const v=ov.querySelector('#rev-'+k).value;datos[k]=v===''?null:numericos.has(k)?Number(v):v;}
       try {
-        await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`,{datos,motivo:ov.querySelector('#revMotivo').value,confirmado:ov.querySelector('#revConfirmado').checked,aceptarAvisos:ov.querySelector('#revExcepcion').checked});
+        await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`,{datos,confirmado:ov.querySelector('#revConfirmado').checked,aceptarAvisos:ov.querySelector('#revExcepcion').checked});
         ov.querySelector('[data-close]').click(); toast('Revisión guardada. El documento se registrará desde la cola.'); await facCargarRecepciones();
       } catch(err){ov.querySelector('#revError').textContent=err.message;boton.disabled=false;}
     };
@@ -12350,9 +12425,7 @@ function facRevisar(id) {
       if (!r.ok) throw new Error("no disponible");
       const blob = await r.blob(); blobUrl = URL.createObjectURL(blob);
       const cont = ov.querySelector(".prev");
-      cont.innerHTML = blob.type.startsWith("image/")
-        ? `<img src="${blobUrl}" alt="Vista previa">`
-        : `<iframe src="${blobUrl}" title="Vista previa"></iframe>`;
+      facVistaDocumento(cont,blobUrl,blob.type.split(';')[0]);
     } catch {
       const el = ov.querySelector("#prPrev");
       if (el) el.innerHTML = `<div style="text-align:center;padding:12px">No se pudo cargar la vista previa.${p.drive_url ? `<br><a class="link" href="${esc(p.drive_url)}" target="_blank" rel="noopener">Abrir en Drive ↗</a>` : ""}</div>`;
@@ -12367,15 +12440,7 @@ function facRevisar(id) {
     const lista = ov.querySelector("#prProvLista");
     if (!lista) return;
     lista.innerHTML = provs.map((x) => `<option value="${esc(x.proveedor)}">${x.nif ? esc(x.nif) + " · " : ""}${num(x.n)} factura(s)</option>`).join("");
-    const inp = ov.querySelector("#prProv"), nif = ov.querySelector('[data-pf="nif"]');
-    inp?.addEventListener("change", () => {
-      const elegido = provs.find((x) => x.proveedor === inp.value);
-      // Solo se rellena si está VACÍO o si el que había es el de otro proveedor: si alguien ha
-      // escrito un NIF a mano, no se le pisa.
-      if (!elegido || !elegido.nif || !nif) return;
-      const teniaOtro = provs.some((x) => x.nif && x.nif === nif.value && x.proveedor !== elegido.proveedor);
-      if (!nif.value.trim() || teniaOtro) { nif.value = elegido.nif; nif.dispatchEvent(new Event("input", {bubbles:true})); }
-    });
+
   })();
 
   ov.querySelector('#prDescartar').addEventListener('click', async () => {
@@ -18105,6 +18170,10 @@ document.addEventListener("click", (e) => {
   // aparecías en otro sitio sin haberlo pedido. Si la pantalla no usa el local, no pasa nada
   // visible, que es exactamente lo correcto.
   else if (act === "estab-config") { closeDrawer(); configurarLocal(t.getAttribute("data-local")); }
+  else if (act === "estab-todos") {
+    if (!seleccionarTodosEstablecimientos()) return;
+    guardarAmbito(); closeDrawer(); go(CURRENT, { desdeUrl: true });
+  }
   else if (act === "estab-pick") { DASH_LOCAL = t.getAttribute("data-local") || ""; SELECCION = []; guardarAmbito(); closeDrawer(); go(CURRENT, { desdeUrl: true }); }
   // Marcar y desmarcar no cambia de pantalla: se van eligiendo y se aplica al final. Cambiar de
   // ámbito en cada clic haría tres recargas para juntar tres locales.

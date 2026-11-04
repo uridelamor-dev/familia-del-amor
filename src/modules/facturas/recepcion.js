@@ -1,3 +1,4 @@
+import { nombreArchivo } from './archivo-drive.js';
 import { datosRevision, controlesLectura } from './validacion-lectura.js';
 import { ADJUNTOS_DECORATIVOS_VERIFICADOS } from './adjuntos-verificados.js';
 import { diagnosticarRecepcion } from './error-recepcion.js';
@@ -13,6 +14,13 @@ export const RECEPCION_SCHEMA = `CREATE TABLE IF NOT EXISTS facturas_recepciones
 )`;
 export function canalFactura(origen = 'Manual') {
   return ({manual:'Manual',web:'Manual',email:'Email',correo:'Email',gmail:'Email',drive:'Drive',whatsapp:'WhatsApp'})[String(origen).toLowerCase()] || 'Manual';
+}
+// El nombre visible nunca depende del identificador técnico de WhatsApp.
+export function nombreRecepcion(f) {
+  const datos=f.resultado?.datos || {};
+  const ext=({'application/pdf':'.pdf','image/jpeg':'.jpg','image/png':'.png','image/webp':'.webp','image/heic':'.heic','image/heif':'.heif','image/gif':'.gif','image/tiff':'.tiff'})[f.mime] || String(f.nombre||'').match(/\.[a-zA-Z0-9]{1,8}$/)?.[0] || '';
+  const ref=f.id ? `Recepción-${f.id}` : `Recepción-${String(f.hash||'').slice(0,12)}`;
+  return nombreArchivo({...datos,local:f.local||'Local por asignar',id:ref},ext);
 }
 export function errorRecibido(id) {
   const e = new Error(`Documento recibido (#${id}). La lectura está pendiente; puedes seguirla en Compras → Documentos recibidos.`);
@@ -50,12 +58,14 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       await db.run(`UPDATE facturas_recepciones SET estado='leyendo', intentos=intentos+1, actualizado=NOW() WHERE id=?`, [id]);
       try {
         if(antesProcesar && await antesProcesar(f)) return {recibido:true,paginas:true};
+        const nombre=nombreRecepcion(f);
+        await db.run('UPDATE facturas_recepciones SET nombre=? WHERE id=?',[nombre,id]);
         const r = await conPlazoFactura(() => procesar({buffer:f.original,mimeType:f.mime,filename:f.nombre,local:f.local,canal:f.canal,origen:f.canal,datosAprobados:f.resultado?.aprobacion ? f.resultado.datos : null}));
-        await db.run(`UPDATE facturas_recepciones SET estado=?, resultado=?::jsonb, original=CASE WHEN contexto->>'grupo' IS NOT NULL THEN original ELSE NULL END, error=NULL, actualizado=NOW() WHERE id=?`, [r?.descartado ? 'descartado' : 'registrado',JSON.stringify({...r, revisionPrevia:f.resultado?.aprobacion ? f.resultado : undefined}),id]);
+        await db.run(`UPDATE facturas_recepciones SET estado=?, resultado=?::jsonb, nombre=?, original=CASE WHEN contexto->>'grupo' IS NOT NULL THEN original ELSE NULL END, error=NULL, actualizado=NOW() WHERE id=?`, [r?.descartado ? 'descartado' : 'registrado',JSON.stringify({...r, revisionPrevia:f.resultado?.aprobacion ? f.resultado : undefined}),nombreRecepcion({...f,resultado:r}),id]);
         return r;
       } catch(e) {
         if(e.revisionDocumento) {
-          await db.run("UPDATE facturas_recepciones SET estado='revision',resultado=?::jsonb,error=?,actualizado=NOW() WHERE id=?",[JSON.stringify(e.resultado),'Comprueba los campos señalados. Original guardado; importes sin registrar.',id]);
+          await db.run("UPDATE facturas_recepciones SET estado='revision',resultado=?::jsonb,nombre=?,error=?,actualizado=NOW() WHERE id=?",[JSON.stringify(e.resultado),nombreRecepcion({...f,resultado:e.resultado}),'Comprueba los campos señalados. Original guardado; importes sin registrar.',id]);
           const recibido=errorRecibido(id); recibido.message=e.message; throw recibido;
         }
         if (e.isDuplicate) {
@@ -82,7 +92,7 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
     const f = await db.run(`INSERT INTO facturas_recepciones (clave,hash,canal,local,nombre,mime,original,contexto,proximo)
       VALUES (?,?,?,?,?,?,?,?::jsonb,?) ON CONFLICT(clave) DO UPDATE SET clave=EXCLUDED.clave,
         original=CASE WHEN facturas_recepciones.estado IN ('registrado','duplicado') THEN EXCLUDED.original ELSE facturas_recepciones.original END RETURNING id,estado`,
-      [clave,hash,canal,o.local||null,String(o.filename||'documento').slice(0,240),o.mimeType,o.buffer,o.contexto?.grupo&&o.contexto?.remitente?JSON.stringify(o.contexto):null,new Date(ahora().getTime()+(o.contexto?.grupo?90000:0)).toISOString()]);
+      [clave,hash,canal,o.local||null,nombreRecepcion({hash,local:o.local,mime:o.mimeType,nombre:o.filename}),o.mimeType,o.buffer,o.contexto?.grupo&&o.contexto?.remitente?JSON.stringify(o.contexto):null,new Date(ahora().getTime()+(o.contexto?.grupo?90000:0)).toISOString()]);
     // Vincular el mensaje original incluso cuando el archivo ya estaba registrado.
     if(o.onDocumentoGuardado) await o.onDocumentoGuardado(f.id);
     // Avisar solo después de guardar el original.
@@ -113,10 +123,9 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       const datos=datosRevision(f.resultado?.datos,cambios);
       const avisos=controlesLectura(datos);
       if(avisos.some(a=>["fecha","proveedor","tipo"].includes(a.campo))) throw new Error("Completa proveedor, tipo y fecha válidos antes de registrar");
-      if(avisos.length && aceptarAvisos!==true) throw new Error("Quedan avisos. Corrígelos o confirma expresamente la excepción indicando el motivo");
-      if(!String(motivo||'').trim()) throw new Error('Indica qué has comprobado o corregido');
-      const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,fecha:ahora().toISOString(),motivo:String(motivo).trim().slice(0,2000)}};
-      await db.run("UPDATE facturas_recepciones SET estado='pendiente',resultado=?::jsonb,intentos=0,proximo=NOW(),error=NULL,actualizado=NOW() WHERE id=? AND estado='revision'",[JSON.stringify(resultado),id]);
+      if(avisos.length && aceptarAvisos!==true) throw new Error("Quedan avisos. Corrígelos o confirma expresamente la excepción");
+      const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};
+      await db.run("UPDATE facturas_recepciones SET estado='pendiente',resultado=?::jsonb,nombre=?,intentos=0,proximo=NOW(),error=NULL,actualizado=NOW() WHERE id=? AND estado='revision'",[JSON.stringify(resultado),nombreRecepcion({...f,resultado}),id]);
       return {ok:true};
     });
   }

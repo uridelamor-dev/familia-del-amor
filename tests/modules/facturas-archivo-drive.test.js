@@ -5,7 +5,7 @@ const original=globalThis.fetch;afterEach(()=>globalThis.fetch=original);
 test('empresa/año/mes/local y nombre con ID; nunca inventa fecha',async()=>{
  const f={id:182,empresa:'Empresa SL',local:'Girona',fecha:'2026-10-05',numero_factura:'F/123',proveedor:'Distribuidor'};
  assert.deepEqual(rutaArchivo(f),['Empresa SL','2026','10 · Octubre','Girona']);
- assert.equal(nombreArchivo(f),'2026-10-05 · Distribuidor · F-123 · Girona · ID-182.pdf');
+ assert.equal(nombreArchivo(f),'2026-10-05 · Documento · Distribuidor · F-123 · Girona · ID-182.pdf');
  assert.deepEqual(rutaArchivo({...f,fecha:null}).slice(1,3),['Sin fecha','Por revisar']);
  assert.equal(rutaArchivo({...f,fecha:'2026-02-31'})[1],'Sin fecha');
  const ruta=[];await carpetaDocumento('t','root',f,async(t,n,p)=>{ruta.push([n,p]);return n;});

@@ -171,3 +171,9 @@ describe("cableado: lo dudoso no puede colarse en ningún total", () => {
     assert.match(server.slice(i, i + 2200), /resincronizarSheetsFactura/);
   });
 });
+
+test('dos documentos sin valorar no son duplicados por coincidir en cero',()=>{
+ const a={proveedor:'EUROPASTRY',total:0,fecha:'2026-10-12',numero_factura:'s/n'};
+ assert.equal(comparar(a,{...a,fecha:'2026-10-10'}).veredicto,'distinta');
+ assert.equal(comparar(a,{...a}).veredicto,'distinta');
+});

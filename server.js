@@ -13,7 +13,7 @@ import {cargarProgresoFichajes} from './src/modules/horarios/progreso-fichajes.j
 import {decisionAvisos,guardarDecisionAvisos,avisosAceptados,huellaRevision,reabrirHistoricoModificado} from './src/modules/facturas/avisos-memoria.js';
 import {prepararReglaLocal,guardarReglaLocal,registrarMemoria} from './src/modules/facturas/memoria.js';
 import {prepararUnionGrupo,resumenGrupo,ejecutarUnionGrupo} from './src/modules/facturas/unir-proveedores-grupo.js';
-import { filtroRevision, documentoEnAmbito } from './src/modules/facturas/ambito-revision.js';
+import { filtroRevision } from './src/modules/facturas/ambito-revision.js';
 import { resolverDuplicado } from './src/modules/facturas/duplicados-decision.js';
 import { FIRMAS_PANEL_SCHEMA, registrarFirmasPanel } from './src/modules/rrhh/firmas/panel.js';
 import { MASIVOS_SCHEMA, registrarDocumentosMasivos } from './src/modules/rrhh/documentos-masivos.js';
@@ -64,7 +64,7 @@ import { registrarRecorrido } from "./src/modules/campaigns/recorrido-rutas.js";
 import { ENVIOS_SCHEMA, destinatariosCorreo, validarSeleccionCorreo, prepararCorreoResend, confirmarCorreoResend } from "./src/modules/campaigns/email-envios.js";
 import { FICHA_COMERCIAL_SCHEMA, validarFichaComercial } from "./src/modules/facturas/ficha-comercial.js";
 import { puedePropagarUnidad } from "./src/modules/facturas/correccion-unidades.js";
-import { RECEPCION_SCHEMA, crearRecepcion, listarPaginas } from "./src/modules/facturas/recepcion.js";
+import { RECEPCION_SCHEMA, crearRecepcion, listarPaginas, nombreRecepcion } from "./src/modules/facturas/recepcion.js";
 import { MAX_DOCUMENTO, descargarLimitado } from "./src/modules/facturas/red.js";
 import { registrarRechazo, claveRechazo } from "./src/modules/facturas/rechazos.js";
 import { filtrarGeografia, resolverPoblacion, sugerirPoblaciones } from './src/modules/captacion/geografia.js';
@@ -3241,8 +3241,8 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     }
     if(req.body.periodo_facturado && !/^\d{4}-(0[1-9]|1[0-2])$/.test(req.body.periodo_facturado)) return res.status(400).json({error:"Periodo no válido"});
     if(!antes)return res.status(404).json({error:'Factura no encontrada'});
-    if(!documentoEnAmbito(antes,localesScope({...req,query:{}})))return res.status(403).json({error:'Sin acceso a esta factura'});
-    if(req.body.local&&!documentoEnAmbito({local:req.body.local},localesScope({...req,query:{}})))return res.status(403).json({error:'Sin acceso al local de destino'});
+    if(!puedeAccederLocal(req,antes.local))return res.status(403).json({error:'Sin acceso a esta factura'});
+    if(req.body.local&&!puedeAccederLocal(req,req.body.local))return res.status(403).json({error:'Sin acceso al local de destino'});
     let reglaLocal;
     if(req.body.recordar_local===true){
       if(!contabilidadGlobal(req.user))return res.status(403).json({error:'Guardar reglas compartidas requiere acceso a todos los locales de Contabilidad.'});
@@ -3688,7 +3688,7 @@ app.get('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direcci
   if(!item)return res.status(404).json({error:'No forma parte de este repaso'});
   const actual=await dbGet(`SELECT * FROM ${tablas[origen]} WHERE id=?`,[id]);
   if(!actual)return res.status(409).json({error:'El documento ha cambiado de bandeja. Consúltalo en Compras.'});
-  if(!documentoEnAmbito(actual,localesScope({...req,query:{}})))return res.status(403).json({error:'Sin acceso a este local'});
+  if(!puedeAccederLocal(req,actual.local))return res.status(403).json({error:'Sin acceso a este local'});
   const historial=await dbAll('SELECT autor,fecha,decision,motivo,antes,despues FROM facturas_repaso_decisiones WHERE origen=? AND documento_id=? ORDER BY id',[origen,id]);
   res.json({ok:true,data:{...item,actual:origen==='recepcion'?actual.resultado?.datos||{}:cabeceraHistorica(actual),historial}});
  }catch(e){next(e);}
@@ -3696,7 +3696,7 @@ app.get('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direcci
 app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direccion", "contabilidad"]),async(req,res)=>{
  try{
   if(!PROD)return res.status(409).json({error:'Disponible después de publicar'});
-  const r=await decidirRepasoHistorico({origen:req.params.origen,id:req.params.id,body:req.body,autor:String(req.user.nombre||req.user.username),puedeAcceder:d=>documentoEnAmbito(d,localesScope({...req,query:{}}))});
+  const r=await decidirRepasoHistorico({origen:req.params.origen,id:req.params.id,body:req.body,autor:String(req.user.nombre||req.user.username),puedeAcceder:d=>puedeAccederLocal(req,d.local)});
   res.json({ok:true});
   if(r.origen==='factura'&&r.decision==='corregir'){
    (async()=>{
@@ -3715,20 +3715,20 @@ app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]),
     const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
     const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa,tipo:req.query.tipo},{tipo:"resultado->'datos'->>'tipo'",local:"local",empresa:"COALESCE(resultado->'datos'->>'empresa',resultado->'datos'->>'empresa_detectada')"});
     const filtro=ambito.sql; const params=ambito.params;
-    const filas = await dbAll(`SELECT id,canal,local,nombre,estado,intentos,error,creado,original IS NOT NULL AS tiene_original,(SELECT p.id FROM facturas_paginas p WHERE p.estado='revision' AND facturas_recepciones.id IN (p.primera,p.segunda) ORDER BY p.id DESC LIMIT 1) AS paginas_id FROM facturas_recepciones
+    const filas = await dbAll(`SELECT id,canal,local,nombre,mime,resultado,estado,intentos,error,creado,original IS NOT NULL AS tiene_original,(SELECT p.id FROM facturas_paginas p WHERE p.estado='revision' AND facturas_recepciones.id IN (p.primera,p.segunda) ORDER BY p.id DESC LIMIT 1) AS paginas_id FROM facturas_recepciones
       WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
     const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado IN ('error','revision','paginas')) AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro}`,params);
     const propuestas=await dbAll(`SELECT p.id,p.estado,p.pruebas->>'motivo' AS motivo FROM facturas_paginas p
       WHERE (p.estado='revision' OR (p.estado='unidas' AND p.creado>NOW()-INTERVAL '7 days'))
       AND EXISTS(SELECT 1 FROM facturas_recepciones WHERE id IN (p.primera,p.segunda) ${filtro}) ORDER BY (p.estado='revision') DESC,p.id DESC LIMIT 50`,params);
-    res.json({ok:true,propuestas,data:filas.slice(0,50),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
+    res.json({ok:true,propuestas,data:filas.slice(0,50).map(({resultado,mime,...f})=>({...f,nombre:nombreRecepcion({...f,mime,resultado})})),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
   } catch(e) { next(e); }
 });
 app.get("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
-    const f=await dbGet(`SELECT id,local,nombre,estado,resultado,(SELECT jsonb_build_object('resumen_error',a.resumen_error,'solicitud_estado',a.solicitud_estado) FROM facturas_avisos_grupo a WHERE a.recepcion_id=facturas_recepciones.id ORDER BY a.id DESC LIMIT 1) AS aviso_grupo FROM facturas_recepciones WHERE id=?`,[req.params.id]);
+    const f=await dbGet(`SELECT id,local,nombre,mime,estado,resultado,(SELECT jsonb_build_object('resumen_error',a.resumen_error,'solicitud_estado',a.solicitud_estado) FROM facturas_avisos_grupo a WHERE a.recepcion_id=facturas_recepciones.id ORDER BY a.id DESC LIMIT 1) AS aviso_grupo FROM facturas_recepciones WHERE id=?`,[req.params.id]);
     if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
-    res.setHeader('Cache-Control','no-store'); res.json({ok:true,data:f});
+    res.setHeader('Cache-Control','no-store'); res.json({ok:true,data:{...f,nombre:nombreRecepcion(f)}});
   } catch(e) {next(e);}
 });
 app.post("/api/facturas/recepciones/:id/pedir-foto", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
@@ -3753,13 +3753,13 @@ app.post("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "co
 });
 app.get("/api/facturas/recepciones/:id/original", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
-    const f = await dbGet('SELECT original,local,mime,nombre FROM facturas_recepciones WHERE id=?',[req.params.id]);
+    const f = await dbGet('SELECT id,original,local,mime,nombre,resultado FROM facturas_recepciones WHERE id=?',[req.params.id]);
     if (f && !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
     if (!f?.original) return res.status(404).json({ok:false,error:'El original ya está archivado con la factura o no existe.'});
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
     if(req.query.ver==='1' && ['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mime)) res.type(f.mime).send(f.original);
-    else res.type('application/octet-stream').attachment(f.nombre || 'documento').send(f.original);
+    else res.type('application/octet-stream').attachment(nombreRecepcion(f)).send(f.original);
   } catch(e) { next(e); }
 });
 app.post("/api/facturas/recepciones/:id/reintentar", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
@@ -3778,7 +3778,7 @@ app.get("/api/facturas/documento/:id", requireAuth(["direccion", "contabilidad"]
   try {
     const row=await dbGet("SELECT * FROM facturas WHERE id=?",[req.params.id]);
     if(!row)return res.status(404).json({ok:false,error:"El documento ya no está disponible"});
-    if(!documentoEnAmbito(row,localesScope({...req,query:{}})))return res.status(403).json({ok:false,error:"Sin acceso a este documento"});
+    if(!puedeAccederLocal(req,row.local))return res.status(403).json({ok:false,error:"Sin acceso a este documento"});
     delete row.drive_thumb;
     row.estado_pago=estadoPago(row,instanteMadrid(new Date()).fecha);
     res.json({ok:true,data:row});
@@ -6463,7 +6463,14 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
 
 // Unión explícita de proveedores: revisión previa y confirmación sobre la misma versión.
 app.get('/api/facturas/proveedores-unir', requireAuth(['direccion','contabilidad']), async(req,res)=>{
- try {res.json({ok:true,proveedores:await proveedoresUnibles((s,p)=>pool.query(s,p))});}
+ try {
+  const proveedores=await proveedoresUnibles((s,p)=>pool.query(s,p));
+  if(req.query.detalles!=='1')return res.json({ok:true,proveedores});
+  const [alias,nifs]=await Promise.all([dbAll('SELECT clave,nif FROM facturas_proveedor_alias'),dbAll("SELECT DISTINCT proveedor,nif FROM facturas WHERE COALESCE(nif,'')<>''")]);
+  const memoria=new Map(alias.map(a=>[a.clave,a.nif]));
+  const historicos=new Map();for(const f of nifs){const k=claveProveedor(f.proveedor);if(!historicos.has(k))historicos.set(k,new Set());historicos.get(k).add(String(f.nif).trim());}
+  res.json({ok:true,proveedores,detalles:proveedores.map(nombre=>{const k=claveProveedor(nombre),h=[...(historicos.get(k)||[])];return {nombre,nif:memoria.get(k)||(h.length===1?h[0]:'')};})});
+ }
  catch(e){res.status(500).json({error:'No se pudo cargar la lista de proveedores'});}
 });
 app.post('/api/facturas/proveedores-unir/preview', requireAuth(['direccion','contabilidad']), async(req,res)=>{
@@ -6981,8 +6988,10 @@ app.get("/api/facturas/duplicados", requireAuth(["direccion", "contabilidad"]), 
          FROM facturas f LEFT JOIN facturas o ON o.id = f.dup_de
         WHERE f.dup_estado = 'duda' AND f.dup_resuelto_en IS NULL ${ambito.sql}
         ORDER BY f.id DESC LIMIT 200`, ambito.params);
-    const permitidos=localesScope({...req,query:{}});
-    for(const f of filas)if(permitidos.length&&!permitidos.includes(f.o_local))for(const k of Object.keys(f))if(k.startsWith('o_'))f[k]=null;
+    for(const f of filas){
+      f.original_estado=!f.o_id?'ausente':puedeAccederLocal(req,f.o_local)?'disponible':'sin_acceso';
+      if(f.original_estado==='sin_acceso')for(const k of Object.keys(f))if(k.startsWith('o_'))f[k]=null;
+    }
     const data = filas.map((f) => ({
       ...f,
       motivos: (() => { try { return JSON.parse(f.dup_motivos || "[]"); } catch { return []; } })(),
@@ -7002,7 +7011,7 @@ app.post("/api/facturas/duplicados/:id/resolver", requireAuth(["direccion", "con
  const client=await pool.connect();
  try {
   await client.query('BEGIN');
-  const r=await resolverDuplicado((s,p)=>client.query(s,p),{id:req.params.id,accion:req.body.accion,autor:req.user.nombre||req.user.username,locales:localesScope({...req,query:{}})});
+  const r=await resolverDuplicado((s,p)=>client.query(s,p),{id:req.params.id,accion:req.body.accion,autor:req.user.nombre||req.user.username,puedeAcceder:f=>puedeAccederLocal(req,f.local)});
   await client.query('COMMIT');
   for(const f of r.afectadas)resincronizarSheetsFactura({getToken:getDriveAccessToken,dbGet,dbAll,dbRun},f.local,f.fecha).catch(()=>{});
   res.json({ok:true,mensaje:r.mensaje});
@@ -7756,8 +7765,7 @@ app.get("/api/facturas/:id/lineas", requireAuth(["direccion", "contabilidad"]), 
     const f = await dbGet(`SELECT id, local, tipo, empresa, nif, total, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible,
                                   lineas_estado, lineas_aviso, drive_url FROM facturas WHERE id = ?`, [Number(req.params.id)]);
     if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
-    const scope = localScope(req);
-    if (scope && f.local !== scope) return res.status(403).json({ ok: false, error: "Sin acceso" });
+    if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
     const lineas = await dbAll(
       `SELECT id AS linea_id, clave, factor_unidad, orden, descripcion, cantidad::float AS cantidad, unidad, precio_unitario::float AS precio_unitario,
               importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ? ORDER BY orden`, [f.id]);

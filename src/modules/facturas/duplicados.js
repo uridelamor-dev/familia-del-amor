@@ -42,6 +42,7 @@ const dias = (a, b) => {
 
 /** Dos importes son el mismo si difieren menos de un céntimo. */
 const mismoImporte = (a, b) => {
+  if(a==null||b==null||String(a).trim()===''||String(b).trim()==='')return false;
   const x = Number(a), y = Number(b);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
   return Math.abs(x - y) < 0.005;
@@ -72,7 +73,7 @@ export function comparar(a, b, { ventanaDias = 10 } = {}) {
   const numParecido = !numIgual && !!numA && !!numB && distancia(numA, numB) <= 1
     && Math.max(numA.length, numB.length) >= 3;
 
-  const impIgual = mismoImporte(a.total, b.total);
+  const impIgual = mismoImporte(a.total, b.total) && Math.abs(Number(a.total)) >= 0.005;
   const baseIgual = mismoImporte(a.base_imponible, b.base_imponible);
   const d = dias(a.fecha, b.fecha);
   const fechaIgual = d === 0;

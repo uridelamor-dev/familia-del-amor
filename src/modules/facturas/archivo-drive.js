@@ -10,7 +10,7 @@ export function rutaArchivo(f) {
 }
 export function nombreArchivo(f,ext='.pdf') {
  const fecha=String(f.fecha||'').slice(0,10)||'Sin fecha';
- return [fecha,limpio(f.proveedor)||'Proveedor sin identificar',limpio(f.numero_factura)||'Sin número',limpio(f.local),f.id?`ID-${f.id}`:'Pendiente de registro'].filter(Boolean).join(' · ')+ext;
+ return [fecha,({factura:'Factura',albaran:'Albarán',ticket:'Ticket',otro:'Documento'})[f.tipo]||'Documento',limpio(f.proveedor)||'Proveedor sin identificar',limpio(f.numero_factura)||'Sin número',limpio(f.local),f.id?`ID-${f.id}`:'Pendiente de registro'].filter(Boolean).join(' · ')+ext;
 }
 async function api(token,url,method='GET',body) {
  const r=await fetch(url,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return r.json();

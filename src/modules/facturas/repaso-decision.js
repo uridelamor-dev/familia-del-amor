@@ -12,8 +12,7 @@ export function crearDecisionesHistorico({transaccion,prepararFecha=async()=>nul
  return async function decidir({origen,id,body,autor,puedeAcceder=()=>true}){
   if(!tablas[origen]||!/^\d+$/.test(String(id)))throw fallo('Documento no válido');
   if(body.confirmado!==true||!['conservar','corregir'].includes(body.decision))throw fallo('Confirma la decisión después de consultar el original');
-  const motivo=String(body.motivo||'').trim();
-  if(motivo.length<5||motivo.length>2000)throw fallo('Explica qué has comprobado (entre 5 y 2.000 caracteres)');
+  const motivo=String(body.motivo||'').trim().slice(0,2000)||(body.decision==='corregir'?'Corrección confirmada en Compras. Cambios registrados en el historial.':'Datos comprobados y conservados en Compras.');
   return transaccion(async db=>{
    const item=await db.get('SELECT * FROM facturas_repaso_documentos WHERE origen=? AND documento_id=? FOR UPDATE',[origen,id]);
    if(!item||!['revisar','error','sin_original','sin_discrepancias'].includes(item.estado))throw fallo('Este documento no está pendiente de revisión',409);

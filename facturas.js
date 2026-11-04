@@ -19,7 +19,7 @@ import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicado
 import { corregirEmisorReceptor, nombresPropios, esNuestra } from "./src/modules/facturas/emisor.js";
 import { revisarCoherencia, textosDe } from "./src/modules/facturas/coherencia.js";
 import { extraerTextoPdf, bloqueTextoParaClaude } from "./src/modules/facturas/pdf-texto.js";
-import { pistasDeFecha, revisarFecha } from "./src/modules/facturas/fecha-documento.js";
+import { pistasDeFecha, revisarFecha, contrastarFechaEmision } from "./src/modules/facturas/fecha-documento.js";
 import { VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { calcularVencimiento } from "./src/modules/facturas/vencimiento.js";
 import { precioReferencia, revisarPrecios, clavePrecio } from "./src/modules/facturas/precio-referencia.js";
@@ -64,6 +64,7 @@ markdown, con esta estructura exacta
   "campos_dudosos": ["nombre del campo que no puedes leer con seguridad"],
   "tipo": "factura" | "albaran" | "ticket" | "otro",
   "fecha": "YYYY-MM-DD",
+  "fecha_texto": "fecha de emisión copiada literalmente del documento, sin convertirla, o null",
   "periodo_facturado": "YYYY-MM o null",
   "vencimiento": "YYYY-MM-DD",
   "numero_factura": "string",
@@ -119,6 +120,7 @@ declarado.
   de texto con el documento: también puede contener errores. Si discrepan, marca fecha como dudosa.
 - Si no hay ninguna fecha de emisión legible, pon null. Sin fecha se ve que falta; con una fecha
   inventada, no se ve nada.
+- Transcribe en "fecha_texto" SOLO la fecha de emisión tal como está impresa, con sus separadores y orden, antes de convertirla a "fecha". En documentos españoles/catalanes el formato numérico es DÍA/MES/AÑO: 03/11/2026 = 2026-11-03, nunca 2026-03-11. No uses el vencimiento ni la fecha de llegada. Si el orden no se puede determinar, marca fecha en campos_dudosos.
 Hoy es {HOY}. Úsalo SOLO para descartar imposibles —ninguna factura está fechada dentro de un
 año—, nunca para rellenar ni para acercar una fecha dudosa. Si el documento no lleva fecha, la
 respuesta es null, no la de hoy.
@@ -327,18 +329,8 @@ function sanitizarNombre(str) {
   return (str || "").replace(/[/\\:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
 }
 
-function fechaCorta(fechaISO) {
-  if (!fechaISO) return null;
-  const p = fechaISO.split("-");
-  if (p.length !== 3) return fechaISO;
-  return `${p[2]}-${p[1]}-${p[0].slice(2)}`; // dd-mm-aa
-}
-
 function buildDriveFilename(datos, ext) {
-  const proveedor = sanitizarNombre(datos.proveedor || "Desconocido");
-  const fecha = fechaCorta(datos.fecha) || "sin-fecha";
-  const num = sanitizarNombre(datos.numero_factura || "");
-  return [proveedor, fecha, num].filter(Boolean).join(", ") + ext;
+  return nombreArchivo({...datos,local:datos.local||'Local por asignar'},ext);
 }
 
 /**
@@ -482,7 +474,7 @@ export async function leerDocumentoVerificado(buffer,mimeType,{leer=extraerDatos
   const [datos,segunda]=preparado.lecturas;
   const comprobar=async d=>{
     const coher=await revisarCoherenciaFactura(d,dbAll,{hoy:hoyISOFactura()});
-    const avisos=[...controlesLectura(d),...coher.avisos];
+    const avisos=[...controlesLectura(d),...coher.avisos,...contrastarFechaEmision(d)];
     if(d.nif_proveedor && !nifComprobable(d.nif_proveedor)) avisos.push({campo:'nif_proveedor',texto:'El identificador fiscal necesita comprobación: formato o dígito de control no válido.'});
     if(esNuestra(d.proveedor,d.nif_proveedor,nuestras,propios)) avisos.push({campo:"proveedor",texto:"El proveedor coincide con una de nuestras empresas. Comprueba emisor y receptor."});
     return avisos;

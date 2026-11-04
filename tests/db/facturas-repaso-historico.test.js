@@ -76,11 +76,11 @@ test('corrección confirmada conserva antes/después y autor; doble envío no re
  await assert.rejects(()=>decidir({origen:'factura',id:1,body,autor:'Uriel'}),/ya se revisó/);
  assert.equal((await db.all('SELECT * FROM facturas_repaso_decisiones')).length,1);
 }));
-test('conservar registra revisión sin aplicar propuestas y exige confirmación/motivo',async t=>preparar(t,async db=>{
+test('conservar registra revisión sin aplicar propuestas y exige confirmación sin explicación obligatoria',async t=>preparar(t,async db=>{
  const actual=await listoParaDecidir(db),decidir=decisiones(db);
- const body={esperado:actual,campos:{...actual,total:112},decision:'conservar',motivo:'El original confirma los datos guardados',confirmado:true};
+ const body={esperado:actual,campos:{...actual,total:112},decision:'conservar',confirmado:true};
  await assert.rejects(()=>decidir({origen:'factura',id:1,body:{...body,confirmado:false},autor:'Uriel'}),/Confirma/);
- await assert.rejects(()=>decidir({origen:'factura',id:1,body:{...body,motivo:''},autor:'Uriel'}),/Explica/);
+
  await decidir({origen:'factura',id:1,body,autor:'Uriel'});
  assert.equal(Number((await db.get('SELECT total FROM facturas WHERE id=1')).total),121);
  assert.equal((await db.get('SELECT revision_humana FROM facturas_repaso_documentos')).revision_humana.decision,'conservar');
