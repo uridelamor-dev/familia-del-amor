@@ -173,19 +173,19 @@
 
     if (f.solo_acumular) {
       var tasa = Number(f.puntos_por_euro);
-      $("tjPtsRegla").textContent = (tasa === 0.2 ? "1 punto por cada 5 € pagados" : Number.isFinite(tasa) && tasa > 0 ? tasa.toLocaleString("es-ES") + " puntos por cada euro pagado" : "Consulta las condiciones del programa") + ". Se redondea hacia abajo por ticket. Las recompensas se anunciarán más adelante.";
+      $("tjPtsRegla").textContent = (tasa === 0.2 ? "Cada 5 € pagados sumas 1 punto" : Number.isFinite(tasa) && tasa > 0 ? tasa.toLocaleString("es-ES") + " puntos por cada euro pagado" : "Consulta las condiciones del programa") + ". Se redondea hacia abajo por ticket. Las recompensas se anunciarán más adelante.";
       $("tjPtsBarra").style.display = "none";
       $("tjPtsFalta").textContent = "Por ahora acumulas puntos; todavía no se pueden canjear.";
     }
     var eq = f.equivalencia;
-    if (eq) {
+    if (eq && !f.solo_acumular) {
       $("tjPtsRegla").textContent = eq.puntos + " puntos = " + eur(eq.euros)
         + " de descuento, en compras de " + eur(eq.minimo) + " o más.";
     }
 
     // La barra: cuánto falta para el próximo descuento. Es lo que hace que un saldo sea una meta
     // y no un número suelto.
-    if (f.necesarios) {
+    if (f.necesarios && !f.solo_acumular) {
       var pct = Math.max(0, Math.min(100, f.progreso || 0));
       $("tjPtsBarraIn").style.width = pct + "%";
       $("tjPtsBarra").setAttribute("aria-valuenow", String(pct));
@@ -200,7 +200,7 @@
       mostrar("tjPtsCaduca");
     }
 
-    if (f.rewards && f.rewards.length) {
+    if (!f.solo_acumular && f.rewards && f.rewards.length) {
       $("tjPtsRewards").innerHTML = f.rewards.map(function (r) {
         return "<li><b>" + esc(r.nombre) + "</b><br><span class=\"tj-mut\">En compras de "
           + esc(eur(r.minimo)) + " o más.</span></li>";

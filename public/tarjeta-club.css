@@ -41,3 +41,65 @@
  .tj-account .tj-qr { max-width:240px; }
  .tj-account .tj-card { padding:24px; }
 }
+
+/* Carnet editorial: verde profundo, papel cálido y QR siempre sobre blanco. */
+.tj-account { background:#f3f0e7; padding:28px 24px 48px; }
+.tj-account .tj-wrap { gap:16px; max-width:880px; }
+.tj-account .tj-marca { margin:0 0 10px; font-size:11px; letter-spacing:.13em; }
+.tj-marca span { border:1px solid #c9cebf; border-radius:30px; padding:7px 12px; font-size:10px; }
+.tj-account .tj-card { border-color:#e2dfd3; box-shadow:none; border-radius:20px; }
+.tj-account #tjCard { border:0; border-radius:26px; box-shadow:0 16px 40px #233c3212; }
+.tj-presentacion { position:relative; overflow:hidden; background:#233e33; color:#fff9ed; padding:36px; }
+.tj-presentacion::after { content:''; position:absolute; width:240px; height:240px; right:-145px; top:-90px; border:1px solid #d8c99a45; border-radius:50%; box-shadow:0 0 0 22px #d8c99a09,0 0 0 44px #d8c99a07; pointer-events:none; }
+.tj-presentacion .tj-kicker { color:#e0d4ae; font-size:9px; letter-spacing:.19em; }
+.tj-account .tj-titular { font-size:44px; color:#fff9ed; }
+.tj-account .tj-sub { color:#dde5dc; font-size:13px; max-width:260px; line-height:1.55; }
+.tj-foto { min-height:145px; border-radius:12px; margin-top:26px; }
+.tj-foto span { font-size:25px; }
+.tj-miembro { color:#d8dfd3; font-size:9px; letter-spacing:.1em; }
+.tj-identificacion { background:#fffefa; padding:28px; }
+.tj-identificacion .tj-kicker { color:#667365; font-size:9px; letter-spacing:.17em; }
+.tj-account .tj-qr { width:216px; max-width:100%; padding:10px; border:0; border-radius:12px; background:#fff; }
+.tj-account .tj-codigo-eti { margin-top:14px; font-size:11px; color:#64705f; }
+.tj-account .tj-codigo { font-size:25px; font-weight:600; letter-spacing:.17em; margin-top:5px; }
+.tj-account .tj-h { font-size:23px; margin-bottom:14px; }
+.tj-account #tjPuntos { background:#e8edde; border-color:#d9e0ce; }
+.tj-account .tj-pts-n { font-family:Georgia,serif; font-size:54px; font-weight:400; margin-top:0; }
+.tj-account .tj-pts-eti { font-size:12px; }
+.tj-account .tj-barra { height:5px; background:#cdd7c2; margin-top:20px; }
+.tj-account .tj-pts-falta { font-size:13px; margin-top:10px; }
+.tj-account .tj-pts-regla { font-size:12px; line-height:1.6; }
+.tj-account .tj-visitas { font-size:18px; font-weight:500; }
+.tj-account .tj-ultima,.tj-account .tj-locales { font-size:12px; line-height:1.6; }
+.tj-account .tj-item { padding:14px 0; }
+.tj-account .tj-item-t { font-size:15px; }
+.tj-account .tj-item-d { font-size:13px; }
+.tj-account .tj-profile { border:0; border-bottom:1px solid #adb7a6; border-radius:0; background:none; padding:10px 0; font-size:12px; }
+@media(max-width:650px) {
+ .tj-account { padding:20px 18px 32px; }
+ .tj-account .tj-wrap { gap:12px; }
+ .tj-account .tj-marca { font-size:10px; margin-bottom:6px; letter-spacing:.1em; }
+ .tj-account #tjCard { border-radius:24px; }
+ .tj-presentacion { padding:24px 26px 22px; }
+ .tj-presentacion .tj-kicker { margin-bottom:12px; }
+ .tj-account .tj-titular { font-size:37px; }
+ .tj-account .tj-sub { margin-top:10px; max-width:250px; }
+ .tj-foto,.tj-miembro { display:none; }
+ .tj-identificacion { padding:21px 24px 24px; }
+ .tj-identificacion .tj-kicker { margin-bottom:10px; }
+ .tj-account .tj-qr { width:194px; }
+ .tj-account .tj-card { padding:22px; }
+ .tj-account #tjVisitas { padding:18px 22px; }
+ .tj-account #tjVisitas .tj-h { font-size:20px; margin-bottom:8px; }
+}
+
+/* Ventajas disponibles y acceso discreto al historial. */
+.tj-account #tjDtos .tj-item:not(.tj-usado) { background:#f5eee1; border:1px solid #e8dcc6; border-left:3px solid #9e6736; padding:16px; border-radius:12px; margin:10px 0 0; }
+.tj-account #tjDtos .tj-item:first-child { margin-top:0; }
+.tj-account #tjDtos .tj-item-d { line-height:1.65; margin-top:7px; color:#53604f; }
+.tj-account #tjHist { align-self:start; }
+.tj-visitas-detalle summary { cursor:pointer; min-height:44px; display:flex; align-items:center; justify-content:space-between; font-size:14px; font-weight:600; }
+.tj-visitas-detalle summary::after { content:'+'; font-size:22px; font-weight:400; }
+.tj-visitas-detalle[open] summary::after { content:'−'; }
+.tj-visitas-detalle summary::-webkit-details-marker { display:none; }
+.tj-visitas-detalle .tj-hist { margin-top:12px; }

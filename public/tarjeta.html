@@ -28,7 +28,7 @@
         <div class="tj-presentacion">
         <p class="tj-kicker">Tu sitio en la familia</p>
         <h1 class="tj-titular" id="tjTitular">Tu tarjeta</h1>
-        <p class="tj-sub">Enséñala cuando vengas y te reconocemos al momento.</p>
+        <p class="tj-sub">Tu mesa, tus momentos, tus ventajas.</p>
 
         <div class="tj-foto" aria-hidden="true"><span>Un sitio para ti.</span></div>
         <p class="tj-miembro">Familia del Amor · Miembro del Club</p>
@@ -37,7 +37,7 @@
         <p class="tj-kicker">Tu tarjeta del Club</p>
         <div class="tj-qr" id="tjQrCaja"><img id="tjQr" alt="Tu código" /></div>
 
-        <p class="tj-codigo-eti">Si no lo lee, dile este número:</p>
+        <p class="tj-codigo-eti">Tu código · para introducir en caja</p>
         <p class="tj-codigo" id="tjCodigo">—</p>
 
         <p class="tj-estado hidden" id="tjEstado"></p>
@@ -46,13 +46,6 @@
           <p class="tj-wallet-eti">Guárdala en tu móvil:</p>
         </div>
         </div>
-      </section>
-
-      <section class="tj-card hidden" id="tjVisitas">
-        <h2 class="tj-h">Tus visitas</h2>
-        <p class="tj-visitas" id="tjVisitasN">—</p>
-        <p class="tj-ultima hidden" id="tjUltima"></p>
-        <p class="tj-locales hidden" id="tjLocales"></p>
       </section>
 
       <!-- TUS PUNTOS. Va en su PROPIA tarjeta, separado de «Tus descuentos»: los cupones y las
@@ -91,14 +84,21 @@
       </section>
 
       <section class="tj-card hidden" id="tjDtos">
-        <h2 class="tj-h">Tus descuentos</h2>
+        <h2 class="tj-h">Tus ventajas</h2>
         <ul class="tj-lista" id="tjDtosLista"></ul>
         <p class="tj-vacio hidden" id="tjDtosVacio">Ahora mismo no tienes ninguno. Te avisamos por WhatsApp cuando haya.</p>
       </section>
 
+      <section class="tj-card hidden" id="tjVisitas">
+        <h2 class="tj-h">Tus visitas</h2>
+        <p class="tj-visitas" id="tjVisitasN">—</p>
+        <p class="tj-ultima hidden" id="tjUltima"></p>
+        <p class="tj-locales hidden" id="tjLocales"></p>
+      </section>
+
       <section class="tj-card hidden" id="tjHist">
-        <h2 class="tj-h">Cuándo has venido</h2>
-        <ul class="tj-hist" id="tjHistLista"></ul>
+        <details class="tj-visitas-detalle"><summary>Ver mis visitas</summary>
+        <ul class="tj-hist" id="tjHistLista"></ul></details>
       </section>
 
       <div class="tj-aviso hidden" id="tjAviso"></div>
