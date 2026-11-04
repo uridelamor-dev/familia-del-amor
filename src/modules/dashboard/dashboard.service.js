@@ -142,8 +142,8 @@ async function gatherSignals(x, { hoy, local }) {
     () => safe(() => x.get(`SELECT COUNT(*)::int n FROM facturas_pendientes`, []), null),
     // — serie de reservas por día (últimos 30) para el gráfico de actividad —
     () => safe(() => x.all(`SELECT dia, COUNT(*)::int n, COALESCE(SUM(personas),0)::int personas FROM reservas WHERE dia::date >= ?::date AND dia::date <= ?::date${lf} GROUP BY dia ORDER BY dia`, [addDays(hoy, -29), hoy, ...lp]), []),
-    // — reseñas sin responder (para la tarjeta de reputación) —
-    () => safe(() => x.get(`SELECT COUNT(*)::int n FROM google_reviews WHERE (reply IS NULL OR reply = '')`, []), null),
+    // — histórico y trabajo reciente: fecha de publicación, nunca fecha de importación —
+    () => safe(() => x.get(`SELECT COUNT(*)::int n, COUNT(*) FILTER (WHERE LEFT(fecha,10) >= ? AND LEFT(fecha,10) <= ?)::int recientes FROM google_reviews WHERE NULLIF(TRIM(reply),'') IS NULL`, [addDays(hoy, -29), hoy]), null),
     // — ventas (Ágora): total últimos 30 días + por local. Vacío hasta conectar el TPV. —
     () => safe(() => x.get(`SELECT COALESCE(SUM(ventas),0)::float total, COUNT(DISTINCT dia)::int dias FROM ventas_diarias WHERE dia::date >= ?::date${lf}`, [addDays(hoy, -30), ...lp]), null),
     () => safe(() => x.all(`SELECT local, COALESCE(SUM(ventas),0)::float total FROM ventas_diarias WHERE dia::date >= ?::date GROUP BY local ORDER BY total DESC`, [addDays(hoy, -30)]), []),
@@ -413,7 +413,7 @@ export async function getDashboard(x, { now, whatsappConnected = null, local = n
       mejores: (s.mejores || []).map((c) => ({ nombre: c.nombre, telefono: c.telefono, visitas: c.visitas, ultima: String(c.ultima || "").slice(0, 10), local: c.local })),
     },
     reputacionLocales: (s.repLocal || []).map((r) => ({ local: r.location_name, media: r.media, n: r.n })),
-    resenas: { media: s.resAgg ? s.resAgg.media : 0, total: s.resAgg ? s.resAgg.total : 0, sinResponder: s.sinResp ? s.sinResp.n : 0 },
+    resenas: { media: s.resAgg ? s.resAgg.media : 0, total: s.resAgg ? s.resAgg.total : 0, sinResponder: s.sinResp ? s.sinResp.n : 0, sinResponderRecientes: s.sinResp ? s.sinResp.recientes : null },
     serieReservas: (s.serieRes || []).map((r) => ({ dia: String(r.dia).slice(0, 10), n: r.n, personas: r.personas })),
     ventas: (s.ventasTot && s.ventasTot.dias > 0)
       ? { disponible: true, total: Math.round(s.ventasTot.total), dias: s.ventasTot.dias, porLocal: (s.ventasLocal || []).map((v) => ({ local: v.local, total: Math.round(v.total) })) }

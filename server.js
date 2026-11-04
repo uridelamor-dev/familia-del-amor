@@ -1,3 +1,7 @@
+import {recordarProveedorRevision} from './src/modules/facturas/aprendizaje-revision.js';
+import {guardarDeshacerRevision,deshacerRevision} from './src/modules/facturas/deshacer-revision.js';
+import { criterioFechaCompras, RECEPCION_REAL_SQL, RECEPCION_SQL, DIA_RECEPCION_SQL } from './src/modules/facturas/fecha-listado.js';
+import { completarIva } from './src/modules/facturas/iva-inferido.js';
 import { recuperarCarnet } from './src/modules/messaging/sara-carnet.js';
 import {rutasPaginas} from './src/modules/facturas/paginas-rutas.js';
 import {PAGINAS_SCHEMA,crearPaginas} from './src/modules/facturas/paginas.js';
@@ -3159,8 +3163,9 @@ function facturasWhere(query = {}) {
   if (estado === "pagada") cond.push("pagado = 1");
   else if (estado === "automatico") cond.push("COALESCE(pagado,0)=0 AND pago_automatico=1");
   else if (estado === "pendiente") cond.push("COALESCE(pagado, 0) = 0 AND COALESCE(pago_automatico,0)=0");
-  if (from) { cond.push("fecha >= ?"); params.push(from); }
-  if (to) { cond.push("fecha <= ?"); params.push(to); }
+  const fechaCampo=criterioFechaCompras(query).campo;
+  if (from) { cond.push(`${fechaCampo} >= ?`); params.push(from); }
+  if (to) { cond.push(`${fechaCampo} <= ?`); params.push(to); }
   if (q) { cond.push("(LOWER(proveedor) LIKE ? OR LOWER(concepto) LIKE ? OR numero_factura LIKE ?)"); const like = "%" + String(q).toLowerCase() + "%"; params.push(like, like, "%" + q + "%"); }
   return { where: cond.length ? "WHERE " + cond.join(" AND ") : "", params };
 }
@@ -3184,7 +3189,7 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     const query = scope ? { ...req.query, local: scope } : req.query;
     const { where, params } = facturasWhere(await facturasQueryCategorias(query));
     const LIMITE = 500;
-    const rows = await dbAll(`SELECT * FROM facturas ${where} ORDER BY fecha DESC NULLS LAST, creado_en DESC LIMIT ${LIMITE}`, params);
+    const rows = await dbAll(`SELECT *, ${RECEPCION_SQL} AS recibido_en, ${DIA_RECEPCION_SQL} AS fecha_recepcion, (${RECEPCION_REAL_SQL} IS NOT NULL) AS recepcion_confirmada FROM facturas ${where} ORDER BY ${criterioFechaCompras(query).orden} LIMIT ${LIMITE}`, params);
     // `drive_thumb` es la miniatura en base64 y NO puede viajar en la lista: son ~8 KB por
     // factura, y con el tope de 500 serían cuatro megas de respuesta para pintar una tabla.
     // Cada fila la pide por su lado (`/api/facturas/:id/miniatura`) y el navegador la cachea.
@@ -3204,6 +3209,9 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
               COALESCE(SUM(base_imponible) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS base,
               COALESCE(SUM(cuota_iva) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS iva,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS total,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND (base_imponible IS NULL OR cuota_iva IS NULL))::int AS desglose_incompleto,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND total IS NULL)::int AS total_ausente,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND base_imponible IS NOT NULL AND cuota_iva IS NOT NULL AND total IS NOT NULL AND ABS(total-base_imponible-cuota_iva)>0.02)::int AS desglose_diferente,
               count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0)::int AS pendientes,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0),0)::float AS por_pagar,
               count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0)=0 AND pago_automatico=1)::int AS automaticas,
@@ -3278,6 +3286,7 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
       const run=async(sql,p)=>(await client.query(toPositional(sql),p)).rows[0];
       await run(`UPDATE facturas SET ${sets.join(", ")}, sheet_synced = 0 WHERE id = ?`,vals);
       if(reglaLocal)await guardarReglaLocal(run,reglaLocal);
+      await recordarProveedorRevision((sql,p)=>client.query(sql,p),{...antes,...req.body},req.user.username||req.user.nombre);
       if(req.body.confirmar_avisos===true){
         const actual=(await client.query('SELECT * FROM facturas WHERE id=$1',[req.params.id])).rows[0];
         let avisos=[];try{avisos=JSON.parse(antes.revisar||'[]');}catch{}
@@ -3728,6 +3737,13 @@ app.get("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "con
   try {
     const f=await dbGet(`SELECT id,local,nombre,mime,estado,resultado,(SELECT jsonb_build_object('resumen_error',a.resumen_error,'solicitud_estado',a.solicitud_estado) FROM facturas_avisos_grupo a WHERE a.recepcion_id=facturas_recepciones.id ORDER BY a.id DESC LIMIT 1) AS aviso_grupo FROM facturas_recepciones WHERE id=?`,[req.params.id]);
     if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+    if (f.resultado?.datos) {
+      const ajuste=completarIva(f.resultado.datos);
+      if(ajuste) {
+        f.resultado.ajustes=[...(f.resultado.ajustes || []),ajuste];
+        f.resultado.avisos=(f.resultado.avisos || []).filter(a=>(a.campo || a.clave)!=='porcentaje_iva');
+      }
+    }
     res.setHeader('Cache-Control','no-store'); res.json({ok:true,data:{...f,nombre:nombreRecepcion(f)}});
   } catch(e) {next(e);}
 });
@@ -3801,12 +3817,25 @@ app.get("/api/facturas/pendientes", requireAuth(["direccion", "contabilidad"]), 
 
 // Descartar es reversible: conserva registro y original, retirándolo de la bandeja.
 app.post("/api/facturas/pendientes/:id/descartar", requireAuth(["direccion", "contabilidad"]), async (req,res) => {
-  try {
-    const p = await dbGet("SELECT id FROM facturas_pendientes WHERE id = ?", [req.params.id]);
-    if (!p) return res.status(404).json({ok:false,error:"Documento no encontrado"});
-    await dbRun("UPDATE facturas_pendientes SET descartado_en = ?, descartado_por = ? WHERE id = ? AND descartado_en IS NULL", [new Date().toISOString(),req.user.username || req.user.nombre || 'usuario',p.id]);
-    res.json({ok:true});
-  } catch { res.status(500).json({ok:false,error:"No se pudo descartar el documento"}); }
+ const client=await pool.connect();
+ try {
+  await client.query('BEGIN');
+  const p=(await client.query('SELECT * FROM facturas_pendientes WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+  if(!p || p.descartado_en)throw Error('Documento no disponible para descartar');
+  if(localesScope(req).length)throw Error('Sin acceso a documentos sin establecimiento');
+  await client.query('UPDATE facturas_pendientes SET descartado_en=$1,descartado_por=$2 WHERE id=$3',[new Date().toISOString(),req.user.username||req.user.nombre,p.id]);
+  const deshacer=await guardarDeshacerRevision((s,p)=>client.query(s,p),{tipo:'descarte',antes:[p],autor:String(req.user.id||req.user.username)});
+  await client.query('COMMIT');res.json({ok:true,deshacer});
+ }catch(e){await client.query('ROLLBACK');res.status(409).json({ok:false,error:e.message});}finally{client.release();}
+});
+app.post('/api/facturas/revision/deshacer',requireAuth(['direccion','contabilidad']),async(req,res)=>{
+ const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  const r=await deshacerRevision((s,p)=>client.query(s,p),{token:req.body.token,autor:String(req.user.id||req.user.username),puedeAcceder:(f,tipo)=>tipo==='descarte'?!localesScope(req).length:puedeAccederLocal(req,f.local)});
+  await client.query('COMMIT');res.json({ok:true});
+  if(r.tipo==='duplicado')for(const f of r.afectadas)resincronizarSheetsFactura({getToken:getDriveAccessToken,dbGet,dbAll,dbRun},f.local,f.fecha).catch(()=>{});
+ }catch(e){await client.query('ROLLBACK');res.status(409).json({ok:false,error:e.message});}finally{client.release();}
 });
 
 // Vista previa del archivo pendiente SIN salir del panel: hacemos de proxy del fichero de
@@ -7012,9 +7041,10 @@ app.post("/api/facturas/duplicados/:id/resolver", requireAuth(["direccion", "con
  try {
   await client.query('BEGIN');
   const r=await resolverDuplicado((s,p)=>client.query(s,p),{id:req.params.id,accion:req.body.accion,autor:req.user.nombre||req.user.username,puedeAcceder:f=>puedeAccederLocal(req,f.local)});
+  const deshacer=await guardarDeshacerRevision((s,p)=>client.query(s,p),{tipo:'duplicado',antes:r.afectadas,autor:String(req.user.id||req.user.username)});
   await client.query('COMMIT');
   for(const f of r.afectadas)resincronizarSheetsFactura({getToken:getDriveAccessToken,dbGet,dbAll,dbRun},f.local,f.fecha).catch(()=>{});
-  res.json({ok:true,mensaje:r.mensaje});
+  res.json({ok:true,mensaje:r.mensaje,deshacer});
  }catch(e){await client.query('ROLLBACK');res.status(409).json({ok:false,error:e.message});}finally{client.release();}
 });
 

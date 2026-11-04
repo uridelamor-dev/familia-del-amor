@@ -1,3 +1,4 @@
+import { completarIva } from './iva-inferido.js';
 // Conciliación conservadora: no promedia ni construye una factura mezclando importes.
 import { compararLecturas, controlesLectura, CAMPOS_REVISION } from './validacion-lectura.js';
 import { normNif, nifValido, esNuestra } from './emisor.js';
@@ -21,6 +22,7 @@ function varianteMinima(a,b) {
 export function prepararContraste(lecturas, fichas=[], nuestras=[], propios=[]) {
   const copias=structuredClone(lecturas);
   const cambios=[];
+  for (const d of copias) { const cambio=completarIva(d); if(cambio) cambios.push(cambio); }
   // Solo fichas confirmadas por una persona y corroboradas por un NIF leído del original.
   // Un historial de OCR repetido no es prueba de identidad.
   for(const d of copias) {
@@ -30,6 +32,16 @@ export function prepararContraste(lecturas, fichas=[], nuestras=[], propios=[]) 
     if(!d.nif_proveedor && nifs.length===1 && lecturas.some(l=>nombre(l.proveedor)===nombre(d.proveedor) && normNif(l.nif_proveedor)===nifs[0]) && !esNuestra('',nifs[0],nuestras)) {
       d.nif_proveedor=nifs[0];
       cambios.push({campo:'nif_proveedor',valor:nifs[0],origen:'Ficha humana corroborada por otra lectura'});
+    }
+  }
+  // Un nombre confirmado puede reutilizarse solo si ambas lecturas reconocen su NIF.
+  for(const d of copias) {
+    const nif=normNif(d.nif_proveedor);
+    if(!nifComprobable(nif) || esNuestra(d.proveedor,nif,nuestras,propios) || !lecturas.every(l=>normNif(l.nif_proveedor)===nif))continue;
+    const nombres=[...new Set(fichas.filter(f=>f.autor&&normNif(f.nif)===nif).map(f=>f.proveedor).filter(Boolean))];
+    if(nombres.length===1 && d.proveedor!==nombres[0]) {
+      cambios.push({campo:'proveedor',antes:d.proveedor,valor:nombres[0],origen:'Nombre confirmado con el mismo NIF en ambas lecturas'});
+      d.proveedor=nombres[0];
     }
   }
   const primero=copias[0];

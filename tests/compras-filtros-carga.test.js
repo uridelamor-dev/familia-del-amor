@@ -1,9 +1,10 @@
+import {criterioFechaCompras} from '../src/modules/facturas/fecha-listado.js';
 import {test} from 'node:test';import assert from 'node:assert/strict';import vm from 'node:vm';import {readFileSync} from 'node:fs';
 import {filtroRevision} from '../src/modules/facturas/ambito-revision.js';
 const app=readFileSync(new URL('../public/panel/app.js',import.meta.url),'utf8');
 const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
 test('facturas y combinaciones de tipos generan condiciones exactas junto al resto de filtros',()=>{
- const ctx={SIN_DUDAS:"COALESCE(dup_estado,'') <> 'duda'"};vm.createContext(ctx);vm.runInContext(server.slice(server.indexOf('function facturasWhere('),server.indexOf('async function facturasQueryCategorias')),ctx);
+ const ctx={criterioFechaCompras,SIN_DUDAS:"COALESCE(dup_estado,'') <> 'duda'"};vm.createContext(ctx);vm.runInContext(server.slice(server.indexOf('function facturasWhere('),server.indexOf('async function facturasQueryCategorias')),ctx);
  for(const tipo of ['factura','factura,ticket']){
   const r=ctx.facturasWhere({tipo,empresa:'Empresa A',local:'Blanes',proveedor:'Proveedor A',estado:'pagada',from:'2026-10-01',to:'2026-10-28'});
   assert.match(r.where,tipo.includes(',')?/tipo IN \(\?,\?\)/:/tipo = \?/);

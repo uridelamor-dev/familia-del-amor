@@ -1,3 +1,4 @@
+import { completarIva } from './iva-inferido.js';
 import { nifValido, normNif } from './emisor.js';
 import { revisarCoherencia } from './coherencia.js';
 
@@ -72,5 +73,6 @@ export function datosRevision(original,cambios) {
   if(d.nif_proveedor) d.nif_proveedor=normNif(d.nif_proveedor);
   // Un cambio de base/IVA invalida el desglose anterior: no mantener datos fiscales contradictorios.
   if(['base_imponible','cuota_iva','porcentaje_iva'].some(k=>d[k]!==original?.[k])) d.iva_desglose=[];
+  completarIva(d);
   return d;
 }

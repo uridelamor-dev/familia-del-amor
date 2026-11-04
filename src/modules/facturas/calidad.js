@@ -22,6 +22,10 @@ export function revisarFacturas(rows, hoy) {
     if(f.tipo==='albaran'&&(f.total==null||f.total==='')) {}
     else if(f.total===null || f.total===undefined || f.total==='' || !Number.isFinite(Number(f.total))) avisos.push('Importe no disponible');
     else if(Number(f.total)===0) avisos.push('Importe cero: comprobar original');
+    if(f.tipo!=='albaran') {
+      if(f.base_imponible==null || f.base_imponible==='' || f.cuota_iva==null || f.cuota_iva==='') avisos.push('Falta base imponible o cuota de IVA');
+      else if(f.total!=null && f.total!=='' && Math.abs(Number(f.total)-Number(f.base_imponible)-Number(f.cuota_iva))>.020001) avisos.push('Base + IVA difiere del total: comprobar ajustes u original');
+    }
     if(f.lineas_estado==='descuadre' || f.revisar) avisos.push('Lectura pendiente de revisión');
     if((grupos.get(clave(f)) || 0)>1) avisos.push('Mismo proveedor y número en esta lista');
     return {...f, calidad:avisos};

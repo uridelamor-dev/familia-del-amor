@@ -2293,3 +2293,30 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .fac-viewer .fac-viewer-page img,.fac-viewer .fac-viewer-page iframe{display:block;width:100%;max-width:none;object-fit:initial;border:0;background:white}
 .revrev .prev.fac-viewer{height:auto}.ficha .fic-doc:has(.fac-viewer){flex-direction:column;align-items:stretch}
 @media(max-width:700px){.fac-viewer-scroll{max-height:48vh}}
+
+/* Bandeja única de revisión de compras. */
+#facAvisos[open] { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:18px; }
+#facAvisos .fac-review-row { padding:14px 4px; border-bottom:1px solid var(--border); gap:14px; align-items:center; }
+#facAvisos .fac-review-row .grow { min-width:0; overflow-wrap:anywhere; }
+#facAvisos .fac-review-row .t2 { margin-top:5px; }
+#facAvisos .fac-review-tools { padding:10px 0; margin:0; }
+.modal.fac-review-modal { width:min(1050px,96vw); max-width:1050px; }
+.fac-review-modal .dupcard { border:0; padding:0; }
+@media(max-width:700px) {
+  #facAvisos[open] { padding:12px; }
+  #facAvisos .fac-review-row { flex-wrap:wrap; gap:8px; }
+  #facAvisos .fac-review-row .grow { flex:1 1 210px; }
+  .fac-review-modal .dupgrid,.fac-review-modal .revrev { display:grid; grid-template-columns:1fr; }
+  .fac-review-modal .dupacts { flex-wrap:wrap; }
+}
+
+.fac-fecha-toggle{border:0;background:transparent;color:var(--brand);padding:4px 0;font:inherit;letter-spacing:inherit;text-align:left;cursor:pointer;display:flex;gap:7px;align-items:center}.fac-fecha-toggle:hover{text-decoration:underline}.fac-fecha-toggle:focus-visible{outline:2px solid var(--brand);outline-offset:4px}.fac-fecha-secundaria{display:block;font-size:11px;color:var(--ink3);margin-top:5px}
+
+.fac-review-heading{padding:0 0 16px;margin-bottom:18px;border-bottom:1px solid var(--border)}
+.fac-review-heading p{margin:6px 0 0;font-size:13px;color:var(--ink2);line-height:1.5}
+.fac-review-modal .ficha,.fac-review-modal .revrev,.fac-review-modal .fac-revision-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}
+.fac-review-modal .field{min-width:0}.fac-review-modal .fac-revision-note{display:block;font-size:12px;line-height:1.45;margin:5px 0;color:var(--danger)}
+.fac-review-modal .fac-revision-field input,.fac-review-modal .fac-revision-field select{border-color:var(--danger)}
+.fac-review-modal .fac-revision-field{background:transparent}
+.fac-deshacer{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:12000;background:var(--surface);border:1px solid var(--border2);box-shadow:var(--sh-lg);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:14px;max-width:94vw;font-size:14px}
+@media(max-width:700px){.fac-review-modal .ficha,.fac-review-modal .revrev,.fac-review-modal .fac-revision-grid{grid-template-columns:1fr;gap:18px}.fac-deshacer{width:94vw;bottom:12px;flex-wrap:wrap}}

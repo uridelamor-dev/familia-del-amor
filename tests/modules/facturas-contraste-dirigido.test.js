@@ -19,11 +19,11 @@ test('el nombre solo y dos lecturas sin NIF no autorizan completar identidad',()
  assert.equal(prepararContraste([vacia,buena],[{...ficha,autor:null}]).lecturas[0].nif_proveedor,null);
  assert.equal(prepararContraste([vacia,buena],[ficha],[{cif:buena.nif_proveedor}]).lecturas[0].nif_proveedor,null);
 });
-test('una relectura resuelve un porcentaje ausente conservando productos y evidencia original',async()=>{
+test('completa un porcentaje ausente conservando productos y evidencia original',async()=>{
  const primera={...buena,porcentaje_iva:null};
- const r=await leerDocumentoVerificado(Buffer.from('x'),'image/jpeg',{dbAll,leer:lector([primera,buena,buena])});
+ const r=await leerDocumentoVerificado(Buffer.from('x'),'image/jpeg',{dbAll,leer:lector([primera,buena])});
  assert.equal(r.porcentaje_iva,21);assert.deepEqual(r.lineas,buena.lineas);
- assert.equal(r._contraste.primera.porcentaje_iva,null);assert.equal(r._contraste.resueltoPorRelectura,true);
+ assert.equal(r._contraste.primera.porcentaje_iva,null);assert.equal(r._contraste.tercera,undefined);assert.ok(r._contraste.ajustes.some(a=>a.campo==='porcentaje_iva'));
 });
 test('no calcula el IVA correcto si las lecturas originales dicen 21 y el original exige 4',async()=>{
  const mal={...buena,base_imponible:37.50,cuota_iva:1.5,total:39};

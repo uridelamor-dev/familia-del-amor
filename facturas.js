@@ -465,8 +465,8 @@ export async function leerDocumentoVerificado(buffer,mimeType,{leer=extraerDatos
       FROM facturas_recepciones WHERE estado='registrado'
       AND resultado->'revisionPrevia'->'aprobacion'->>'autor' IS NOT NULL
       AND resultado->'revisionPrevia'->'avisosTrasRevision' = '[]'::jsonb
-      AND LOWER(resultado->'revisionPrevia'->'datos'->>'proveedor') IN (LOWER(?),LOWER(?))
-      ORDER BY id DESC LIMIT 100`,[original.proveedor || '',segundaOriginal.proveedor || '']);
+      AND (LOWER(resultado->'revisionPrevia'->'datos'->>'proveedor') IN (LOWER(?),LOWER(?)) OR resultado->'revisionPrevia'->'datos'->>'nif_proveedor' IN (?,?))
+      ORDER BY id DESC LIMIT 100`,[original.proveedor || '',segundaOriginal.proveedor || '',original.nif_proveedor||'',segundaOriginal.nif_proveedor||'']);
     fichas.push(...confirmadas);
   }
   const propios=nombresPropios(LOCALES);
