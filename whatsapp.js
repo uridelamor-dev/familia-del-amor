@@ -1,3 +1,4 @@
+import {HERRAMIENTA_CARNET,instruccionesCarnet} from './src/modules/messaging/sara-carnet.js';
 import { pausaBloqueante } from './src/modules/messaging/atencion.js';
 import { conTurno } from './src/modules/messaging/turno.js';
 import { entradaDiferidaVigente, adjuntoGrupoDiferidoVigente, indicarEscribiendo } from './src/modules/messaging/entrada-diferida.js';
@@ -116,6 +117,9 @@ Si un cliente quiere cancelar su reserva: primero confirma con él de qué reser
 ## Modificaciones (¡NO son cancelaciones!)
 Si un cliente quiere CAMBIAR algo de una reserva que YA tiene (número de personas, hora, día o zona) — por ejemplo "al final seremos 4 en vez de 2" o "¿podemos cambiarlo a las 21:30?" — es una MODIFICACIÓN, NO una cancelación. Usa la herramienta \`modificar_reserva\` (localiza la reserva por su día actual y, si lo sabes, el local; pon en null lo que no cambie). NUNCA canceles y vuelvas a crear la reserva para un cambio: eso confunde al local. Solo usa \`cancelar_reserva\` si el cliente quiere anular la reserva del todo y no venir.
 
+## Carnet del Club
+Cuando el cliente pida su carnet de socio, tarjeta del Club, QR personal o recuperar su enlace, usa consultar_mi_carnet. La herramienta consulta solo el teléfono verificado del remitente. No pidas que repita su nombre o teléfono, no uses números mencionados en el mensaje, no inventes enlaces ni crees tarjetas nuevas. Devuelve el enlace exacto que proporcione la herramienta. Si falla la consulta no digas que no tiene carnet.
+
 ## Carta, platos y precios
 Si el cliente pregunta por un precio, plato, combo o condición, responde primero en texto usando el "CONTENIDO REVISADO DE LAS CARTAS" del local correcto. No sustituyas la respuesta por un PDF ni inventes datos ausentes. Puedes ofrecer la carta como complemento. «¿Tienes la carta de Girona?» (también Gerona), «¿Puedo ver el menú?» y equivalentes son peticiones de envío, no preguntas que requieran una segunda confirmación. Si pide que le envíes la carta, menú o documento y en el contexto ("DOCUMENTOS DISPONIBLES" / "CONFIGURACIÓN DEL EQUIPO") hay uno que encaje, envíaselo DIRECTAMENTE con la herramienta \`enviar_documento\` en cuanto lo pida — a la primera, sin derivar a ningún teléfono y sin esperar a que insista. Nunca digas que no tienes la carta si en el contexto hay un documento que encaja.
 Solo si NO hay ningún documento configurado para lo que pregunta, dile que puede escribir directamente al 622149946 y le atienden encantados.
@@ -217,6 +221,7 @@ const LOCALES = [
 // Herramientas nativas con strict: la API valida el input contra el esquema,
 // así que nunca llega una reserva malformada ni se filtran marcadores al cliente
 const TOOLS = [
+  HERRAMIENTA_CARNET,
   {
     name: "pasar_a_persona",
     description:
@@ -556,6 +561,8 @@ let saraConfigLoader = null;
 export function setSaraConfigLoader(fn) { saraConfigLoader = fn; }
 
 // Resuelve un documento configurado por su id → { buffer, filename, mimetype } (o null).
+let carnetResolver = null;
+export function setCarnetResolver(fn) { carnetResolver = fn; }
 let documentoResolver = null;
 export function setDocumentoResolver(fn) { documentoResolver = fn; }
 
@@ -839,6 +846,16 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
 async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
   const { name, input } = toolUse;
   try {
+    if (name === "consultar_mi_carnet") {
+      // Jamás usar input, perfil ni números escritos por el cliente como identidad.
+      let resultado;
+      try {
+        const privado = /@(s\.whatsapp\.net|lid)$/.test(String(jid||''));
+        const telefono = privado ? await resolverTelefono(jid) : null;
+        resultado = !telefono ? {estado:'identidad_no_verificada'} : carnetResolver ? await carnetResolver(telefono) : {estado:'error'};
+      } catch { resultado = {estado:'error'}; }
+      return {content:instruccionesCarnet(resultado),is_error:false};
+    }
     if (name === "registrar_reserva") {
       if (!onReserva) throw new Error("sistema de reservas no disponible");
       const resultado = await onReserva(input, jid);

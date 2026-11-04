@@ -1,3 +1,4 @@
+import { recuperarCarnet } from './src/modules/messaging/sara-carnet.js';
 import {rutasPaginas} from './src/modules/facturas/paginas-rutas.js';
 import {PAGINAS_SCHEMA,crearPaginas} from './src/modules/facturas/paginas.js';
 import {compararFotos} from './src/modules/facturas/paginas-clasificacion.js';
@@ -90,7 +91,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
-import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setAtencionEntrada, recuperarEntradaSinAtender, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, setGrupoFacturasPermitido, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
+import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setAtencionEntrada, recuperarEntradaSinAtender, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, setGrupoFacturasPermitido, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setCarnetResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, archivarPaginasFactura, guardarLineas, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
@@ -26037,6 +26038,8 @@ const server = app.listen(PORT, async () => {
       return "CONFIGURACIÓN NO DISPONIBLE. No confirmar condiciones comerciales, horarios ni disponibilidad. Derivar las consultas que necesiten esos datos.";
     }
   });
+
+  setCarnetResolver(telefono => recuperarCarnet({all:dbAll,telefono,base:proBase(null),activo:TARJETA_ACTIVA}));
 
   setDocumentoResolver(async (documentoId) => {
     try {

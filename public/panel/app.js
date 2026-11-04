@@ -13006,7 +13006,7 @@ async function fidpSw(k, v) {
 
 async function fidpAcumular() {
   modal("Acumular puntos sin canje", `
-    <p><b>1 punto por cada euro pagado</b>, en todos los locales. Por ejemplo, 32,30 € dan 32 puntos: se redondea hacia abajo por ticket.</p>
+    <p><b>1 punto por cada 5 € pagados</b>, en todos los locales. Por ejemplo, 32,30 € dan 6 puntos: se redondea hacia abajo por ticket.</p>
     <p>Sin descuentos, recompensas ni caducidad por ahora. El cliente debe identificarse en caja antes de cerrar el ticket. Los tickets anteriores no se recalculan.</p>
     <div class="field"><label for="fidpAcumEstado">Guardar como</label><select id="fidpAcumEstado" style="width:100%"><option value="borrador">Borrador para revisar</option><option value="publicada">Regla vigente para probar en sombra</option></select></div>
     <p class="mut">Guardar la regla no activa la concesión de puntos. Se revisa el cálculo y se activa después en «Resumen y activación», manteniendo apagados «Ofrecer» y «Consumir».</p>
@@ -13015,7 +13015,7 @@ async function fidpAcumular() {
 async function fidpGuardarAcumulacion() {
   const estado=document.getElementById("fidpAcumEstado")?.value || "borrador";
   try {
-    await apiSend("POST","/api/fidelizacion/reglas",{ambito:"global",solo_acumular:true,puntos_por_euro:1,redondeo:"floor",max_rewards_factura:1,estado,nombre:"Acumulación · 1 punto por euro"});
+    await apiSend("POST","/api/fidelizacion/reglas",{ambito:"global",solo_acumular:true,puntos_por_euro:0.2,redondeo:"floor",max_rewards_factura:1,estado,nombre:"Acumulación · 1 punto por cada 5 €"});
     document.querySelectorAll(".modal-ov").forEach(x=>x.remove());
     await loadFidelizacion();toast("Regla guardada. La activación se revisa por separado.");
   }catch(e){toast(e.message || "No se pudo guardar");}
@@ -13025,7 +13025,7 @@ async function fidpGuardarAcumulacion() {
 async function fidpNueva() {
   const v = FIDP.vigentes?.[0]?.regla || {};
   const campos = [
-    ["puntos_por_euro", "Puntos por cada euro pagado", v.puntos_por_euro ?? 1],
+    ["puntos_por_euro", "Puntos por cada euro pagado", v.puntos_por_euro ?? 0.2],
     ["puntos_necesarios", "Puntos que cuesta el descuento", v.puntos_necesarios ?? 100],
     ["descuento_euros", "Euros de descuento", v.descuento_euros ?? 5],
     ["consumo_minimo", "Mínimo de la factura antes del descuento (€)", v.consumo_minimo ?? 30],
@@ -13648,7 +13648,7 @@ async function fidgPromoNueva(desdeId) {
         ${fgCampo("pmCodigo", "Código que has creado en Ágora", base?.codigo_agora || "", { placeholder: "Por ejemplo: coqu", autocapitalize: "off", autocorrect: "off", spellcheck: "false" })}
         <div id="pmCodigoErr" class="hidden" role="status" style="color:var(--danger)"></div>
         <details class="promo-help"><summary>¿Dónde lo preparo en Ágora?</summary>
-          <ol><li>Entra en Administración → Promociones en el Ágora de cada local.</li><li>Elige los productos y el precio o regalo. Para una coca a 9,50 €, usa un pack de una unidad a precio fijo.</li><li>Selecciona «Sólo clientes y tickets seleccionados» y asigna un código.</li><li>Copia aquí ese código exactamente igual, incluidas las mayúsculas.</li></ol>
+          <ol><li>Entra en Administración → Promociones en el Ágora de cada local.</li><li>Elige los productos y el precio o regalo. Para una coca a 9 €, usa un pack de una unidad a precio fijo.</li><li>Selecciona «Sólo clientes y tickets seleccionados» y asigna un código.</li><li>Copia aquí ese código exactamente igual, incluidas las mayúsculas.</li></ol>
           <p>Guardar el código aquí no crea ni cambia la oferta en Ágora. Comprueba allí también los días, fechas, horario y productos.</p>
         </details>
       </div>

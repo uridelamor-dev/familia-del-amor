@@ -172,7 +172,8 @@
     $("tjPtsEti").textContent = f.disponible === 1 ? "punto disponible" : "puntos disponibles";
 
     if (f.solo_acumular) {
-      $("tjPtsRegla").textContent = (f.puntos_por_euro || 1) + " punto por cada euro pagado. Las recompensas se anunciarán más adelante.";
+      var tasa = Number(f.puntos_por_euro);
+      $("tjPtsRegla").textContent = (tasa === 0.2 ? "1 punto por cada 5 € pagados" : Number.isFinite(tasa) && tasa > 0 ? tasa.toLocaleString("es-ES") + " puntos por cada euro pagado" : "Consulta las condiciones del programa") + ". Se redondea hacia abajo por ticket. Las recompensas se anunciarán más adelante.";
       $("tjPtsBarra").style.display = "none";
       $("tjPtsFalta").textContent = "Por ahora acumulas puntos; todavía no se pueden canjear.";
     }
