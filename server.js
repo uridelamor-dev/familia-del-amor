@@ -125,6 +125,7 @@ import { extraerScripts, extraerRutasApi, clasificarRutas, extraerClrTypes, clas
 import { getInforme, listaInformes, calcularTotales } from "./src/integrations/agora/reports.js";
 import { CATALOGO_MODULOS, modulosDeRol, modulosEfectivos, sanearModulos, moduloDeRuta } from "./src/modules/usuarios/permisos.js";
 import { localesDe, localPermitido, localesPermitidos, puedeLocal, sanearLocalesExtra, parseLocales } from "./src/modules/usuarios/locales.js";
+import { contabilidadGlobal } from "./src/modules/usuarios/contabilidad-global.js";
 // Centros: dos barras que son un mismo negocio (Blanes + Cooperativa). Traduce el local
 // UNA vez, en los helpers de ámbito, y las ~190 consultas con `local = ?` operan solas sobre
 // el centro sin tocar ninguna. src/modules/locales/centros.js explica qué se junta y qué no.
@@ -3224,7 +3225,7 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
 
 // Editar los campos de una factura (corregir lo que extrajo la IA). Re-proyecta a los Sheets.
 registrarMemoria(app,{auth:requireAuth(['direccion','contabilidad']),dbAll,dbGet,dbRun,
- global:req=>!localesScope({...req,query:{}}).length,
+ global:req=>contabilidadGlobal(req.user),
  locales:()=>dbAll('SELECT local,empresa,local_contable FROM facturas_locales')});
 
 app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
@@ -3244,7 +3245,7 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     if(req.body.local&&!documentoEnAmbito({local:req.body.local},localesScope({...req,query:{}})))return res.status(403).json({error:'Sin acceso al local de destino'});
     let reglaLocal;
     if(req.body.recordar_local===true){
-      if(localesScope({...req,query:{}}).length)return res.status(403).json({error:'Guardar reglas compartidas requiere acceso global.'});
+      if(!contabilidadGlobal(req.user))return res.status(403).json({error:'Guardar reglas compartidas requiere acceso a todos los locales de Contabilidad.'});
       const establecimientos=await dbAll('SELECT local,empresa,local_contable FROM facturas_locales');
       try{reglaLocal=prepararReglaLocal({...antes,...req.body},establecimientos,req.user.nombre||req.user.username);}
       catch(e){return res.status(400).json({error:e.message});}
@@ -6469,7 +6470,7 @@ app.post('/api/facturas/proveedores-unir/preview', requireAuth(['direccion','con
  const client=await pool.connect();
  try {
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
-  if(localesScope({...req,query:{}}).length)throw Error('La unión afecta a todos los locales. Debe realizarla un usuario de contabilidad con acceso global.');
+  if(!contabilidadGlobal(req.user))throw Error('La unión afecta a todos los locales. La cuenta necesita acceso a todos los locales de Contabilidad.');
   const plan=await prepararUnion((s,p)=>client.query(s,p),req.body.origen,req.body.destino);
   await client.query('COMMIT');res.json({ok:true,...resumenUnion(plan)});
  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message});}
@@ -6480,7 +6481,7 @@ app.post('/api/facturas/proveedores-unir', requireAuth(['direccion','contabilida
  try {
   await client.query('BEGIN');
   await client.query("SET LOCAL lock_timeout='5s'");
-  if(localesScope({...req,query:{}}).length)throw Error('La unión afecta a todos los locales. Debe realizarla un usuario de contabilidad con acceso global.');
+  if(!contabilidadGlobal(req.user))throw Error('La unión afecta a todos los locales. La cuenta necesita acceso a todos los locales de Contabilidad.');
   const result=await ejecutarUnion((s,p)=>client.query(s,p),req.body,req.user.username||req.user.nombre);
   await client.query('COMMIT');res.json({ok:true,...result});
  }catch(e){await client.query('ROLLBACK');res.status(409).json({error:e.message});}
@@ -6493,7 +6494,7 @@ for(const paso of ['preview','confirmar'])app.post('/api/facturas/proveedores-un
  try{
   await client.query(paso==='preview'?'BEGIN ISOLATION LEVEL REPEATABLE READ':'BEGIN');
   await client.query("SET LOCAL lock_timeout='5s'");
-  if(localesScope({...req,query:{}}).length)throw Error('La unión afecta a todos los locales. Debe realizarla un usuario de contabilidad con acceso global.');
+  if(!contabilidadGlobal(req.user))throw Error('La unión afecta a todos los locales. La cuenta necesita acceso a todos los locales de Contabilidad.');
   const result=paso==='preview'?resumenGrupo(await prepararUnionGrupo((s,p)=>client.query(s,p),req.body.nombres)):await ejecutarUnionGrupo((s,p)=>client.query(s,p),req.body,req.user.username||req.user.nombre);
   await client.query('COMMIT');res.json({ok:true,...result});
  }catch(e){await client.query('ROLLBACK');res.status(409).json({ok:false,error:e.message});}finally{client.release();}
