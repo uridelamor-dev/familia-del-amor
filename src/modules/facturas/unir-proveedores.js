@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { claveProveedor } from './categorias.js';
+import { validarIdentidadUnion } from './union-identidad.js';
 
 export const TABLES = ['facturas', 'facturas_pendientes', 'facturas_proveedor_fichas', 'facturas_proveedor_cats', 'facturas_pago_reglas', 'facturas_proveedor_pago', 'facturas_proveedor_alias', 'inv_proveedores'];
 export const fingerprint = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
@@ -65,6 +66,8 @@ export async function ejecutarUnion(q, body, autor) {
   return aplicarUnion(q,p,autor);
 }
 export async function aplicarUnion(q,p,autor) {
+  validarIdentidadUnion([...p.snapshot.facturas,...p.snapshot.facturas_pendientes],
+    (await q('SELECT empresa,cif FROM facturas_locales')).rows);
   const origenes=p.origenClaves||[p.a], todas=[...origenes,p.b];
   const stamp = new Date().toISOString();
   await q("INSERT INTO config(key,value) VALUES ($1,$2)", ['proveedores_union_'+Date.now()+'_'+p.revision.slice(0,12),JSON.stringify({autor,fecha:stamp,...p})]);

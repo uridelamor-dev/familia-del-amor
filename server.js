@@ -348,6 +348,7 @@ import { albaranCompatible, proponerConciliacion, resumenConciliacion, estadoCon
 import { MISMO_PROVEEDOR as MISMO_PROV } from "./src/modules/facturas/duplicados.js";
 import { normNif, nifValido } from "./src/modules/facturas/emisor.js";
 import { proveedoresUnibles, prepararUnion, resumenUnion, ejecutarUnion } from "./src/modules/facturas/unir-proveedores.js";
+import { validarIdentidadUnion } from "./src/modules/facturas/union-identidad.js";
 import { CATALOGO, CATEGORIAS, claveProveedor, normalizarCategoria, normalizarPar, indiceCategorias, categoriasDe, soloCategorias, gastoPorCategoria } from "./src/modules/facturas/categorias.js";
 import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES_CANON } from "./src/modules/facturas/local-canonico.js";
 import { nombresDeLaCasa, noEsProducto } from "./src/modules/facturas/no-es-producto.js";
@@ -476,7 +477,7 @@ const recepcionFacturas = crearRecepcion({
   existeDestino: async hash => !!(await dbGet("SELECT id FROM facturas WHERE file_hash=? UNION ALL SELECT id FROM facturas_pendientes WHERE file_hash=? LIMIT 1", [hash,hash])),
   procesar: o => (o.local ? procesarFacturaOriginal : procesarFacturaSinLocalOriginal)({
     ...o,getToken:getDriveAccessToken,dbGet,dbAll,dbRun,backupFn:null,
-    leerDocumento: o.datosAprobados ? async () => structuredClone(o.datosAprobados) : (buffer,mime) => leerDocumentoVerificado(buffer,mime,{dbAll}),
+    leerDocumento: o.datosAprobados ? async () => ({...structuredClone(o.datosAprobados),_revisionHumana:true}) : (buffer,mime) => leerDocumentoVerificado(buffer,mime,{dbAll}),
   }),
 });
 const tandasFacturas=crearTandas({db:{get:dbGet,run:dbRun,all:dbAll},enviar:sendMensajeAGrupo,permitido:async grupo=>!!await dbGet("SELECT local FROM facturas_grupos WHERE group_jid=?",[grupo]),lock:async fn=>{
@@ -496,7 +497,7 @@ const repasoHistorico=crearRepasoHistorico({
    return await fn();
   }finally{try{if(adquirido)await c.query('SELECT pg_advisory_unlock(70799135,2509)');}finally{c.release();}}
  },
- leer:(buffer,mime)=>leerDocumentoVerificado(buffer,mime,{dbAll}),
+ leer:(buffer,mime)=>leerDocumentoVerificado(buffer,mime,{dbAll,usarMemoria:false}),
  original:async f=>{
   let url=f.guardado.drive_url;
   if(f.origen==='recepcion'){
@@ -6760,6 +6761,15 @@ app.put("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
       }
     }
 
+    // El cambio de nombre tampoco puede servir para saltarse la comprobación de una unión.
+    const identidades = (await q('SELECT DISTINCT proveedor,nif FROM facturas WHERE proveedor = ANY(?)', [[...todos, nuevo]])).rows;
+    const empresasIdentidad = (await q('SELECT empresa,cif FROM facturas_locales')).rows;
+    try {
+      validarIdentidadUnion(identidades, empresasIdentidad);
+    } catch (e) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ok:false,error:e.message});
+    }
     let cambiadas = 0;
     if (req.body?.aplicarHistorico !== false && todos.length) {
       cambiadas = (await q(`UPDATE facturas SET proveedor = ? WHERE proveedor = ANY(?)`, [nuevo, todos])).rowCount || 0;

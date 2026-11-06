@@ -249,7 +249,8 @@ describe("lo que se le manda al modelo", () => {
   test("va el texto y va dicho qué manda cuando la imagen y el texto no coinciden", () => {
     const b = bloqueTextoParaClaude("Factura 2026/00418");
     assert.match(b, /Factura 2026\/00418/);
-    assert.match(b, /copia lo de aquí/, "para los números manda el texto: es exacto");
+    assert.match(b, /si contradice la imagen, señala la duda/, "la capa textual no invalida el original visual");
+    assert.match(b, /único CIF extraído podría ser el del cliente/, "un CIF aislado no demuestra la identidad del emisor");
     assert.match(b, /manda el documento/, "para saber quién es quién manda la imagen");
     assert.match(b, /No inventes/, "y si no está en ninguna, no se rellena");
   });

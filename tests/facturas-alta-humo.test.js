@@ -133,3 +133,11 @@ describe("el bloque de «gasto de empresa» está en su función", () => {
     assert.match(src.slice(iAsig), /if \(reparto === "empresa" && facturaId\)/);
   });
 });
+
+describe('la identidad ya revisada llega intacta al registro',()=>{
+ for(const marca of ['_contraste','_revisionHumana'])test(marca+' no reaplica alias ni intercambia emisor y receptor',async()=>{
+  const datos={...DATOS,proveedor:'Vins i Licors Grau SA',[marca]:true};
+  const {correr,filas}=alta({leerDocumento:async()=>structuredClone(datos),dbAll:async sql=>sql.includes('facturas_proveedor_alias')?[{clave:'vins i licors grau',nif:DATOS.nif_proveedor,proveedor:'Transgourmet Ibérica SAU'}]:[]});
+  await correr();assert.equal(filas.facturas[0].params[5],datos.proveedor);assert.equal(filas.facturas[0].params[6],datos.nif_proveedor);
+ });
+});

@@ -772,10 +772,11 @@ Es el texto EXACTO que el emisor escribió en el PDF, recolocado para respetar m
 disposición original (las columnas se conservan con espacios).
 Cómo usarla:
 - Para NÚMEROS Y TEXTOS LITERALES (nº de factura, NIF, fechas, cantidades, precios, importes,
-  descripciones) manda esta capa: no tiene errores de lectura. Si lo que ves en la imagen y lo
-  que pone aquí no coincide, copia lo de aquí.
+  descripciones) usa esta capa para confirmar caracteres, pero comprueba el bloque al que pertenecen.
+  Puede faltar información gráfica o haber una capa OCR errónea: si contradice la imagen, señala la duda.
 - Para SABER QUIÉN ES QUIÉN y qué significa cada bloque manda el documento: el membrete, los
   recuadros y la posición se ven en la imagen, no aquí.
+- El logotipo y el texto fiscal vertical pueden ser imágenes y NO aparecer aquí. El único CIF extraído podría ser el del cliente: nunca lo atribuyas al proveedor por ser el único.
 - Puede estar incompleta o descolocada (columnas pegadas, alguna línea partida). Si algo no
   aparece aquí pero sí en la imagen, usa la imagen. No inventes nada que no esté en ninguna.
 --- INICIO DE LA CAPA DE TEXTO ---

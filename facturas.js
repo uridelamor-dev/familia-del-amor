@@ -1,3 +1,4 @@
+import {mismoNombreFiscal,avisosIdentidad} from './src/modules/facturas/identidad-documento.js';
 import {reglasLocales,aplicarReglaLocal} from './src/modules/facturas/memoria.js';
 import { prepararContraste, camposParaRelectura, elegirLecturaContrastada, nifComprobable } from './src/modules/facturas/contraste-dirigido.js';
 import { controlesLectura, compararLecturas, RevisionDocumento } from './src/modules/facturas/validacion-lectura.js';
@@ -70,6 +71,7 @@ markdown, con esta estructura exacta
   "numero_factura": "string",
   "proveedor": "string",
   "nif_proveedor": "string",
+  "evidencia_emisor": {"nombre_literal": "nombre del emisor copiado del original", "nif_literal": "NIF copiado o null", "ubicacion_nif": "ubicación concreta del NIF del emisor o null"},
   "nombre_receptor": "string",
   "nif_receptor": "string",
   "local_receptor": "string",
@@ -88,6 +90,9 @@ markdown, con esta estructura exacta
 }
 DESGLOSE FISCAL: copia en iva_desglose cada base, tipo porcentual y cuota del resumen fiscal del documento, incluidos tipos cero. Si hay varios tipos, porcentaje_iva es null; base_imponible y cuota_iva son las sumas. Nunca uses un tipo medio ni deduzcas el reparto a partir del total. No mezcles recargo de equivalencia, retenciones ni otros impuestos con IVA. Copia sus importes en retencion, recargo_equivalencia y otros_cargos solo si aparecen expresamente; si no, null. Si no puedes identificar todas las bases con seguridad, devuelve iva_desglose: [].
 QUIÉN EMITE Y QUIÉN RECIBE. Es el error más fácil de cometer y el más caro:
+- Lee también el texto fiscal vertical de los márgenes y el pie. El NIF del proveedor puede estar allí, mientras el NIF grande de la cabecera pertenece al cliente.
+- Copia el nombre fiscal literal del emisor en proveedor y evidencia_emisor.nombre_literal. No uses una marca de los productos, ni el nombre del archivo, ni un proveedor conocido por intuición.
+- evidencia_emisor.nif_literal debe salir del bloque fiscal de esa misma empresa. Explica dónde está en ubicacion_nif. Si no lo ves, null; nunca uses el NIF del destinatario.
 - "proveedor" y "nif_proveedor" son de QUIEN EMITE la factura y cobra: normalmente arriba del
   todo, con el logotipo y el membrete (dirección, teléfono, web, registro mercantil).
 - "nombre_receptor" y "nif_receptor" son de QUIEN LA RECIBE y paga: suele ir más abajo, en un
@@ -445,20 +450,21 @@ export async function extraerDatosDocumento(buffer, mimeType, { hoy = null, revi
   if (r.recortado) console.warn(`[Facturas] respuesta incompleta: se aprovechan ${(r.valor.lineas || []).length} líneas enteras`);
   // Las pistas van con guión bajo para que se vea de un vistazo que NO vienen del modelo: son
   // lo que había escrito en el papel, y sirven precisamente para contrastarlas con lo que dijo.
+  r.valor._exigirEvidenciaEmisor = true;
   if (pistas) r.valor._pistasFecha = pistas;
   if (r.recortado || response.stop_reason === "max_tokens") r.valor._lecturaIncompleta = true;
   return r.valor;
 }
 
 // Se ejecuta antes de Drive, Sheets y del alta contable. La segunda lectura no ve la primera.
-export async function leerDocumentoVerificado(buffer,mimeType,{leer=extraerDatosDocumento,dbAll}={}) {
+export async function leerDocumentoVerificado(buffer,mimeType,{leer=extraerDatosDocumento,dbAll,usarMemoria=true}={}) {
   const original=await leer(buffer,mimeType);
   if(esAdjuntoDecorativo(original)) return original;
   const segundaOriginal=await leer(buffer,mimeType,{revision:true});
   const nuestras=dbAll ? await dbAll("SELECT empresa,cif FROM facturas_locales") : [];
-  const fichas=dbAll ? await dbAll("SELECT proveedor,nif,autor FROM facturas_proveedor_alias") : [];
+  const fichas=dbAll && usarMemoria ? await dbAll("SELECT proveedor,nif,autor FROM facturas_proveedor_alias") : [];
   // Aprendizaje solo de originales confirmados por una persona y sin excepciones pendientes.
-  if(dbAll) {
+  if(dbAll && usarMemoria) {
     const confirmadas=await dbAll(`SELECT resultado->'revisionPrevia'->'datos'->>'proveedor' AS proveedor,
       resultado->'revisionPrevia'->'datos'->>'nif_proveedor' AS nif,
       resultado->'revisionPrevia'->'aprobacion'->>'autor' AS autor
@@ -474,7 +480,7 @@ export async function leerDocumentoVerificado(buffer,mimeType,{leer=extraerDatos
   const [datos,segunda]=preparado.lecturas;
   const comprobar=async d=>{
     const coher=await revisarCoherenciaFactura(d,dbAll,{hoy:hoyISOFactura()});
-    const avisos=[...controlesLectura(d),...coher.avisos,...contrastarFechaEmision(d)];
+    const avisos=[...controlesLectura(d),...coher.avisos,...contrastarFechaEmision(d),...avisosIdentidad(d,fichas)];
     if(d.nif_proveedor && !nifComprobable(d.nif_proveedor)) avisos.push({campo:'nif_proveedor',texto:'El identificador fiscal necesita comprobación: formato o dígito de control no válido.'});
     if(esNuestra(d.proveedor,d.nif_proveedor,nuestras,propios)) avisos.push({campo:"proveedor",texto:"El proveedor coincide con una de nuestras empresas. Comprueba emisor y receptor."});
     return avisos;
@@ -651,7 +657,7 @@ export async function repararTodosLosSheets(deps) {
  * poder ejecutarlo, un `ReferenceError` colado entre el INSERT y el detalle estuvo nueve días
  * rompiendo cada factura que entraba sin que ningún test dijera nada.
  */
-export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbAll, dbRun, backupFn, leerDocumento = extraerDatosDocumento }) {
+export async function procesarFactura({ buffer, mimeType, filename, local, caption, canal = "WhatsApp", getToken, dbGet, dbAll, dbRun, backupFn, leerDocumento = (buffer,mime) => leerDocumentoVerificado(buffer,mime,{dbAll}) }) {
   // El local SIEMPRE se guarda con el nombre del establecimiento, nunca como llegue.
   // De no hacerlo acabaron conviviendo «La Tapeta - Lloret», «Lloret» y «BLANES» en la
   // misma columna, y filtrando por el nombre bueno faltaban facturas.
@@ -901,11 +907,11 @@ function normalizarNif(nif) {
  */
 async function aplicarNombreProveedor(datos, dbAll) {
   try {
-    if (!datos || !dbAll || (!datos.proveedor && !datos.nif_proveedor)) return;
+    if (!datos || datos._contraste || datos._revisionHumana || !dbAll || (!datos.proveedor && !datos.nif_proveedor)) return;
     const alias = await dbAll(`SELECT clave, nif, proveedor FROM facturas_proveedor_alias`).catch(() => []);
     if (!alias.length) return;
     const bueno = nombreCanonico({ proveedor: datos.proveedor, nif: datos.nif_proveedor }, alias);
-    if (bueno && bueno !== datos.proveedor) {
+    if (bueno && bueno !== datos.proveedor && mismoNombreFiscal(bueno,datos.proveedor)) {
       console.log(`[Facturas] proveedor corregido por alias: «${datos.proveedor}» → «${bueno}»`);
       datos.proveedor = bueno;
     }
@@ -953,7 +959,7 @@ async function revisarCoherenciaFactura(datos, dbAll, ctx = null) {
 
 async function revisarEmisorReceptor(datos, dbAll) {
   try {
-    if (!datos || !dbAll) return null;
+    if (!datos || datos._contraste || datos._revisionHumana || !dbAll) return null;
     const nuestras = await dbAll("SELECT empresa, cif FROM facturas_locales").catch(() => []);
     if (!nuestras.length) return null;
     // Además del nombre fiscal, los nombres con los que existimos de cara al mundo: los de los
@@ -1002,7 +1008,7 @@ export async function combinarArchivosEnPdf(archivos) {
   return Buffer.from(await out.save());
 }
 
-export async function procesarFacturaSinLocal({ buffer, mimeType, filename, origen, getToken, dbGet, dbAll, dbRun, leerDocumento = extraerDatosDocumento }) {
+export async function procesarFacturaSinLocal({ buffer, mimeType, filename, origen, getToken, dbGet, dbAll, dbRun, leerDocumento = (buffer,mime) => leerDocumentoVerificado(buffer,mime,{dbAll}) }) {
   // 1. Hash duplicados (facturas procesadas y pendientes)
   const fileHash = createHash("sha256").update(buffer).digest("hex");
   const hashDupe = await dbGet("SELECT id, proveedor, numero_factura, fecha FROM facturas WHERE file_hash = ?", [fileHash])

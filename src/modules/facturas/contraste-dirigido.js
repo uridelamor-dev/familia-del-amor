@@ -1,3 +1,4 @@
+import {mismoNombreFiscal} from './identidad-documento.js';
 import { completarIva } from './iva-inferido.js';
 // Conciliación conservadora: no promedia ni construye una factura mezclando importes.
 import { compararLecturas, controlesLectura, CAMPOS_REVISION } from './validacion-lectura.js';
@@ -39,7 +40,7 @@ export function prepararContraste(lecturas, fichas=[], nuestras=[], propios=[]) 
     const nif=normNif(d.nif_proveedor);
     if(!nifComprobable(nif) || esNuestra(d.proveedor,nif,nuestras,propios) || !lecturas.every(l=>normNif(l.nif_proveedor)===nif))continue;
     const nombres=[...new Set(fichas.filter(f=>f.autor&&normNif(f.nif)===nif).map(f=>f.proveedor).filter(Boolean))];
-    if(nombres.length===1 && d.proveedor!==nombres[0]) {
+    if(nombres.length===1 && d.proveedor!==nombres[0] && mismoNombreFiscal(d.proveedor,nombres[0])) {
       cambios.push({campo:'proveedor',antes:d.proveedor,valor:nombres[0],origen:'Nombre confirmado con el mismo NIF en ambas lecturas'});
       d.proveedor=nombres[0];
     }
