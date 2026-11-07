@@ -32,6 +32,7 @@ import { generarPinProvisional } from './src/modules/rrhh/pin-provisional.js';
 import {crearPlanificacionPersonal,leerPersonal} from './src/modules/informes/planificacion-personal.js';
 import {crearDecisionesHistorico,cabeceraHistorica} from './src/modules/facturas/repaso-decision.js';
 import { REPASO_HISTORICO_SCHEMA, crearRepasoHistorico } from './src/modules/facturas/repaso-historico.js';
+import {AUDITORIA_COMPLETA_SCHEMA,cargarDistintivos,registrarAuditoriaCompleta} from './src/modules/facturas/auditoria-completa.js';
 import { TANDAS_SCHEMA, TANDAS_RESULTADO_SCHEMA, crearTandas } from './src/modules/facturas/tandas-whatsapp.js';
 import { leerDocumentoVerificado, driveDescargar } from './facturas.js';
 import {crearAvisosSolicitudes} from './src/modules/tienda/solicitudes.js';
@@ -50,7 +51,7 @@ import { recuperarRespuestaAutorizada } from './src/modules/messaging/recuperaci
 import { rutasTienda } from "./src/modules/tienda/rutas.js";
 import { tiendaDemoPersistente } from "./src/modules/tienda/preparar.js";
 import {normalizarCentroBlanes} from "./src/modules/facturas/centro-blanes.js";
-import {IVA_SCHEMA,validarIva,repasarIva} from './src/modules/facturas/iva.js';
+import {IVA_SCHEMA,validarIva,repasarIva,porcentajeDeIvaValidado} from './src/modules/facturas/iva.js';
 import {DRIVE_SYNC_SCHEMA,configurarBloqueoDrive} from './src/modules/facturas/drive-sync.js';
 import {periodoPago, aplicarPagosEmpresa, pagoPorEmpresa} from './src/modules/facturas/pago-empresa.js';
 import { configurarBloqueoSheets, planAnuales, avisoAnualesUnaVez } from "./src/modules/facturas/sheets-anuales.js";
@@ -78,7 +79,7 @@ import { CUMPLE_CONFIG, configCumpleanos, avisarCumpleanos } from './src/modules
 import { COM_SCHEMA } from "./src/modules/comunicados/comunicados.js";
 import { registrarComunicados } from "./src/routes/comunicados.js";
 import { GESTION_SCHEMA } from "./src/modules/mantenimiento/gestion.js";
-import { revisarFacturas } from "./src/modules/facturas/calidad.js";
+import { revisarFacturas, fechaValida as fechaFacturaValida } from "./src/modules/facturas/calidad.js";
 import { WEB_SCHEMA } from "./src/modules/web/borradores.js";
 import { registrarBorradoresWeb } from "./src/routes/web-borradores.js";
 import { SALA_SCHEMA, visitaCompatibleConSeguimiento } from "./src/modules/reservas/sala.js";
@@ -336,6 +337,8 @@ import * as DUP from "./src/modules/clientes/duplicados.js";
 import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
 import { gruposDuplicados } from "./src/modules/facturas/proveedores-duplicados.js";
 import { grupoDeSQL, claveProducto, validarSuma, mensajeValidacion } from "./src/modules/facturas/lineas.js";
+import { redondearImporte } from './src/modules/facturas/redondeo.js';
+import { agregarLineaManual } from './src/modules/facturas/alta-linea.js';
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
 import { CLAVES as GM, DIAS_ATRAS as GM_DIAS, consultaGmail, explicarError, resumirGmail } from "./src/modules/facturas/gmail-estado.js";
 import { TANDA as REL_TANDA, CADA_HORAS as REL_HORAS, tocaRepasar, estadoTrasFallo,
@@ -2271,6 +2274,7 @@ async function initDB() {
     await client.query(TANDAS_SCHEMA);
     await client.query(TANDAS_RESULTADO_SCHEMA);
     await client.query(REPASO_HISTORICO_SCHEMA);
+    await client.query(AUDITORIA_COMPLETA_SCHEMA);
     await client.query(FICHA_COMERCIAL_SCHEMA);
     try { await ensureSchemaEscandallos((sql,p=[]) => client.query(sql,p)); }
     catch(e) { console.error("[DB] escandallos:",e.message); }
@@ -3228,11 +3232,13 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0 AND vencimiento >= ? AND vencimiento <= ?),0)::float AS semana_importe
          FROM facturas ${where}`, // OJO con el orden: los «?» se numeran por su sitio en el SQL, y estos van ANTES del WHERE.
       [hoyISO(), hoyISO(), hoyISO(), hoyMas(7), hoyISO(), hoyMas(7), ...params]);
+    await cargarDistintivos(rows,dbAll);
     res.json({ ok: true, data: revisarFacturas(rows, hoyMad), totales: t || null, hayMas: (t?.docs || 0) > rows.length });
   } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
 });
 
 // Editar los campos de una factura (corregir lo que extrajo la IA). Re-proyecta a los Sheets.
+registrarAuditoriaCompleta(app,{auth:requireAuth(['direccion','contabilidad']),pool,puedeAccederLocal});
 registrarMemoria(app,{auth:requireAuth(['direccion','contabilidad']),dbAll,dbGet,dbRun,
  global:req=>contabilidadGlobal(req.user),
  locales:()=>dbAll('SELECT local,empresa,local_contable FROM facturas_locales')});
@@ -3240,7 +3246,8 @@ registrarMemoria(app,{auth:requireAuth(['direccion','contabilidad']),dbAll,dbGet
 app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const antes = await dbGet("SELECT * FROM facturas WHERE id = ?", [req.params.id]);
-    const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado", "periodo_facturado"];
+    const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado", "periodo_facturado", "vencimiento"];
+    if(req.body.vencimiento!==undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(req.body.vencimiento) || !fechaFacturaValida(req.body.vencimiento)))return res.status(400).json({ok:false,error:'Introduce una fecha de vencimiento válida, comprobada en el original.'});
     // Corregir a mano tampoco puede colar un local que no existe: es la otra puerta por la
     // que entraron los «Lloret» y «BLANES» sueltos.
     if (req.body.local !== undefined && String(req.body.local || "").trim()) {
@@ -3263,6 +3270,7 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     if(req.body.iva_desglose!==undefined) {
       ivaValidado=validarIva(req.body.iva_desglose,{...antes,...req.body});
       if(!ivaValidado.ok)return res.status(400).json({error:ivaValidado.aviso});
+      req.body.porcentaje_iva=porcentajeDeIvaValidado(ivaValidado);
     }
     const sets = [], vals = [];
     for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); }
@@ -3275,6 +3283,7 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     if (!sets.length) return res.json({ ok: true });
     if(req.body.pagado !== undefined) sets.push("pago_origen='manual'", "pago_automatico=0");
     if(req.body.periodo_facturado !== undefined) sets.push("periodo_origen='manual'");
+    if(req.body.vencimiento !== undefined) sets.push("vencimiento_origen='factura'");
     vals.push(req.params.id);
     const client=await pool.connect();
     try{
@@ -7342,7 +7351,7 @@ async function recalcularCuadre(facturaId, baseImponible) {
   const documento=await dbGet("SELECT tipo FROM facturas WHERE id=?",[facturaId]);
   const v = validarSuma(lineas, baseImponible,documento?.tipo);
   await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ? WHERE id = ?`,
-    [v.motivo === "sin_valorar" ? "sin_valorar" : v.cuadra ? "ok" : "descuadre", mensajeValidacion(v), facturaId]);
+    [v.motivo === "sin_valorar" ? "sin_valorar" : v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", mensajeValidacion(v), facturaId]);
   return v;
 }
 
@@ -7379,6 +7388,13 @@ app.delete("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"]
   }
 });
 
+app.post('/api/facturas/:id/lineas', requireAuth(['direccion','contabilidad']), async (req,res)=>{
+  try {
+    res.json(await agregarLineaManual({id:Number(req.params.id),body:req.body,transaccion:transaccionPaginas,
+      puedeAcceder:local=>puedeAccederLocal(req,local),autor:req.user?.nombre||req.user?.username||null,ahora:isoConOffset(Date.now())}));
+  } catch(e) { res.status(e.status||500).json({ok:false,error:e.status?e.message:'No se pudo añadir la línea. Comprueba el detalle antes de reintentarlo.'}); }
+});
+
 app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -7397,10 +7413,13 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
     }
     const cantidad = num(req.body?.cantidad) ?? l.cantidad;
     const unidad = req.body?.unidad !== undefined ? (String(req.body.unidad || "").trim().slice(0, 20) || null) : undefined;
+    const descripcion = req.body?.descripcion === undefined ? undefined : String(req.body.descripcion ?? '').trim();
+    if (descripcion !== undefined && (!descripcion || descripcion.length > 300)) return res.status(400).json({ok:false,error:'Escribe el nombre del producto, con un máximo de 300 caracteres.'});
+    if (descripcion !== undefined && req.body?.aplicar_a_todas) return res.status(400).json({ok:false,error:'Corrige primero el nombre de este producto antes de propagar cantidades.'});
     const importePedido = num(req.body?.importe);
     const precioPedido = num(req.body?.precio_unitario);
 
-    if (cantidad != null && cantidad <= 0) return res.status(400).json({ ok: false, error: "La cantidad tiene que ser mayor que cero" });
+    if (cantidad === 0) return res.status(400).json({ ok: false, error: "La cantidad no puede ser cero; usa una cantidad negativa si es una devolución." });
 
     /**
      * QUÉ MANDA AL CORREGIR. Los tres números están atados —cantidad × precio = importe—, así
@@ -7415,23 +7434,25 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
     let importe = l.importe, precio = l.precio_unitario;
     if (importePedido != null) {
       importe = importePedido;
-      precio = cantidad ? Math.round((importe / cantidad) * 1e6) / 1e6 : precio;
+      if (cantidad && (precio == null || redondearImporte(precio * cantidad) !== redondearImporte(importe))) precio = Math.round((importe / cantidad) * 1e6) / 1e6;
     } else if (precioPedido != null) {
       precio = precioPedido;
-      importe = cantidad != null ? Math.round(precio * cantidad * 100) / 100 : importe;
-    } else if (importe != null && cantidad) {
+      importe = cantidad != null ? redondearImporte(precio * cantidad) : importe;
+    } else if (req.body?.cantidad !== undefined && importe != null && cantidad && (precio == null || redondearImporte(precio * cantidad) !== redondearImporte(importe))) {
       precio = Math.round((importe / cantidad) * 1e6) / 1e6;
     }
 
-    const factor = l.cantidad ? cantidad / l.cantidad : null;
-    const dudosa = cantidad == null || precio == null || importe == null || !(unidad ?? l.unidad);
+    const factor = req.body?.cantidad !== undefined && l.cantidad ? cantidad / l.cantidad : null;
+    const factorGuardado = req.body?.cantidad === undefined ? l.factor_unidad : factor && factor > 1 && Number.isInteger(factor) ? factor : null;
+    const unidadFinal = unidad === undefined ? l.unidad : unidad;
+    const dudosa = cantidad == null || precio == null || importe == null || !unidadFinal;
     await dbRun(
       `UPDATE factura_lineas SET cantidad = ?, precio_unitario = ?, importe = ?,
               ${unidad !== undefined ? "unidad = ?," : ""}
+              ${descripcion !== undefined ? "descripcion = ?, clave = ?," : ""}
               factor_unidad = ?, dudosa = ? WHERE id = ?`,
-      unidad !== undefined
-        ? [cantidad, precio, importe, unidad, factor && factor > 1 && Number.isInteger(factor) ? factor : null, dudosa, id]
-        : [cantidad, precio, importe, factor && factor > 1 && Number.isInteger(factor) ? factor : null, dudosa, id]);
+      [cantidad, precio, importe, ...(unidad !== undefined ? [unidad] : []),
+        ...(descripcion !== undefined ? [descripcion, claveProducto(descripcion)] : []), factorGuardado, dudosa, id]);
 
     // Las demás compras del MISMO producto al MISMO proveedor, con el mismo factor. Se guarda
     // el factor y no la cantidad: si un mes pidieron 5 packs y otro 8, la cantidad buena es
@@ -7461,7 +7482,7 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
 
     const v = await recalcularCuadre(l.factura_id, l.base_imponible);
 
-    res.json({ ok: true, cantidad, unidad, precio_unitario: precio, importe, tambien,
+    res.json({ ok: true, cantidad, unidad:unidadFinal, descripcion:descripcion ?? l.descripcion, dudosa, precio_unitario: precio, importe, tambien,
       suma: v.suma, base: v.base, diferencia: v.diferencia ?? 0, cuadra: !!v.cuadra });
   } catch (e) {
     console.error("[facturas] corregir línea:", e.message);

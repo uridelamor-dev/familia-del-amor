@@ -4,6 +4,21 @@ import {pagoPorEmpresa,planPagoEmpresa,aplicarPagosEmpresa} from '../../src/modu
 import {estadoPago} from '../../src/modules/facturas/vencimiento.js';
 import {claveProveedor} from '../../src/modules/facturas/categorias.js';
 const f={id:1,empresa:'Del Amor Uriel SLU',proveedor:'Proveedor ejemplo',tipo:'factura',fecha:'2026-09-01',pagado:0};
+test('el vencimiento del original prevalece: Bellod no vence un mes antes',()=>{
+ const bellod={...f,fecha:'2026-09-30',vencimiento:'2026-11-15',vencimiento_origen:'factura'};
+ assert.equal(planPagoEmpresa(bellod,[],'2026-11-06').vencimiento,'2026-11-15');
+ assert.equal(planPagoEmpresa(bellod,[],'2026-11-06').pagado,0);
+ assert.equal(planPagoEmpresa({...bellod,pago_origen:'manual',pagado:1},[],'2026-11-06'),null);
+ assert.equal(planPagoEmpresa({...bellod,vencimiento:'2026-02-31'},[],'2026-11-06').vencimiento,'2026-10-15');
+});
+test('la actualización mantiene la procedencia del original y protege cambios simultáneos',async()=>{
+ let sql,params;
+ const original={...f,vencimiento:'2026-11-15',vencimiento_origen:'factura',pago_automatico:0,fecha_pago:null};
+ await aplicarPagosEmpresa({dbAll:async s=>s.includes('facturas_pago_reglas')?[]:[original],dbRun:async(s,p)=>{sql=s;params=p;}},'2026-11-06');
+ assert.equal(params[0],'2026-11-15');assert.equal(params[1],0);
+ assert.match(sql,/CASE WHEN vencimiento_origen='factura'/);
+ assert.match(sql,/AND vencimiento IS NOT DISTINCT FROM \? AND vencimiento_origen IS NOT DISTINCT FROM \?/);
+});
 test('todo septiembre vence el 15 octubre y diciembre pasa al año siguiente',()=>{
  for(const fecha of ['2026-09-01','2026-09-30'])assert.equal(planPagoEmpresa({...f,fecha},[],'2026-10-06').vencimiento,'2026-10-15');
  assert.equal(planPagoEmpresa({...f,fecha:'2026-12-31'},[],'2027-01-01').vencimiento,'2027-01-15');

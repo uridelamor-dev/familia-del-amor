@@ -1,5 +1,6 @@
 import {calcularVencimiento} from './vencimiento.js';
 import {claveProveedor} from './categorias.js';
+import {fechaValida} from './calidad.js';
 
 const normalizar = valor => String(valor||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 export function pagoPorEmpresa(empresa) {
@@ -32,15 +33,17 @@ export function planPagoEmpresa(f, reglas, hoy) {
  if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !Number.isFinite(instante.getTime()) || instante.toISOString().slice(0,10)!==fecha) return null;
  const periodo=periodoPago(f);
  const base=c.modo==='mensual' && periodo.mes ? periodo.mes+'-15':fecha;
- const v=calcularVencimiento({fecha:base,condiciones:c}).vencimiento;
+ // Una fecha comprobada en el original prevalece sobre la regla general de la empresa.
+ const v=f.vencimiento_origen==='factura' && fechaValida(f.vencimiento)
+  ? f.vencimiento : calcularVencimiento({fecha:base,condiciones:c}).vencimiento;
  return {vencimiento:v,automatico:1,pagado:v<=hoy?1:0,fecha_pago:v<=hoy?v:null};
 }
 export async function aplicarPagosEmpresa({dbAll,dbRun},hoy) {
  const reglas=await dbAll('SELECT prov_clave, empresa FROM facturas_pago_reglas');
- const filas=await dbAll("SELECT id, fecha, creado_en, periodo_facturado, periodo_origen, empresa, proveedor, tipo, dup_estado, pagado, fecha_pago, vencimiento, pago_origen, pago_automatico FROM facturas WHERE COALESCE(pago_origen,'') <> 'manual' AND (COALESCE(pagado,0)=0 OR pago_origen='empresa')");
+ const filas=await dbAll("SELECT id, fecha, creado_en, periodo_facturado, periodo_origen, empresa, proveedor, tipo, dup_estado, pagado, fecha_pago, vencimiento, vencimiento_origen, pago_origen, pago_automatico FROM facturas WHERE COALESCE(pago_origen,'') <> 'manual' AND (COALESCE(pagado,0)=0 OR pago_origen='empresa')");
  for(const f of filas) {
   const p=planPagoEmpresa(f,reglas,hoy);if(!p)continue;
   if(f.vencimiento===p.vencimiento && Number(f.pagado)===p.pagado && f.fecha_pago===p.fecha_pago && Number(f.pago_automatico)===1)continue;
-  await dbRun(`UPDATE facturas SET vencimiento=?, vencimiento_origen='empresa', pago_automatico=1, pago_origen='empresa', pagado=?, fecha_pago=? WHERE id=? AND COALESCE(pago_origen,'') <> 'manual' AND empresa IS NOT DISTINCT FROM ? AND fecha IS NOT DISTINCT FROM ? AND proveedor IS NOT DISTINCT FROM ? AND pagado IS NOT DISTINCT FROM ?`,[p.vencimiento,p.pagado,p.fecha_pago,f.id,f.empresa,f.fecha,f.proveedor,f.pagado]);
+  await dbRun(`UPDATE facturas SET vencimiento=?, vencimiento_origen=CASE WHEN vencimiento_origen='factura' THEN 'factura' ELSE 'empresa' END, pago_automatico=1, pago_origen='empresa', pagado=?, fecha_pago=? WHERE id=? AND COALESCE(pago_origen,'') <> 'manual' AND empresa IS NOT DISTINCT FROM ? AND fecha IS NOT DISTINCT FROM ? AND proveedor IS NOT DISTINCT FROM ? AND pagado IS NOT DISTINCT FROM ? AND vencimiento IS NOT DISTINCT FROM ? AND vencimiento_origen IS NOT DISTINCT FROM ?`,[p.vencimiento,p.pagado,p.fecha_pago,f.id,f.empresa,f.fecha,f.proveedor,f.pagado,f.vencimiento,f.vencimiento_origen]);
  }
 }

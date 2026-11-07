@@ -462,7 +462,8 @@ describe("corregir a mano la lectura de una compra", () => {
     // Ese es el caso del paquete: se pagaron 121,49 € y lo que se corrige es entre cuántas
     // unidades se reparten. Si el importe se moviera, la factura dejaría de cuadrar.
     assert.ok(i > 0, "falta el endpoint de corregir línea");
-    assert.match(fn, /\} else if \(importe != null && cantidad\) \{\s*\n\s*precio = Math\.round\(\(importe \/ cantidad\) \* 1e6\) \/ 1e6;/);
+    assert.match(fn, /else if \(req\.body\?\.cantidad !== undefined && importe != null && cantidad/);
+    assert.match(fn, /precio = Math\.round\(\(importe \/ cantidad\) \* 1e6\) \/ 1e6;/);
   });
 
   test("pero el IMPORTE sí se puede corregir cuando está mal leído", () => {
@@ -475,8 +476,8 @@ describe("corregir a mano la lectura de una compra", () => {
   test("manda el número que se ha escrito, y el otro se recalcula", () => {
     // Ver cambiar por detrás lo que acabas de teclear es la forma más rápida de dejar de
     // fiarte de una pantalla.
-    assert.match(fn, /precio = cantidad \? Math\.round\(\(importe \/ cantidad\) \* 1e6\) \/ 1e6 : precio;/);
-    assert.match(fn, /importe = cantidad != null \? Math\.round\(precio \* cantidad \* 100\) \/ 100 : importe;/);
+    assert.match(fn, /redondearImporte\(precio \* cantidad\) !== redondearImporte\(importe\)/);
+    assert.match(fn, /importe = cantidad != null \? redondearImporte\(precio \* cantidad\) : importe;/);
   });
 
   test("y al corregir se vuelve a mirar si la factura cuadra", () => {
@@ -485,7 +486,7 @@ describe("corregir a mano la lectura de una compra", () => {
     // El recálculo vive en `recalcularCuadre`, que comparten corregir y borrar: tenerlo dos
     // veces garantizaría que un día una de las dos se quedara sin actualizar el estado.
     assert.match(fn, /const v = await recalcularCuadre\(l\.factura_id, l\.base_imponible\);/);
-    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible\)[\s\S]{0,800}v\.motivo === "sin_valorar" \? "sin_valorar" : v\.cuadra \? "ok" : "descuadre"/);
+    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible\)[\s\S]{0,800}v\.motivo === "sin_valorar" \? "sin_valorar" : v\.cuadra \? \(v\.dudosas \? "dudas" : "ok"\) : "descuadre"/);
   });
 
   test("y solo en los establecimientos que esa persona puede tocar", () => {

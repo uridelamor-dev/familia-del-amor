@@ -8,10 +8,22 @@ ALTER TABLE facturas_pendientes ADD COLUMN IF NOT EXISTS iva_desglose TEXT;
 `;
 const numero=v=>(typeof v==='number'||typeof v==='string'&&v.trim()!=='')&&Number.isFinite(Number(v));
 const cents=v=>Math.round(Number(v)*100);
+// Solo después de validar el desglose completo: varios tipos no pueden tener
+// un porcentaje único en cabecera, aunque la lectura antigua guardara uno.
+export function porcentajeDeIvaValidado(validacion) {
+ if(!validacion?.ok)throw new Error('El desglose de IVA debe estar validado.');
+ const tipos=[...new Set(validacion.partes.map(p=>Number(p.tipo)))];
+ return tipos.length===1?tipos[0]:null;
+}
 export function validarIva(raw,f) {
  let partes=raw;
  try {if(typeof partes==='string')partes=JSON.parse(partes);}catch{partes=null;}
  const mal=aviso=>({ok:false,partes:[],aviso});
+ // Un albarán sin valorar no tiene IVA que desglosar. Solo admite borrado explícito
+ // y con TODOS los importes vacíos, nunca confundir ausencia con un importe cero.
+ if(Array.isArray(partes)&&partes.length===0&&f.tipo==='albaran'
+   &&['base_imponible','porcentaje_iva','cuota_iva','total'].every(k=>f[k]==null||f[k]===''))
+   return {ok:true,partes:[],aviso:null};
  if(!Array.isArray(partes)||!partes.length)return mal('Falta identificar las bases y cuotas de IVA del original.');
  const grupos=new Map();
  for(const p of partes){

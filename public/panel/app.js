@@ -9586,6 +9586,27 @@ function facAlternarFecha() {
  FAC_SEL=new Set();
  facRefresh();
 }
+function facDistintivoAuditoria(f) {
+ const a=f.auditoria_completa;
+ if(!a)return '';
+ return `<span class="pill ${a.vigente?'ok':'warn'}" title="${esc('Comprobación manual de '+a.autor+' · '+new Date(a.fecha).toLocaleString('es-ES')+(a.vigente?'':' · Los datos han cambiado después de la revisión'))}">${a.vigente?'✓ Revisado al 100 %':'Revisión desactualizada'}</span>`;
+}
+
+async function facConfirmarAuditoria(id) {
+ try {
+  const r=await api(`/api/facturas/${id}/auditoria-completa`);
+  const puntos=[['original','He leído todas las páginas del original.'],['identidad','Proveedor, NIF, empresa y establecimiento coinciden.'],['fechas','Número, fecha y vencimiento están comprobados.'],['importes','Bases, impuestos, descuentos y total coinciden.'],['lineas','Productos, cantidades, unidades y precios están comprobados.'],['duplicados','He comprobado duplicados y relación con albaranes.'],['drive','He comprobado el nombre y la carpeta del archivo en Drive.']];
+  const ov=modal('Confirmar revisión completa',`<p><b>${esc(r.proveedor||'Documento')} · ${esc(r.numero||'#'+id)}</b></p><p>Marca solo lo que hayas comprobado con el original. Este distintivo registra una revisión manual; no lo concede la lectura automática.</p><form id="auditForm">${puntos.map(([k,l])=>`<p><label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="${k}" required> ${l}</label></p>`).join('')}<div class="field"><label for="auditNombre">Nombre del archivo comprobado</label><input id="auditNombre" required maxlength="2000"></div><div class="field"><label for="auditRuta">Carpeta completa de Drive comprobada</label><input id="auditRuta" required maxlength="2000" placeholder="Contabilidad / Empresa / Año / Mes / Local"></div><p class="mut">Si los datos o las líneas cambian, será necesario volver a revisarlo. La carpeta de Drive queda registrada tal como la has comprobado ahora.</p><p id="auditError" role="alert"></p><div class="toolbar"><button class="btn" type="button" data-close>Cancelar</button><button class="btn primary" type="submit">Marcar revisado al 100 %</button></div></form>`);
+  ov.querySelector('#auditForm').onsubmit=async e=>{
+   e.preventDefault();const boton=e.submitter;boton.disabled=true;boton.textContent='Guardando…';
+   try{
+    await apiSend('POST',`/api/facturas/${id}/auditoria-completa`,{huella:r.huella,comprobaciones:Object.fromEntries(puntos.map(([k])=>[k,ov.querySelector(`[name="${k}"]`).checked])),archivo_nombre:ov.querySelector('#auditNombre').value,archivo_ruta:ov.querySelector('#auditRuta').value});
+    await facTerminarRevision(ov);toast('Revisión completa registrada');
+   }catch(error){ov.querySelector('#auditError').textContent=error.message;boton.disabled=false;boton.textContent='Marcar revisado al 100 %';}
+  };
+ }catch(error){toast(error.message);}
+}
+
 function facTablaHtml(list) {
  list=[...list].sort((a,b)=>String((FACF.fecha_tipo==='recepcion'?b.recibido_en:facFechaPrincipal(b))||'').localeCompare(String((FACF.fecha_tipo==='recepcion'?a.recibido_en:facFechaPrincipal(a))||'')) || Number(b.id)-Number(a.id));
 
@@ -9595,6 +9616,7 @@ function facTablaHtml(list) {
   // (`lineas_estado`) y que la factura ya está conciliada con sus albaranes (`conciliado_con`).
   // Guardar un estado y no enseñarlo es tenerlo para nadie.
   const marcas = (f) => [
+    facDistintivoAuditoria(f),
     f.tipo && f.tipo !== "factura" ? `<span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : "",
     f.revisar ? `<span class="pill warn" style="font-size:10px" title="${esc(facRevisarTxt(f).join(" · "))}">revisar</span>` : "",
     f.lineas_estado === "descuadre" ? `<span class="pill warn" style="font-size:10px" title="El detalle leído no suma la base imponible">descuadre</span>` : "",
@@ -9869,6 +9891,7 @@ function facFicha(id) {
   // detalle no cuadra, si ya está conciliada con sus albaranes.
   const pills = [
     facPillPago(f),
+    facDistintivoAuditoria(f),
     f.tipo && f.tipo !== "factura" ? `<span class="pill">${esc(f.tipo)}</span>` : "",
     f.lineas_estado === "descuadre" ? `<span class="pill warn" title="${esc(f.lineas_aviso || "El detalle leído no suma la base imponible")}">descuadre</span>` : "",
     f.conciliado_con ? '<span class="pill ok" title="Conciliada con sus albaranes">conciliada</span>' : "",
@@ -9900,7 +9923,7 @@ function facFicha(id) {
         </div>
 
         <div class="fic-g"><span class="fic-gt">Documento</span>
-          <div class="form-grid">${fld("Nº documento", "numero_factura")}${fechaFld}${tipoSel}${localSel}</div>
+          <div class="form-grid">${fld("Nº documento", "numero_factura")}${fechaFld}${tipoSel}${localSel}<div class="field"><label>Vencimiento del original</label>${dpField('ficVencimiento',f.vencimiento,'Sin vencimiento',{attr:'data-fic="vencimiento"'})}</div></div>
           ${fld("Empresa", "empresa")}
         </div>
 
@@ -9920,12 +9943,20 @@ function facFicha(id) {
     <p><label><input type="checkbox" id="ficRecordarLocal"> Recordar este local para próximas facturas de este CIF y esta empresa</label></p><p class="mut">Márcalo solo si todas las compras de este proveedor para esa empresa deben ir al mismo local. Puedes cambiar o desactivar la regla en «Reglas aprendidas».</p>
     <div class="fic-pie">
       <button class="linkbtn danger" id="ficDel">Eliminar factura</button>
+      <button class="btn" id="ficAuditoria">Confirmar revisión completa</button>
       <div style="flex:1"></div>
       <button class="btn" data-close>Cerrar</button>
       <button class="btn" id="ficPago">${f.pagado ? "Marcar impagada" : "Marcar pagada"}</button>
       <button class="btn primary" id="ficSave">Guardar cambios</button>
     </div>`);
   ov.querySelector(".modal").classList.add("wide");
+
+  const auditBtn=ov.querySelector('#ficAuditoria');
+  function invalidarConfirmacion(){auditBtn.disabled=true;auditBtn.textContent='Guarda y vuelve a abrir para confirmar';}
+  ov.addEventListener('input',invalidarConfirmacion);
+  ov.addEventListener('change',invalidarConfirmacion);
+  ov.addEventListener('click',e=>{if(e.target.closest('[data-iva-add], [data-iva-quitar]'))invalidarConfirmacion();});
+  auditBtn.onclick=()=>{ov.remove();facConfirmarAuditoria(id);};
 
   facPrepararModalRevision(ov,(f.calidad || []).join(" · "),'fac-ficha',id,f);
   facSelectorProveedor(ov,'[data-fic="proveedor"]');
@@ -9962,7 +9993,7 @@ function facFicha(id) {
 
   // ── El detalle leído, solo al abrirlo: son otra consulta y casi nunca se mira ──
   const det = ov.querySelector("#ficLineas");
-  det.addEventListener("toggle", async () => {
+  const cargarLineas = async () => {
     if (!det.open || det.dataset.cargado) return;
     det.dataset.cargado = "1";
     const cuerpo = ov.querySelector("#ficLinCuerpo");
@@ -9981,7 +10012,7 @@ function facFicha(id) {
              Las líneas suman <b>${esc(eur2(j.suma))}</b> y la base imponible dice <b>${esc(eur2(f.base_imponible))}</b>.
              ${dif > 0 ? "Sobra detalle: puede haber una línea repetida o leída de más."
                        : "Falta detalle: puede haber una línea que no se leyó, o un descuento que no se aplicó."}
-             Corrige la cantidad de una línea abajo, o vuelve a leer el documento desde <b>Productos → sin leer</b>.</p>`;
+             Corrige el detalle o utiliza <b>Añadir una línea del original</b> si falta un producto.</p>`;
       // SE PUEDE CORREGIR AQUÍ MISMO. Un descuadre casi siempre es un número mal leído —12,49
       // donde ponía 121,49—, y hasta ahora la única salida era volver a leer la factura entera
       // con el modelo. Los tres números están atados (cantidad × precio = importe): manda el
@@ -9989,22 +10020,46 @@ function facFicha(id) {
       cuerpo.innerHTML = ls.length
         ? cuadre + `<div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th><th></th></tr></thead>
            <tbody>${ls.map((l) => `<tr class="${l.dudosa ? "dudosa" : ""}" data-lin="${l.linea_id}">
-             <td>${esc(l.descripcion || "—")}${l.dudosa ? ' <span class="pill warn" style="font-size:9.5px" title="No se leyó del todo: sus cantidades pueden no ser exactas">dudosa</span>' : ""}</td>
-             <td class="r"><input class="lincel" data-campo="cantidad" data-id="${l.linea_id}" value="${esc(l.cantidad != null ? num(l.cantidad) : "")}" inputmode="decimal">${l.unidad ? ` <span class="mut" style="font-size:11px">${esc(l.unidad)}</span>` : ""}</td>
+             <td><input class="lincel" data-campo="descripcion" data-id="${l.linea_id}" aria-label="Nombre del producto" value="${esc(l.descripcion||'')}" maxlength="300" style="min-width:140px;width:100%;text-align:left">${l.dudosa ? ' <span class="pill warn" style="font-size:9.5px" title="No se leyó del todo: sus cantidades pueden no ser exactas">dudosa</span>' : ""}</td>
+             <td class="r"><input class="lincel" data-campo="cantidad" aria-label="Cantidad de ${esc(l.descripcion||'producto')}" data-id="${l.linea_id}" value="${esc(l.cantidad != null ? num(l.cantidad) : "")}" inputmode="decimal"><input class="lincel" aria-label="Unidad de ${esc(l.descripcion||'producto')}" data-campo="unidad" data-id="${l.linea_id}" value="${esc(l.unidad||'')}" placeholder="kg, U, L…" maxlength="20" style="max-width:75px;margin-top:4px"></td>
              <td class="r"><input class="lincel" data-campo="precio_unitario" data-id="${l.linea_id}" value="${esc(l.precio_unitario != null ? String(l.precio_unitario).replace(".", ",") : "")}" inputmode="decimal">${precioReferenciaHtml(l)}</td>
              <td class="r"><input class="lincel" data-campo="importe" data-id="${l.linea_id}" value="${esc(l.importe != null ? String(l.importe).replace(".", ",") : "")}" inputmode="decimal"></td>
              ${/* Los SUBTOTALES se cuelan como si fueran un producto: «Cooperativa 128 €» que
                    en realidad es la suma de las de arriba. Contada como producto infla el
                    gasto, ensucia «Qué compramos» y descuadra la factura. Se borra. */""}
              <td class="r"><button class="linkbtn mut" data-linborrar="${l.linea_id}" title="Esta línea no es un producto (un subtotal, un porte…): se borra" style="padding:0 4px">✕</button></td></tr>`).join("")}</tbody></table></div>
-           <p class="mut" style="margin:8px 0 0;font-size:12px">Cambia el número que esté mal y sal del recuadro: se guarda solo y se vuelve a comprobar si la factura cuadra. La ✕ borra una línea que no sea un producto —un subtotal, un porte—.</p>`
+           <p class="mut" style="margin:8px 0 0;font-size:12px">Corrige el nombre, la unidad o el importe y sal del recuadro: se guarda solo. Usa cantidades negativas en las devoluciones. La ✕ elimina una línea leída por error.</p>`
         : `<p class="mut" style="margin:0">De esta factura no se ha leído el detalle por líneas.</p>`;
+
+      cuerpo.insertAdjacentHTML('beforeend', `<details class="fic-nota" style="margin-top:12px"><summary>Añadir una línea del original</summary>
+        <p class="mut">Introduce el coste neto, sin IVA y después del descuento. No añadas subtotales.</p>
+        <div class="field"><label for="ficNueva-descripcion">Producto</label><input id="ficNueva-descripcion" style="width:100%" data-nueva="descripcion" maxlength="300" aria-label="Producto de la nueva línea"></div>
+        <div class="promo-pair"><div class="field"><label for="ficNueva-cantidad">Cantidad</label><input id="ficNueva-cantidad" style="width:100%" data-nueva="cantidad" inputmode="decimal" aria-label="Cantidad de la nueva línea"></div>
+        <div class="field"><label for="ficNueva-unidad">Unidad</label><input id="ficNueva-unidad" style="width:100%" data-nueva="unidad" maxlength="20" placeholder="U, kg, caja…" aria-label="Unidad de la nueva línea"></div></div>
+        <div class="promo-pair"><div class="field"><label for="ficNueva-precio_unitario">Precio neto</label><input id="ficNueva-precio_unitario" style="width:100%" data-nueva="precio_unitario" inputmode="decimal" aria-label="Precio neto de la nueva línea"></div>
+        <div class="field"><label for="ficNueva-importe">Importe neto (opcional)</label><input id="ficNueva-importe" style="width:100%" data-nueva="importe" inputmode="decimal" placeholder="Se calcula si lo dejas vacío" aria-label="Importe neto de la nueva línea"></div></div>
+        <p data-nueva-error role="alert" class="mal"></p><button type="button" class="btn primary" data-anadir-linea>Añadir línea</button>
+        </details>`);
+      cuerpo.querySelector('[data-anadir-linea]').onclick=async e=>{
+        const boton=e.currentTarget;if(boton.disabled)return;
+        const body={lineas_actuales:[...cuerpo.querySelectorAll('tr[data-lin]')].map(tr=>Number(tr.dataset.lin))};
+        cuerpo.querySelectorAll('[data-nueva]').forEach(el=>{body[el.dataset.nueva]=el.value;});
+        const error=cuerpo.querySelector('[data-nueva-error]');error.textContent='';
+        const controles=[...cuerpo.querySelectorAll('input,button'),ov.querySelector('#ficSave')].filter(Boolean);
+        const estados=controles.map(el=>el.disabled);controles.forEach(el=>el.disabled=true);boton.textContent='Guardando…';
+        try {
+          await apiSend('POST',`/api/facturas/${encodeURIComponent(id)}/lineas`,body);
+          delete det.dataset.cargado;await cargarLineas();toast('Línea añadida y guardada');
+        } catch(err) {
+          error.textContent=err.message==='noauth'?'La sesión ha caducado. Vuelve a entrar antes de guardar.':err.message;
+        } finally {controles.forEach((el,i)=>el.disabled=estados[i]);boton.textContent='Añadir línea';}
+      };
 
       // El cuadre se repinta desde la respuesta del servidor, que es quien lo calcula.
       const pintarCuadre = (r) => {
         const caja = ov.querySelector("#ficCuadre");
         if (!caja) return;
-        caja.innerHTML = r.cuadra
+        caja.innerHTML = r.diferencia != null && Math.abs(r.diferencia) <= 0.02
           ? `<span class="ok">✓ Ahora sí cuadra: las líneas suman ${esc(eur2(r.suma))}</span>`
           : `<span class="mal">Siguen sin cuadrar: suman ${esc(eur2(r.suma))} y la base dice ${esc(eur2(r.base))} (${esc(eur2(Math.abs(r.diferencia)))} de diferencia).</span>`;
       };
@@ -10012,13 +10067,13 @@ function facFicha(id) {
       cuerpo.querySelectorAll("[data-linborrar]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const fila = btn.closest("tr");
-          const nombre = fila.querySelector("td")?.textContent.trim() || "esta línea";
+          const nombre = fila.querySelector('[data-campo="descripcion"]')?.value || "esta línea";
           if (!(await confirmModal(`¿Borrar «${nombre}»? Se borra del detalle leído porque no es un producto. El documento original no se toca.`, { ok: "Borrar", danger: true }))) return;
           try {
             const r = await apiSend("DELETE", "/api/facturas/lineas/" + btn.getAttribute("data-linborrar"));
             fila.remove();
             pintarCuadre(r);
-            toast(r.cuadra ? "Borrada · la factura ya cuadra ✅" : "Línea borrada");
+            toast("Línea borrada · comprueba el detalle restante");
           } catch (e) { if (e.message !== "noauth") toast("Error: " + e.message); }
         });
       });
@@ -10030,6 +10085,9 @@ function facFicha(id) {
         inp.addEventListener("change", async () => {
           if (inp.value === inp.dataset.antes) return;
           const campo = inp.getAttribute("data-campo");
+          const controles=[...cuerpo.querySelectorAll('input,button'),ov.querySelector('#ficSave')].filter(Boolean);
+          const estados=controles.map(el=>el.disabled);
+          controles.forEach(el=>el.disabled=true);
           try {
             const r = await apiSend("PATCH", "/api/facturas/lineas/" + inp.getAttribute("data-id"), { [campo]: inp.value });
             inp.dataset.antes = inp.value;
@@ -10039,20 +10097,23 @@ function facFicha(id) {
             fila.querySelectorAll(".lincel").forEach((otro) => {
               if (otro === inp) return;
               const c = otro.getAttribute("data-campo");
-              const v = c === "cantidad" ? r.cantidad : c === "precio_unitario" ? r.precio_unitario : r.importe;
-              otro.value = v == null ? "" : String(v).replace(".", ",");
+              const v = c === "cantidad" ? r.cantidad : c === "precio_unitario" ? r.precio_unitario : c === 'unidad' ? r.unidad : c==='descripcion'?r.descripcion:r.importe;
+              otro.value = v == null ? "" : ['unidad','descripcion'].includes(c)?String(v):String(v).replace(".", ",");
               otro.dataset.antes = otro.value;
             });
             pintarCuadre(r);   // si con esto cuadra, la etiqueta de descuadre desaparece
-            toast(r.cuadra ? "Corregido · la factura ya cuadra ✅" : "Corregido");
+            fila.classList.toggle('dudosa',r.dudosa===true);
+            if(r.dudosa===false)fila.querySelector('.pill.warn')?.remove();
+            toast("Corrección guardada");
           } catch (e) {
             inp.value = inp.dataset.antes;   // si no se pudo guardar, no puede quedarse el número nuevo en pantalla
             if (e.message !== "noauth") toast("Error: " + e.message);
-          }
+          } finally {controles.forEach((el,i)=>el.disabled=estados[i]);}
         });
       });
     } catch { cuerpo.innerHTML = '<p class="mut" style="margin:0">No se pudo cargar el detalle.</p>'; }
-  });
+  };
+  det.addEventListener("toggle", cargarLineas);
 
   ov.querySelector("#ficBajar")?.addEventListener("click", async () => {
     try {
@@ -10068,6 +10129,7 @@ function facFicha(id) {
   ov.querySelector("#ficSave").addEventListener("click", async (e) => {
     const boton=e.currentTarget;if(boton.disabled)return;boton.disabled=true;
     const body = {}; ov.querySelectorAll("[data-fic]").forEach((el) => { body[el.getAttribute("data-fic")] = el.value; });
+    if(String(body.vencimiento||'')===String(f.vencimiento||''))delete body.vencimiento;
     body.recordar_local=ov.querySelector('#ficRecordarLocal').checked;
     body.confirmar_avisos=ov.querySelector('#ficConfirmarAvisos')?.checked===true;
     const iva=leerIvaEditado();if(iva!==undefined)body.iva_desglose=iva;
