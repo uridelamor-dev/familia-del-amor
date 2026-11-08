@@ -234,3 +234,11 @@ export function agruparRecibos(filas = []) {
   return [...grupos, ...sueltas]
     .sort((a, b) => String(a.vencimiento || "9999").localeCompare(String(b.vencimiento || "9999")));
 }
+
+/** Quitar la fecha elimina la excepción del papel; las reglas de pago siguen vigentes. */
+export function vencimientoManualValido(valor) {
+  if (valor === undefined || valor === null || valor === '') return true;
+  if (typeof valor !== 'string' || !ISO.test(valor)) return false;
+  const fecha = new Date(valor + 'T00:00:00Z');
+  return Number.isFinite(fecha.getTime()) && fecha.toISOString().slice(0,10) === valor;
+}

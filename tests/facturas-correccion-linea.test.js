@@ -45,3 +45,19 @@ test('no permite cantidades cero, nombres vacíos ni cambios fuera del local aut
  }
  const r=await corregir({importe:3},{},false);assert.equal(r.status,403);assert.equal(r.writes.length,0);
 });
+
+// Casos encontrados al cotejar los originales de Agrària y Kiku.
+test('cotejo conserva precio e importe impresos independientes',async()=>{
+ for (const [cantidad,precio,importe] of [[1,4.135,4.13],[4.11,7.95,32.68],[4.05,3.702,15.01]]) {
+  const r=await corregir({precio_unitario:precio,conservar_original:true},{cantidad,importe});
+  assert.equal(r.status,200);assert.equal(r.resultado.precio_unitario,precio);assert.equal(r.resultado.importe,importe);
+  const total=await corregir({importe,conservar_original:true},{cantidad,precio_unitario:precio});
+  assert.equal(total.resultado.precio_unitario,precio);assert.equal(total.resultado.importe,importe);
+ }
+});
+test('cotejo de cantidad no sustituye precio ni importe y no propaga',async()=>{
+ const r=await corregir({cantidad:4.05,conservar_original:true},{precio_unitario:3.702,importe:15.01});
+ assert.equal(r.resultado.cantidad,4.05);assert.equal(r.resultado.precio_unitario,3.702);assert.equal(r.resultado.importe,15.01);
+ const rechazado=await corregir({cantidad:4.05,conservar_original:true,aplicar_a_todas:true});
+ assert.equal(rechazado.status,400);assert.equal(rechazado.writes.length,0);
+});

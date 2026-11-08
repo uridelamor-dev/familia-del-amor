@@ -9923,7 +9923,7 @@ function facFicha(id) {
         </div>
 
         <div class="fic-g"><span class="fic-gt">Documento</span>
-          <div class="form-grid">${fld("Nº documento", "numero_factura")}${fechaFld}${tipoSel}${localSel}<div class="field"><label>Vencimiento del original</label>${dpField('ficVencimiento',f.vencimiento,'Sin vencimiento',{attr:'data-fic="vencimiento"'})}</div></div>
+          <div class="form-grid">${fld("Nº documento", "numero_factura")}${fechaFld}${tipoSel}${localSel}<div class="field"><label>Vencimiento</label>${dpField('ficVencimiento',f.vencimiento,'Sin vencimiento',{attr:'data-fic="vencimiento"'})}<small class="mut">${f.vencimiento_origen==='factura'?'Fecha indicada en el documento.':f.vencimiento?'Fecha calculada según las condiciones de pago; no necesariamente figura en el documento.':'Sin fecha indicada.'} Si quitas la fecha, podrán aplicarse las reglas de pago configuradas.</small></div></div>
           ${fld("Empresa", "empresa")}
         </div>
 
@@ -10015,8 +10015,8 @@ function facFicha(id) {
              Corrige el detalle o utiliza <b>Añadir una línea del original</b> si falta un producto.</p>`;
       // SE PUEDE CORREGIR AQUÍ MISMO. Un descuadre casi siempre es un número mal leído —12,49
       // donde ponía 121,49—, y hasta ahora la única salida era volver a leer la factura entera
-      // con el modelo. Los tres números están atados (cantidad × precio = importe): manda el
-      // que se escribe y el otro se recalcula, para que lo tecleado no cambie por detrás.
+      // con el modelo. En el cotejo se conservan cantidad, precio e importe tal como
+      // figuran en el original, sin recalcular silenciosamente los demás campos.
       cuerpo.innerHTML = ls.length
         ? cuadre + `<div class="tw"><table class="tbl"><thead><tr><th>Producto</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Importe</th><th></th></tr></thead>
            <tbody>${ls.map((l) => `<tr class="${l.dudosa ? "dudosa" : ""}" data-lin="${l.linea_id}">
@@ -10028,7 +10028,7 @@ function facFicha(id) {
                    en realidad es la suma de las de arriba. Contada como producto infla el
                    gasto, ensucia «Qué compramos» y descuadra la factura. Se borra. */""}
              <td class="r"><button class="linkbtn mut" data-linborrar="${l.linea_id}" title="Esta línea no es un producto (un subtotal, un porte…): se borra" style="padding:0 4px">✕</button></td></tr>`).join("")}</tbody></table></div>
-           <p class="mut" style="margin:8px 0 0;font-size:12px">Corrige el nombre, la unidad o el importe y sal del recuadro: se guarda solo. Usa cantidades negativas en las devoluciones. La ✕ elimina una línea leída por error.</p>`
+           <p class="mut" style="margin:8px 0 0;font-size:12px">Copia los datos del original y sal del recuadro: se guardan solos. Cantidad, precio e importe se conservan por separado; cambiar uno no recalcula los otros. Usa cantidades negativas en las devoluciones. La ✕ elimina una línea leída por error.</p>`
         : `<p class="mut" style="margin:0">De esta factura no se ha leído el detalle por líneas.</p>`;
 
       cuerpo.insertAdjacentHTML('beforeend', `<details class="fic-nota" style="margin-top:12px"><summary>Añadir una línea del original</summary>
@@ -10089,10 +10089,9 @@ function facFicha(id) {
           const estados=controles.map(el=>el.disabled);
           controles.forEach(el=>el.disabled=true);
           try {
-            const r = await apiSend("PATCH", "/api/facturas/lineas/" + inp.getAttribute("data-id"), { [campo]: inp.value });
+            const r = await apiSend("PATCH", "/api/facturas/lineas/" + inp.getAttribute("data-id"), { [campo]: inp.value, conservar_original: true });
             inp.dataset.antes = inp.value;
-            // Los otros dos números de la fila se recalculan: verlos cambiar es la prueba de
-            // que se ha guardado, y de paso enseña cuál manda.
+            // Mostrar los valores persistidos por el servidor sin derivar otros campos.
             const fila = inp.closest("tr");
             fila.querySelectorAll(".lincel").forEach((otro) => {
               if (otro === inp) return;

@@ -357,7 +357,7 @@ import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES
 import { nombresDeLaCasa, noEsProducto } from "./src/modules/facturas/no-es-producto.js";
 import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALCANCES_REPASO, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
-import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones } from "./src/modules/facturas/vencimiento.js";
+import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones, vencimientoManualValido } from "./src/modules/facturas/vencimiento.js";
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
 import { repartirImporte, pesosPorVentas, textoReparto, imputarGastoEmpresa } from "./src/modules/facturas/reparto.js";
 import { mensajeDeErrorIA, seCorto } from "./src/modules/ia/errores.js";
@@ -3247,7 +3247,7 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
   try {
     const antes = await dbGet("SELECT * FROM facturas WHERE id = ?", [req.params.id]);
     const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado", "periodo_facturado", "vencimiento"];
-    if(req.body.vencimiento!==undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(req.body.vencimiento) || !fechaFacturaValida(req.body.vencimiento)))return res.status(400).json({ok:false,error:'Introduce una fecha de vencimiento válida, comprobada en el original.'});
+    if(!vencimientoManualValido(req.body.vencimiento))return res.status(400).json({ok:false,error:'Introduce una fecha de vencimiento válida, comprobada en el original.'});
     // Corregir a mano tampoco puede colar un local que no existe: es la otra puerta por la
     // que entraron los «Lloret» y «BLANES» sueltos.
     if (req.body.local !== undefined && String(req.body.local || "").trim()) {
@@ -3283,7 +3283,7 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     if (!sets.length) return res.json({ ok: true });
     if(req.body.pagado !== undefined) sets.push("pago_origen='manual'", "pago_automatico=0");
     if(req.body.periodo_facturado !== undefined) sets.push("periodo_origen='manual'");
-    if(req.body.vencimiento !== undefined) sets.push("vencimiento_origen='factura'");
+    if(req.body.vencimiento !== undefined) sets.push(req.body.vencimiento ? "vencimiento_origen='factura'" : "vencimiento_origen=NULL");
     vals.push(req.params.id);
     const client=await pool.connect();
     try{
@@ -7432,7 +7432,14 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
      * alguien deje de fiarse de una pantalla.
      */
     let importe = l.importe, precio = l.precio_unitario;
-    if (importePedido != null) {
+    // El cotejo manual transcribe los tres valores del papel por separado. Puede haber
+    // descuentos o redondeos del emisor que impidan deducir uno de los otros dos.
+    const conservarOriginal = req.body?.conservar_original === true;
+    if (conservarOriginal && req.body?.aplicar_a_todas) return res.status(400).json({ok:false,error:'El cotejo del original solo se aplica a esta línea.'});
+    if (conservarOriginal) {
+      if (importePedido != null) importe = importePedido;
+      if (precioPedido != null) precio = precioPedido;
+    } else if (importePedido != null) {
       importe = importePedido;
       if (cantidad && (precio == null || redondearImporte(precio * cantidad) !== redondearImporte(importe))) precio = Math.round((importe / cantidad) * 1e6) / 1e6;
     } else if (precioPedido != null) {
