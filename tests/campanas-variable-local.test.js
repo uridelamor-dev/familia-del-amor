@@ -66,7 +66,7 @@ describe("el servidor devuelve el dato que la función necesita", () => {
 
   test("los cuatro caminos de envío pasan el local de la campaña", () => {
     // Campaña programada, campaña «enviar ya», mensaje masivo desde Clientes y cumpleaños.
-    const llamadas = server.match(/enviarLoteWA\(\{[^}]*\}/g) || [];
+    const llamadas = server.match(/enviarLoteWA(?:Interno)?\(\{[^}]*\}/g) || [];
     assert.ok(llamadas.length >= 4, `esperaba al menos 4 envíos, hay ${llamadas.length}`);
     assert.match(server, /localCampana: seg\.local/);
     assert.match(server, /localCampana: req\.body\.local/);

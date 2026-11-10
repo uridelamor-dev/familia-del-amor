@@ -169,7 +169,7 @@ describe("el tope diario también vale para las campañas", () => {
   });
 
   test("lo que no entra hoy NO se pierde: la campaña queda abierta", () => {
-    assert.match(fn, /const fin = pospuestos\.length \? "enviando" : "enviada"/);
+    assert.match(fn, /const fin = \(pospuestos\.length \|\| cortadoPorTope\) \? "enviando" : "enviada"/);
   });
 
   test("y el contador SUMA, no se reinicia al retomar", () => {
@@ -195,7 +195,42 @@ describe("nadie recibe el mismo mensaje dos veces", () => {
     // siempre y a los que faltaban no les llegaba nunca.
     const sched = server.slice(server.indexOf("1b) Campañas que se quedaron"), server.indexOf("2) Cumpleaños"));
     assert.match(sched, /estado = 'enviando'/);
-    assert.match(sched, /30 \* 60 \* 1000/, "esperar evita pisar un envío que sigue vivo");
+    assert.match(sched, /INTERVAL '30 minutes'/, "esperar evita pisar un envío que sigue vivo");
     assert.match(sched, /dispatchCampana/);
+  });
+
+  // 10/11/2026: «hace media hora» se escribía con la hora de Madrid sin zona y Postgres la leía
+  // como UTC, así que toda campaña en curso parecía parada y se relanzaba cada 5 minutos con el
+  // lote anterior aún vivo. 121 mensajes a 19 personas, hasta 9 veces la misma.
+  test("la media hora se compara como FECHA en la base, no como texto con la hora de Madrid", () => {
+    const sched = server.slice(server.indexOf("1b) Campañas que se quedaron"), server.indexOf("2) Cumpleaños"));
+    assert.match(sched, /enviado_en::timestamptz/);
+    assert.match(sched, /creado_en::timestamptz/);
+    assert.match(sched, /< NOW\(\) - INTERVAL '30 minutes'/);
+    assert.doesNotMatch(sched, /toLocaleString\("sv-SE"[^)]*\)\.replace\(" ", "T"\);\s*const aMedias/);
+  });
+
+  test("cada teléfono se reserva en la base antes de escribirle (una vez por campaña)", () => {
+    assert.match(server, /CREATE TABLE IF NOT EXISTS campana_reservas[\s\S]*?PRIMARY KEY \(campana_id, tel9\)/);
+    const fn = server.slice(server.indexOf("async function enviarLoteWAInterno("), server.indexOf("function segmentoDelBody("));
+    const reserva = fn.indexOf("INSERT INTO campana_reservas");
+    const envio = fn.indexOf("sendMensajeLibre(");
+    assert.ok(reserva > 0 && reserva < envio, "la reserva va ANTES del envío");
+    assert.match(fn, /ON CONFLICT DO NOTHING RETURNING tel9/);
+    assert.match(fn, /if \(!r\) continue;/);
+    assert.match(fn, /DELETE FROM campana_reservas WHERE campana_id = \? AND tel9 = \?/, "si falla, se libera para reintentar");
+  });
+
+  test("una campaña nunca tiene dos lotes vivos a la vez", () => {
+    assert.match(server, /const CAMPANAS_EN_ENVIO = new Set\(\)/);
+    const fn = server.slice(server.indexOf("async function enviarLoteWA("), server.indexOf("async function enviarLoteWAInterno("));
+    assert.match(fn, /CAMPANAS_EN_ENVIO\.has/);
+    assert.match(fn, /finally \{ CAMPANAS_EN_ENVIO\.delete/);
+  });
+
+  test("antes de cada mensaje se mira si ya lo recibió y si queda cupo", () => {
+    const fn = server.slice(server.indexOf("async function enviarLoteWAInterno("), server.indexOf("function segmentoDelBody("));
+    assert.match(fn, /SELECT 1 AS x FROM campana_envios WHERE campana_id = \? AND estado = 'enviado'/);
+    assert.match(fn, /cupoWA\(\)\)\.agotado\) \{ cortadoPorTope = true; break; \}/);
   });
 });

@@ -1962,6 +1962,17 @@ async function initDB() {
       )
     `);
     try { await client.query(`CREATE INDEX IF NOT EXISTS idx_campana_envios_cid ON campana_envios(campana_id)`); } catch { /* noop */ }
+    // UNA persona, UN mensaje por campaña, y que lo garantice la base y no la memoria del proceso:
+    // antes de escribir a alguien se reserva aquí su teléfono (últimos 9 dígitos). Si la fila ya
+    // existe, otro lote u otro servidor se le adelantó y este no le escribe. Ver `enviarLoteWAInterno`.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS campana_reservas (
+        campana_id INTEGER NOT NULL,
+        tel9 TEXT NOT NULL,
+        reservado_en TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (campana_id, tel9)
+      )
+    `);
     // Plantillas de mensaje guardadas (reutilizables, con variables {nombre} {apellidos} {local}).
     await client.query(`
       CREATE TABLE IF NOT EXISTS plantillas_mensaje (
@@ -21126,7 +21137,22 @@ async function cupoWA() {
  * mañana. Y como al retomar se saltan los que ya recibieron (ver `dispatchCampana`), nadie
  * recibe el mismo mensaje dos veces.
  */
-async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 300000, maxMs = 300000, resolverMensaje = null, localCampana = null, promocion = null, baseUrl = "" }) {
+// Campañas con un lote vivo en ESTE proceso. Ni el reloj ni un segundo clic pueden abrir otro
+// envío paralelo de la misma campaña: dos lotes recorren la misma lista y escriben dos veces.
+const CAMPANAS_EN_ENVIO = new Set();
+
+async function enviarLoteWA(opts) {
+  const { campanaId = null } = opts || {};
+  if (campanaId != null) {
+    const k = String(campanaId);
+    if (CAMPANAS_EN_ENVIO.has(k)) { console.log(`[campaña ${k}] ya hay un envío en marcha; no se abre otro`); return { enviados: 0, errores: 0, pospuestos: 0, yaEnMarcha: true }; }
+    CAMPANAS_EN_ENVIO.add(k);
+    try { return await enviarLoteWAInterno(opts); } finally { CAMPANAS_EN_ENVIO.delete(k); }
+  }
+  return enviarLoteWAInterno(opts);
+}
+
+async function enviarLoteWAInterno({ contactos, mensaje, campanaId = null, adjunto = null, minMs = 300000, maxMs = 300000, resolverMensaje = null, localCampana = null, promocion = null, baseUrl = "" }) {
   if(campanaId)await dbRun(`UPDATE campanas_wa SET total_destinatarios = (SELECT COUNT(*) FROM campana_envios WHERE campana_id=?) + ? WHERE id=?`,[campanaId,contactos.length,campanaId]);
   let enviados = 0, errores = 0;
   const hoyEnv = hoyISO();
@@ -21136,11 +21162,32 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
   if (pospuestos.length) console.log(`[campaña ${campanaId || "-"}] tope diario (${maxDiario}): ${pospuestos.length} se quedan para mañana`);
   const seguimientoCamp=campanaId?await dbGet('SELECT segmento_json FROM campanas_wa WHERE id=?',[campanaId]):null;
   const seguimientoRef=seguimientoCamp?JSON.parse(seguimientoCamp.segmento_json||'{}').seguimiento_id:null;
+  let cortadoPorTope = false;
   for (const c of aEnviar) {
     let estado = "enviado", err = null;
     let qrEmitido = null;
+    let reservado = null;
+    // Última comprobación justo antes de escribir, contra la base y no contra la lista del
+    // principio: si otro proceso (un redespliegue solapado) ya se lo mandó, no se repite.
+    if (campanaId) {
+      try {
+        const ya = await dbGet(`SELECT 1 AS x FROM campana_envios WHERE campana_id = ? AND estado = 'enviado'
+                                  AND RIGHT(regexp_replace(telefono, '[^0-9]', '', 'g'), 9) = RIGHT(regexp_replace(?, '[^0-9]', '', 'g'), 9) LIMIT 1`, [campanaId, String(c.telefono || "")]);
+        if (ya) continue;
+      } catch { /* si no se puede comprobar, se sigue como antes */ }
+    }
+    // El tope se mira en CADA mensaje: el cálculo del principio no ve lo que gastan los demás
+    // caminos (cupones, Sara, otro lote) mientras este espera cinco minutos entre envíos.
+    try { if ((await cupoWA()).agotado) { cortadoPorTope = true; break; } } catch { /* noop */ }
     try {
       if(seguimientoRef){const actuales=await destinatariosSeguimiento({all:dbAll,get:dbGet},seguimientoRef);if(!actuales.has(telefonoRecorrido(c.telefono))||!await permisoSeguimiento({all:dbAll},c.telefono)){await dbRun('UPDATE campanas_wa SET total_destinatarios=GREATEST(0,total_destinatarios-1) WHERE id=?',[campanaId]);continue;}}
+      if (campanaId) {
+        const tel9 = String(c.telefono || "").replace(/\D/g, "").slice(-9);
+        if (!tel9) throw new Error("teléfono vacío");
+        const r = await dbRun(`INSERT INTO campana_reservas (campana_id, tel9) VALUES (?, ?) ON CONFLICT DO NOTHING RETURNING tel9`, [campanaId, tel9]);
+        if (!r) continue; // ya reservado: otro lote o servidor le escribe (o ya le escribió)
+        reservado = tel9;
+      }
       const base = resolverMensaje ? resolverMensaje(c) : mensaje;
 
       // ── El cupón personal, si la campaña lleva promoción y el texto lo pide ──────────
@@ -21182,6 +21229,8 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
     }
     catch (e) {
       errores++; estado = "error"; err = (e && e.message) ? String(e.message).slice(0, 200) : "error";
+      // El mensaje NO salió: se libera la reserva para que al retomar se le pueda volver a intentar.
+      if (reservado) await dbRun(`DELETE FROM campana_reservas WHERE campana_id = ? AND tel9 = ?`, [campanaId, reservado]).catch(() => {});
       // Si el cupón llegó a emitirse pero el mensaje no salió, queda anotado en el propio QR:
       // así aparece en Promociones como «no salió» y se puede reenviar sin emitir otro.
       if (qrEmitido) await dbRun(`UPDATE pro_qr SET enviado_error = ? WHERE id = ?`, [err, qrEmitido.id]).catch(() => {});
@@ -21195,7 +21244,7 @@ async function enviarLoteWA({ contactos, mensaje, campanaId = null, adjunto = nu
     // Se SUMA a lo que ya hubiera: una campaña que se retoma al día siguiente no puede
     // empezar el contador de cero, o el resumen diría que se envió a menos gente de la real.
     // Y solo se marca «enviada» cuando de verdad no queda nadie.
-    const fin = pospuestos.length ? "enviando" : "enviada";
+    const fin = (pospuestos.length || cortadoPorTope) ? "enviando" : "enviada";
     try {
       await dbRun(
         `UPDATE campanas_wa SET total_enviados = COALESCE(total_enviados,0) + ?, total_errores = COALESCE(total_errores,0) + ?,
@@ -25721,12 +25770,19 @@ const server = app.listen(PORT, async () => {
       //
       // Retomar es seguro porque `dispatchCampana` salta a quien ya recibió. Se espera media
       // hora antes de tocarla para no pisar un envío que sigue vivo.
-      const haceRato = new Date(Date.now() - 30 * 60 * 1000).toLocaleString("sv-SE", { timeZone: "Europe/Madrid" }).replace(" ", "T");
+      // OJO: `enviado_en` y `creado_en` son timestamptz en UTC. Antes se comparaban con la hora de
+      // MADRID escrita como texto sin zona, que Postgres lee como UTC: «hace 30 min» acababa siendo
+      // «dentro de 30 min», TODA campaña en «enviando» parecía parada y se retomaba cada 5 minutos
+      // mientras el lote anterior seguía vivo. Cada vuelta sumaba un envío paralelo más y todos
+      // escribían a la misma persona (10/11/2026: 121 mensajes a 19 personas).
+      // Y además las dos columnas son TEXT: comparadas como texto, «2026-11-10 11:34» (espacio)
+      // queda SIEMPRE antes que «2026-11-10T…» (T). Por eso se convierten a fecha en la consulta.
       const aMedias = await dbAll(
         `SELECT c.id FROM campanas_wa c
           WHERE c.estado = 'enviando'
-            AND COALESCE((SELECT MAX(enviado_en) FROM campana_envios e WHERE e.campana_id = c.id), c.creado_en) < ?
-          LIMIT 3`, [haceRato]);
+            AND COALESCE((SELECT MAX(e.enviado_en::timestamptz) FROM campana_envios e WHERE e.campana_id = c.id), c.creado_en::timestamptz)
+                < NOW() - INTERVAL '30 minutes'
+          LIMIT 3`);
       for (const c of aMedias) {
         try {
           const r = await dispatchCampana(c.id);
