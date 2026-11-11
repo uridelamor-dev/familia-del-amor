@@ -1965,6 +1965,17 @@ async function initDB() {
     // UNA persona, UN mensaje por campaña, y que lo garantice la base y no la memoria del proceso:
     // antes de escribir a alguien se reserva aquí su teléfono (últimos 9 dígitos). Si la fila ya
     // existe, otro lote u otro servidor se le adelantó y este no le escribe. Ver `enviarLoteWAInterno`.
+    // Los archivos subidos viven en `public/uploads`, y Replit VACÍA esa carpeta en cada
+    // publicación. El 10/11/2026 se publicó con una campaña en marcha, su imagen desapareció y la
+    // campaña se quedó «En curso» sin enviar nada. Por eso cada subida guarda también una copia
+    // aquí, y si falta en disco se recupera de la base (ver `cargarAdjuntoDurable`).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS uploads_copia (
+        nombre TEXT PRIMARY KEY,
+        datos BYTEA NOT NULL,
+        creado_en TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
     await client.query(`
       CREATE TABLE IF NOT EXISTS campana_reservas (
         campana_id INTEGER NOT NULL,
@@ -8100,6 +8111,38 @@ const GS_AVAILABLE = (() => {
 })();
 if (!GS_AVAILABLE) console.warn("[Upload] ghostscript (gs) no disponible; PDFs sin comprimir");
 
+// Copia en PostgreSQL de un archivo subido. Hasta 15 MB (el máximo que admite un adjunto de
+// WhatsApp); lo que pase de ahí se queda solo en disco, como antes.
+async function guardarCopiaUpload(nombre, filePath) {
+  try {
+    const buf = fs.readFileSync(filePath);
+    if (!buf.length || buf.length > 15 * 1024 * 1024) return;
+    await dbRun(`INSERT INTO uploads_copia (nombre, datos) VALUES (?, ?) ON CONFLICT (nombre) DO UPDATE SET datos = EXCLUDED.datos`, [nombre, buf]);
+  } catch (e) { console.error("[Upload] copia en BD falló:", e.message); }
+}
+
+// Si el archivo ya no está en disco (un despliegue vació la carpeta), se rescata de la base y se
+// vuelve a escribir en disco. Devuelve true si al final está.
+async function restaurarUpload(nombre) {
+  try {
+    nombre = path.basename(String(nombre || "").split("?")[0]);
+    if (!nombre) return false;
+    const fp = path.join(uploadsDir, nombre);
+    if (fs.existsSync(fp)) return true;
+    const row = await dbGet(`SELECT datos FROM uploads_copia WHERE nombre = ?`, [nombre]);
+    if (!row || !row.datos) return false;
+    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    fs.writeFileSync(fp, row.datos);
+    return true;
+  } catch (e) { console.error("[Upload] restaurar falló:", e.message); return false; }
+}
+
+// Lo que `express.static` no encuentra en /uploads se busca en la copia de la base.
+app.get("/uploads/:nombre", async (req, res, next) => {
+  if (await restaurarUpload(req.params.nombre)) return res.sendFile(path.join(uploadsDir, path.basename(req.params.nombre)));
+  next();
+});
+
 async function optimizeUpload(filePath) {
   try {
     const ext = path.extname(filePath).toLowerCase();
@@ -8133,7 +8176,9 @@ async function optimizeUpload(filePath) {
 app.post("/api/upload", requireAuth(["marketing", "rrhh", "direccion", "encargado"]), upload.array("files", 10), async (req, res) => {
   const files = req.files || [];
   for (const f of files) {
-    await optimizeUpload(f.path || path.join(uploadsDir, f.filename));
+    const fp = f.path || path.join(uploadsDir, f.filename);
+    await optimizeUpload(fp);
+    await guardarCopiaUpload(f.filename, fp);
   }
   const urls = files.map((f) => `/uploads/${f.filename}`);
   res.json({ ok: true, urls });
@@ -21047,6 +21092,12 @@ app.post("/api/contactos/mensaje", requireAuth(["direccion", "marketing"]), asyn
 });
 
 // Carga un adjunto (subido vía /api/upload → /uploads/xxx) desde disco como buffer.
+async function cargarAdjuntoDurable(url) {
+  if (!url) return null;
+  await restaurarUpload(url);
+  return cargarAdjunto(url);
+}
+
 function cargarAdjunto(url) {
   try {
     if (!url) return null;
@@ -21332,8 +21383,12 @@ async function dispatchCampana(campanaId) {
   const camp = await dbGet(`SELECT * FROM campanas_wa WHERE id = ?`, [campanaId]);
   if (!camp) return { ok: false };
   if (!isReady()) return { ok: false, motivo: "wa_off" };
-  const adjunto=cargarAdjunto(camp.adjunto_url);
-  if(camp.adjunto_url&&!adjunto)return {ok:false,motivo:'adjunto_no_disponible'};
+  const adjunto=await cargarAdjuntoDurable(camp.adjunto_url);
+  if(camp.adjunto_url&&!adjunto){
+    // Antes esto volvía sin decir nada y la campaña se quedaba «En curso» para siempre.
+    console.error(`[campaña ${campanaId}] NO SE ENVÍA: falta el adjunto ${camp.adjunto_url}. Cámbialo con PUT /api/campanas/${campanaId}/adjunto`);
+    return {ok:false,motivo:'adjunto_no_disponible'};
+  }
   let seg = {}; try { seg = JSON.parse(camp.segmento_json || "{}"); } catch { /* noop */ }
   const params = []; const contactos = await contactosGeograficos(seg);
   const { aptos } = filtrarEnviablesWA(contactos, { soloOptIn: !!seg.soloOptIn });
@@ -21373,7 +21428,7 @@ app.post("/api/contactos/mensaje-masivo", requireAuth(["direccion", "marketing"]
     let adjunto=null;
     if(adjunto_url){
       if(typeof adjunto_url!=='string'||!/^\/uploads\/[a-zA-Z0-9._-]+\.(jpg|jpeg|png|webp|pdf|doc|docx|xls|xlsx|txt)$/i.test(adjunto_url))return res.status(400).json({ok:false,error:'Adjunto no válido.'});
-      adjunto=cargarAdjunto(adjunto_url);
+      adjunto=await cargarAdjuntoDurable(adjunto_url);
       if(!adjunto||!adjunto.buffer.length||adjunto.buffer.length>15*1024*1024)return res.status(400).json({ok:false,error:'No se puede leer el adjunto o supera 15 MB. Vuelve a seleccionarlo.'});
     }
     const params = [];
@@ -21487,7 +21542,7 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
       if (!isReady()) { await dbRun(`UPDATE campanas_wa SET estado='borrador' WHERE id=?`, [id]); return res.status(503).json({ ok: false, error: "WhatsApp no conectado", campana_id: id }); }
       res.json({ ok: true, campana_id: id, estado: "enviando", enviables: aptos.length, omitidos });
       const resolverMensaje = seg.traducir ? await construirResolverIdioma(mensaje, aptos) : null;
-      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: cargarAdjunto(adjunto_url), resolverMensaje, localCampana: seg.local || null,
+      enviarLoteWA({ contactos: aptos, mensaje, campanaId: id, adjunto: await cargarAdjuntoDurable(adjunto_url), resolverMensaje, localCampana: seg.local || null,
         promocion: promo, baseUrl: await baseEnlaces(req) });
       return;
     }
@@ -21511,6 +21566,25 @@ app.get("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (req
     if (!camp) return res.status(404).json({ ok: false, error: "No existe" });
     const envios = await dbAll(`SELECT telefono, nombre, estado, error, enviado_en FROM campana_envios WHERE campana_id = ? ORDER BY id DESC LIMIT 500`, [req.params.id]);
     res.json({ ok: true, data: { campana: camp, envios, resumen: resumenEnvios(envios) } });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Cambiar SOLO la imagen o el documento de una campaña, también si ya está «enviando». Es lo que
+// permite rescatar una campaña a medias cuyo adjunto se perdió, sin duplicarla: una campaña
+// nueva volvería a escribir a quien ya lo recibió. El texto y los destinatarios no se tocan.
+app.put("/api/campanas/:id/adjunto", requireAuth(["direccion", "marketing"]), async (req, res) => {
+  try {
+    if (!/^\d+$/.test(String(req.params.id))) return res.status(404).json({ ok: false, error: "No existe" });
+    const camp = await dbGet(`SELECT id, estado FROM campanas_wa WHERE id = ?`, [req.params.id]);
+    if (!camp) return res.status(404).json({ ok: false, error: "No existe" });
+    const url = req.body?.adjunto_url;
+    if (typeof url !== "string" || !/^\/uploads\/[a-zA-Z0-9._-]+\.(jpg|jpeg|png|webp|pdf)$/i.test(url)) return res.status(400).json({ ok: false, error: "Adjunto no válido." });
+    const adj = await cargarAdjuntoDurable(url);
+    if (!adj || !adj.buffer.length) return res.status(400).json({ ok: false, error: "Ese archivo no está en el servidor. Súbelo otra vez." });
+    await dbRun(`UPDATE campanas_wa SET adjunto_url = ? WHERE id = ?`, [url, camp.id]);
+    res.json({ ok: true, id: camp.id, estado: camp.estado, adjunto_url: url });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

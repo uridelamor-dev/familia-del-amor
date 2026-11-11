@@ -11,7 +11,7 @@ async function run(body, attachment = { buffer: Buffer.from('fixture'), filename
   const res = { code: 200, status(code) { this.code = code; return this; }, json(data) { this.data = data; return this; } };
   vm.runInNewContext(route, {
     app: { post: (_path, _auth, fn) => { handler = fn; } }, requireAuth: () => {},
-    isReady: () => true, cargarAdjunto: () => attachment,
+    isReady: () => true, cargarAdjunto: () => attachment, cargarAdjuntoDurable: async () => attachment,
     segmentoDelBody: () => ({ segmento: {} }), contactosGeograficos: async () => [{ telefono: 'fixture' }],
     filtrarEnviablesWA: contacts => ({ aptos: contacts, omitidos: {} }),
     dbRun: async (sql, args) => { saved = { sql, args }; return { id: 12 }; },
