@@ -94,7 +94,7 @@ No hay un horario de apertura universal confirmado. Consulta la configuración v
 - **Can Mateu - Tordera** · Plaça de la Concòrdia, 5, Tordera · 📞 930 317 169
 - **La Tapa Ibérica - Tordera** · Camí Ral, 6, Tordera · 📞 937 643 371
 - **Botiga d'en Mateu - Tordera** · Camí Ral, 6, Tordera · 📞 930 317 169
-- **Tribeca - Palafolls** · Plaça de les Valls d'Ax, 3, local 2, Palafolls · abre el viernes 13 de noviembre de 2026 · bar de tapas («la vida són quatre tapes»)
+- **Tribeca - Palafolls** · Plaça de les Valls d'Ax, 3, local 2, Palafolls · 📞 931 091 988 · abre el viernes 13 de noviembre de 2026 · bar de tapas («la vida són quatre tapes»)
 
 ## Reservas
 Puedes gestionar reservas por WhatsApp. Para una reserva necesitas: local, día, hora, número de personas, nombre y teléfono. Si el teléfono del cliente ya está en su perfil/contexto, úsalo sin volver a pedirlo; solo pregunta si falta o reserva para otra persona. Si facilita su nombre o teléfono, continúa con los datos que falten: no es una pregunta comercial ni un motivo para derivar por sí solo.

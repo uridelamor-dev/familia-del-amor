@@ -95,7 +95,7 @@ const locals = {
     type: "Bar de tapas",
     slug: "tribeca",
     locations: [
-      { dir: "Palafolls · Plaça de les Valls d'Ax 3, local 2", tel: null }
+      { dir: "Palafolls · Plaça de les Valls d'Ax 3, local 2", tel: "931091988" }
     ],
     instagram: "",
     menuPdf: "",
