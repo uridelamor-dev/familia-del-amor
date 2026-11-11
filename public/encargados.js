@@ -49,6 +49,7 @@ function localClass(local) {
   if (local.includes("Can Mateu")) return "canmateu";
   if (local.includes("La Tapa")) return "latapa";
   if (local.includes("Botiga")) return "botiga";
+  if (local.includes("Tribeca")) return "tribeca";
   if (local.includes("Viva")) return "viva";
   return "";
 }

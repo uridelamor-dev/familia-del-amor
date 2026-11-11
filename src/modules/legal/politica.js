@@ -17,6 +17,8 @@
 
 /**
  * La versión vigente. SE SUBE A MANO cuando cambia el texto de la política.
+ * v5 (13/11/2026) — añade Tribeca (Palafolls) a los establecimientos de Mateu Del Amor Salinas.
+ *
  * v4 (13/10/2026) — identifica los titulares de los restaurantes por separado.
  *
  * v3 (13/10/2026) — añade La Pepa como responsable independiente. Solo identifica el
@@ -27,10 +29,10 @@
  * qué sirve, cuánto dura y qué papel tiene Apple. Antes no se decía, y el servicio de
  * actualización sí guarda esos dos datos.
  */
-export const POLITICA_VERSION = 4;
+export const POLITICA_VERSION = 5;
 
 /** Cuándo entró en vigor esta versión. Va impresa en la página, para que se pueda comprobar. */
-export const POLITICA_FECHA = "2026-10-13";
+export const POLITICA_FECHA = "2026-11-13";
 
 /**
  * Dónde vive cada idioma.

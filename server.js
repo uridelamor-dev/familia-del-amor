@@ -4783,7 +4783,7 @@ function localesScope(req) {
 const INV_LOCALES = [
   "La Tapeta - Blanes", "La Tapeta - Lloret",
   "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
-  "Botiga d'en Mateu - Tordera", "Oficina",
+  "Botiga d'en Mateu - Tordera", "Tribeca - Palafolls", "Oficina",
 ];
 // Centros sin atención al público. Tienen personal —con sus horarios y sus fichajes—, facturas
 // e incidencias, como cualquier otro: no tener clientes no significa que no trabaje nadie. Lo
@@ -8005,6 +8005,7 @@ const WEB_LOCALES = [
   { slug: "can-mateu", name: "Can Mateu" },
   { slug: "la-tapa-iberica", name: "La Tapa Ibérica" },
   { slug: "botiga-d-en-mateu", name: "Botiga d'en Mateu" },
+  { slug: "tribeca", name: "Tribeca" },
   { slug: "viva-la-pepa", name: "Viva la Pepa" }
 ];
 
@@ -22029,7 +22030,7 @@ app.post("/api/whatsapp/reactivar", requireAuth(["direccion"]), async (req, res)
 const SARA_LOCALES = [
   "La Tapeta - Blanes", "La Tapeta - Lloret",
   "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
-  "Botiga d'en Mateu - Tordera"
+  "Botiga d'en Mateu - Tordera", "Tribeca - Palafolls"
 ];
 
 async function getSaraEstado() {

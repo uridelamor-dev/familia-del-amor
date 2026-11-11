@@ -20,11 +20,11 @@ function listaTras(texto, marca) {
 }
 
 describe("los establecimientos son los mismos en todas las copias", () => {
-  test("son siete y no están vacíos", () => {
-    // Siete, no ocho: la Cooperativa dejó de ser un establecimiento interno —es la otra barra
+  test("son ocho y no están vacíos", () => {
+    // Ocho desde que abre Tribeca (Palafolls, 13/11/2026). Y la Cooperativa dejó de ser un establecimiento interno —es la otra barra
     // de Blanes— y sus alias apuntan al centro. De cara al cliente sigue existiendo, pero en
     // la web pública y en su ficha de Google, que no salen de esta lista.
-    assert.equal(LOCALES.length, 7);
+    assert.equal(LOCALES.length, 8);
     assert.ok(LOCALES.every((l) => typeof l === "string" && l.trim()));
     assert.equal(new Set(LOCALES).size, LOCALES.length, "hay uno repetido");
   });

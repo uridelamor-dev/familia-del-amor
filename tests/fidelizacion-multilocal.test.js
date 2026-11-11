@@ -847,10 +847,10 @@ describe("la pantalla parte del catálogo, no de lo que haya en la base", () => 
     assert.ok(!/locales = \(filas \|\| \[\]\)\.map/.test(estado), "la pantalla sale de la base");
   });
 
-  test("los siete locales de la casa salen, con integración o sin ella", () => {
-    assert.equal(LOCALES.length, 7);
+  test("los ocho locales de la casa salen, con integración o sin ella", () => {
+    assert.equal(LOCALES.length, 8);
     for (const l of [LLORET, TORDERA, "La Tapeta - Blanes", "La Tapeta - Girona",
-                     "Can Mateu - Tordera", "Botiga d'en Mateu - Tordera", "Oficina"]) {
+                     "Can Mateu - Tordera", "Botiga d'en Mateu - Tordera", "Tribeca - Palafolls", "Oficina"]) {
       assert.ok(LOCALES.includes(l), `falta ${l}`);
     }
     // Sin fila, el estado es «sin configurar» y solo se ofrece generar.

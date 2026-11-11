@@ -13,6 +13,7 @@ export const CATALOGO_CANONICO = [
   "Can Mateu - Tordera",
   "La Tapa Ibérica - Tordera",
   "Botiga d'en Mateu - Tordera",
+  "Tribeca - Palafolls",
   "Oficina",
 ];
 

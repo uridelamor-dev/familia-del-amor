@@ -336,6 +336,7 @@ const locals = [
   { slug: "can-mateu", name: "Can Mateu" },
   { slug: "la-tapa-iberica", name: "La Tapa Ibérica" },
   { slug: "botiga-d-en-mateu", name: "Botiga d'en Mateu" },
+  { slug: "tribeca", name: "Tribeca" },
   { slug: "viva-la-pepa", name: "Viva la Pepa" }
 ];
 

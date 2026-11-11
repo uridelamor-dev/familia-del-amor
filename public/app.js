@@ -58,6 +58,14 @@ const companies = [
     locations: ["Tordera · Camí Ral 8"]
   },
   {
+    name: "Tribeca",
+    desc: "La vida són quatre tapes.",
+    logo: "assets/logos/tribeca.png",
+    slug: "tribeca",
+    photo: "uploads/gallery/Tribeca_01.jpg",
+    locations: ["Palafolls · Plaça de les Valls d'Ax 3, local 2"]
+  },
+  {
     name: "Viva la Pepa",
     desc: "Fiestas al aire libre y eventos memorables.",
     logo: "assets/logos/5.svg",
@@ -649,6 +657,7 @@ const teaserCards = [
   { name: "Cooperativa", loc: "Blanes",      slug: "cooperativa",    photo: "uploads/gallery/Cooperativa_208.jpg",     logo: "assets/logos/7.svg" },
   { name: "Can Mateu",   loc: "Tordera",     slug: "can-mateu",      photo: "uploads/gallery/CanMateu_STR04757.jpg",   logo: "assets/logos/3.svg" },
   { name: "La Tapa Ibérica", loc: "Tordera", slug: "la-tapa-iberica",photo: "uploads/gallery/TapaIberica_STR05479.jpg",logo: "assets/logos/4.svg" },
+  { name: "Tribeca",     loc: "Palafolls",   slug: "tribeca",        photo: "uploads/gallery/Tribeca_01.jpg",          logo: "assets/logos/tribeca.png" },
 ];
 
 renderCompanies();
@@ -757,6 +766,7 @@ const RESERVA_LOCALS = [
   { value: "Can Mateu - Tordera",          name: "Can Mateu",           sub: "Tordera" },
   { value: "La Tapa Ibérica - Tordera",    name: "La Tapa Ibérica",     sub: "Tordera" },
   { value: "Botiga d'en Mateu - Tordera",  name: "Botiga d'en Mateu",   sub: "Tordera" },
+  { value: "Tribeca - Palafolls",          name: "Tribeca",             sub: "Palafolls" },
 ];
 
 function renderLocalPicker() {

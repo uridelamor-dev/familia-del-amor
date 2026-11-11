@@ -24,7 +24,7 @@
 export const LOCALES = [
   "La Tapeta - Blanes", "La Tapeta - Lloret",
   "La Tapeta - Girona", "Can Mateu - Tordera", "La Tapa Ibérica - Tordera",
-  "Botiga d'en Mateu - Tordera", "Oficina",
+  "Botiga d'en Mateu - Tordera", "Tribeca - Palafolls", "Oficina",
 ];
 
 const norm = (s) => String(s || "")
@@ -73,6 +73,12 @@ export const ALIAS = {
   "botiga mateu": "Botiga d'en Mateu - Tordera",
   "botiga": "Botiga d'en Mateu - Tordera",
   // Oficina
+  // Tribeca - Palafolls (abre el 13/11/2026; único local en Palafolls)
+  "tribeca": "Tribeca - Palafolls",
+  "tribeca palafolls": "Tribeca - Palafolls",
+  "palafolls": "Tribeca - Palafolls",
+  "valls d ax": "Tribeca - Palafolls",
+  "placa de les valls d ax": "Tribeca - Palafolls",
   "oficina": "Oficina",
   "oficinas": "Oficina",
   "administracion": "Oficina",

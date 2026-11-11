@@ -180,7 +180,7 @@ export async function interpretarAdjunto(buffer, meta, { apiKey = process.env.OP
     const form = new FormData();
     form.append('model', process.env.SARA_AUDIO_MODEL || 'gpt-transcribe');
     form.append('file', new Blob([buffer], { type: ogg ? 'audio/ogg' : meta.mime }), `audio.${meta.extension}`);
-    form.append('prompt', 'Conversación con un restaurante. Nombres propios: Familia del Amor, La Tapeta, Cooperativa, Can Mateu, Blanes, Lloret, Girona, Tordera. Transcribe en el idioma original; no completes palabras que no se entiendan.');
+    form.append('prompt', 'Conversación con un restaurante. Nombres propios: Familia del Amor, La Tapeta, Cooperativa, Can Mateu, Tribeca, Blanes, Lloret, Girona, Tordera, Palafolls. Transcribe en el idioma original; no completes palabras que no se entiendan.');
     const r = await peticionOpenAI('audio/transcriptions', { method: 'POST', body: form }, fetcher, apiKey);
     if (typeof r.text !== 'string' || !r.text.trim()) throw new Error('audio_ininteligible');
     return { texto: r.text.trim().slice(0, 16000), etiqueta: 'Transcripción del audio' };

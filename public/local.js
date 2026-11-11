@@ -89,6 +89,18 @@ const locals = {
     menuPdf: "",
     gallery: ['uploads/gallery/BotigaMateu_01.jpg']
   },
+  "tribeca": {
+    name: "Tribeca",
+    desc: "La vida són quatre tapes.",
+    type: "Bar de tapas",
+    slug: "tribeca",
+    locations: [
+      { dir: "Palafolls · Plaça de les Valls d'Ax 3, local 2", tel: null }
+    ],
+    instagram: "",
+    menuPdf: "",
+    gallery: ["uploads/gallery/Tribeca_01.jpg"]
+  },
   "viva-la-pepa": {
     name: "Viva la Pepa",
     desc: "Fiestas al aire libre y eventos memorables.",
@@ -294,7 +306,7 @@ function renderLocal() {
 
   const ctas = document.getElementById("localCtas");
   ctas.innerHTML = "";
-  const reservationNames = { "la-tapeta-blanes":"La Tapeta - Blanes", "la-tapeta-lloret":"La Tapeta - Lloret", "la-tapeta-girona":"La Tapeta - Girona", cooperativa:"Cooperativa - Blanes", "can-mateu":"Can Mateu - Tordera", "la-tapa-iberica":"La Tapa Ibérica - Tordera" };
+  const reservationNames = { "la-tapeta-blanes":"La Tapeta - Blanes", "la-tapeta-lloret":"La Tapeta - Lloret", "la-tapeta-girona":"La Tapeta - Girona", cooperativa:"Cooperativa - Blanes", "can-mateu":"Can Mateu - Tordera", "la-tapa-iberica":"La Tapa Ibérica - Tordera", tribeca:"Tribeca - Palafolls" };
   if (reservationNames[slug]) {
     const a=document.createElement("a"); a.className="btn";
     a.href="/index.html?local=" + encodeURIComponent(reservationNames[slug]) + "#reservas";

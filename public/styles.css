@@ -2430,6 +2430,7 @@ h1, h2, h3 {
 .cal-event.canmateu    { border-left-color: #e0943a; }
 .cal-event.latapa      { border-left-color: #a07cc5; }
 .cal-event.botiga      { border-left-color: #5b9ec9; }
+.cal-event.tribeca     { border-left-color: #8a6a3b; }
 .cal-event.viva        { border-left-color: #e895b3; }
 
 .cal-time {
@@ -2493,6 +2494,7 @@ h1, h2, h3 {
 .cal-legend-item.canmateu    { border-left-color: #e0943a; }
 .cal-legend-item.latapa      { border-left-color: #a07cc5; }
 .cal-legend-item.botiga      { border-left-color: #5b9ec9; }
+.cal-legend-item.tribeca     { border-left-color: #8a6a3b; }
 .cal-legend-item.viva        { border-left-color: #e895b3; }
 
 @media (max-width: 900px) {
