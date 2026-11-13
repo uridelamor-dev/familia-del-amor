@@ -18,6 +18,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import { lineaError, redactar } from "./src/modules/seguridad/redactar.js";
+import { puedeEnviar, FueraDeHorarioError } from "./src/modules/messaging/horario-silencio.js";
 
 /**
  * EL LOGGER QUE SE LE DA A BAILEYS.
@@ -1518,9 +1519,28 @@ export async function numeroTieneWhatsApp(telefono) {
  *
  * `meta` es opcional: quien no lo pase se comporta como antes, solo que registrando.
  */
+// ¿Nos ha escrito este cliente hace poco? Lo inyecta server.js, que es quien ve la base.
+let clienteEscribioReciente = null;
+export function setClienteEscribioReciente(fn) { clienteEscribioReciente = fn; }
+
+/**
+ * HORARIO DE SILENCIO (22:00–9:00). Todos los envíos sueltos pasan por aquí. Las respuestas de
+ * Sara y los avisos a los grupos del equipo no: van por otro camino y siguen igual.
+ * `meta.interno` = va al equipo; `meta.transaccional` = lo acaba de pedir el cliente.
+ */
+async function comprobarHorario(jid, meta = {}) {
+  const interno = !!meta.interno || String(meta.tipoMensaje || "").startsWith("rrhh");
+  const transaccional = !!meta.transaccional;
+  if (puedeEnviar({ interno, transaccional })) return;
+  let clienteEscribio = false;
+  try { clienteEscribio = clienteEscribioReciente ? !!(await clienteEscribioReciente(jid)) : false; } catch { clienteEscribio = false; }
+  if (!puedeEnviar({ interno, transaccional, clienteEscribio })) throw new FueraDeHorarioError();
+}
+
 export async function sendMensajeLibre(telefono, texto, meta = {}) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   const jid = formatPhone(telefono);
+  await comprobarHorario(jid, meta);
   await sock.sendMessage(jid, { text: texto });
   // Se marca ANTES de avisar para que el eco, que llega enseguida, ya lo encuentre marcado.
   _marcarMensajeSistema(jid, texto);
@@ -1537,9 +1557,10 @@ export async function sendMensajeLibre(telefono, texto, meta = {}) {
   }
 }
 
-export async function sendDocumentoLibre(telefono, buffer, filename, mimetype) {
+export async function sendDocumentoLibre(telefono, buffer, filename, mimetype, meta = {}) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   const jid = formatPhone(telefono);
+  await comprobarHorario(jid, meta);
   await sock.sendMessage(jid, {
     document: buffer,
     mimetype: mimetype || "application/octet-stream",
@@ -1549,9 +1570,10 @@ export async function sendDocumentoLibre(telefono, buffer, filename, mimetype) {
 
 // Envía un adjunto con texto: imagen INLINE con pie de foto, o PDF/otros como documento
 // (precedido del texto). Usado por las campañas/masivos con contenido rico.
-export async function sendMediaLibre(telefono, buffer, filename, mimetype, caption) {
+export async function sendMediaLibre(telefono, buffer, filename, mimetype, caption, meta = {}) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   const jid = formatPhone(telefono);
+  await comprobarHorario(jid, meta);
   if (mimetype && mimetype.startsWith("image/")) {
     await sock.sendMessage(jid, { image: buffer, caption: caption || "" });
   } else {

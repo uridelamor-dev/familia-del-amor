@@ -40,7 +40,8 @@ import {crearMensuales,desplazarMes} from './src/modules/informes/mensuales.js';
 import {leerMesVentas} from './src/modules/informes/ventas-mensuales.js';
 import { SCHEMA as PEPA_EMAIL_SCHEMA, createQueue as createPepaEmailQueue, registerRoutes as registerPepaEmailRoutes } from './src/modules/pepa-email/queue.js';
 import { BANDEJA_SCHEMA, crearArchivoBandeja } from './src/modules/messaging/bandeja-historial.js';
-import { setArchivoBandeja } from './whatsapp.js';
+import { setArchivoBandeja, setClienteEscribioReciente } from './whatsapp.js';
+import { enSilencio as enSilencioWA, VENTANA_RESPUESTA_HORAS } from "./src/modules/messaging/horario-silencio.js";
 import { VINCULOS_SCHEMA } from './src/modules/messaging/contacto-conversacion.js';
 import { BANCOS_SCHEMA, registrarBancos, crearRecordatorioBancos } from './src/modules/bancos/servicio.js';
 import { ATENCION_SCHEMA, crearAtencion } from './src/modules/messaging/atencion.js';
@@ -9371,14 +9372,14 @@ app.post("/api/hr/applications", (req, res, next) => {
         `Hola ${nombre}! 👋 Te escribo en relación a tu candidatura como ${puesto} en Familia del Amor. Cuéntame un poco más sobre ti para que podamos conocernos mejor 😊`
       );
       const linkWA = `https://wa.me/${numWA}?text=${mensajePrefill}`;
-      sendMensajeLibre("622065974", lineas.join("\n"))
+      sendMensajeLibre("622065974", lineas.join("\n"), { interno: true })
         .then(() => {
           if (req.file) {
             const cvBuffer = fs.readFileSync(path.join(uploadsDir, req.file.filename)); // ya publicado por finalizeCvUpload
-            return sendDocumentoLibre("622065974", cvBuffer, req.file.originalname, req.file.mimetype);
+            return sendDocumentoLibre("622065974", cvBuffer, req.file.originalname, req.file.mimetype, { interno: true });
           }
         })
-        .then(() => sendMensajeLibre("622065974", `Si quieres escribirle directamente a ${nombre}, haz clic aquí 👇\n${linkWA}`))
+        .then(() => sendMensajeLibre("622065974", `Si quieres escribirle directamente a ${nombre}, haz clic aquí 👇\n${linkWA}`, { interno: true }))
         .catch((e) => console.error("[HR] Error notificando candidatura a Nerea:", e.message));
     }
     res.json({ ok: true });
@@ -9473,7 +9474,7 @@ async function rrhhCumpleSiToca() {
   await avisarCumpleanos({ ahora: Date.now(), config: await rrhhCumpleConfig(), conectado: isReady,
     personas: () => dbAll(`SELECT id, nombre, local, rol, activo, fecha_alta, fecha_baja, fecha_nac FROM users WHERE rol IN ('trabajador','encargado') AND fecha_nac IS NOT NULL`),
     reservar: async dia => !!(await dbGet(`INSERT INTO rrhh_cumple_avisos(dia, estado, actualizado_en) VALUES (?, 'enviando', ?) ON CONFLICT DO NOTHING RETURNING dia`, [dia, isoConOffset(Date.now())])),
-    enviar: async (tel, texto) => { await sendMensajeLibre(tel, texto); },
+    enviar: async (tel, texto) => { await sendMensajeLibre(tel, texto, { interno: true }); },
     terminar: (dia, estado) => dbRun('UPDATE rrhh_cumple_avisos SET estado = ?, actualizado_en = ? WHERE dia = ?', [estado, isoConOffset(Date.now()), dia]),
   });
 }
@@ -14503,7 +14504,7 @@ app.post("/api/tarjeta/alta", async (req, res) => {
       // `baja = 1` es «no me escribáis». No se salta ni aquí: acaba de pedir la tarjeta, así que
       // se le enseña en pantalla, pero no se le manda un mensaje que dijo que no quería.
       if (!(pref && Number(pref.baja) === 1) && isReady()) {
-        await sendMensajeLibre(alta.telefono, tjTextoWA({ nombre: alta.nombre, url, yaTenia }));
+        await sendMensajeLibre(alta.telefono, tjTextoWA({ nombre: alta.nombre, url, yaTenia }), { transaccional: true });
         enviado = true;
         await dbRun(`UPDATE pro_qr SET enviado_en = ? WHERE id = ?`, [new Date().toISOString(), qr.id]);
       }
@@ -16266,6 +16267,9 @@ async function capVaciarCola() {
       }
       if (cumpleEstado === "pausado") continue;
       const esAlta = Number(fila.prioridad ?? 1) === 0;
+      // Horario de silencio: lo comercial y los cumpleaños se quedan en la cola hasta las 9:00. Un
+      // alta sí sale: la persona acaba de apuntarse y está esperando su código.
+      if (!esAlta && enSilencioWA()) continue;
 
       // Cada tipo contra SU cupo. Un comercial se para antes; un alta puede usar la reserva.
       const quedan = (esAlta ? cupoTipo.altas : cupoTipo.comercial) - gastados;
@@ -16334,6 +16338,7 @@ async function capVaciarCola() {
         if (String(fila.token).startsWith("cumple:") &&
             estadoCumple(fila.token, (await getConfig("cumple_auto")) === "1") !== "enviar") continue;
         await sendMensajeLibre(fila.telefono, fila.texto, {
+          transaccional: esAlta,
           origen: WA_ORIGEN.CAMPANA,
           claveCampana: fila.campana || null,
           tipoMensaje: waTipoPorToken(fila.token),
@@ -18580,7 +18585,7 @@ async function avisarPeticionHablar() {
   try {
     const tel = await getConfig("pulso_aviso_telefono");
     if (!tel || !isReady()) return;
-    await sendMensajeLibre(tel, "Alguien del equipo ha pedido hablar contigo.\n\nEstá en el panel → RR. HH. → Pulso del equipo.");
+    await sendMensajeLibre(tel, "Alguien del equipo ha pedido hablar contigo.\n\nEstá en el panel → RR. HH. → Pulso del equipo.", { interno: true });
   } catch (e) { console.error("[pulso] aviso:", e.message); }
 }
 
@@ -18822,7 +18827,7 @@ async function enviarPulsoLote(invitaciones, mes) {
       + `No respondas a este mensaje, usa el enlace.`;
     try {
       if (!isReady()) throw new Error("WhatsApp no conectado");
-      await sendMensajeLibre(inv.telefono, texto);
+      await sendMensajeLibre(inv.telefono, texto, { interno: true });
       await contarEnvioWA();
       await dbRun(`UPDATE pulso_invitaciones SET enviado_en = ?, enviado_error = NULL WHERE id = ?`, [new Date().toISOString(), inv.invitacionId]);
     } catch (e) {
@@ -21231,6 +21236,9 @@ async function enviarLoteWAInterno({ contactos, mensaje, campanaId = null, adjun
     // El tope se mira en CADA mensaje: el cálculo del principio no ve lo que gastan los demás
     // caminos (cupones, Sara, otro lote) mientras este espera cinco minutos entre envíos.
     try { if ((await cupoWA()).agotado) { cortadoPorTope = true; break; } } catch { /* noop */ }
+    // Horario de silencio (22:00–9:00): la campaña se queda «enviando» y el reloj la retoma
+    // a partir de las 9:00, sin repetir a nadie. Antes salía a las 00:00, al renovarse el cupo.
+    if (enSilencioWA()) { cortadoPorTope = true; break; }
     try {
       if(seguimientoRef){const actuales=await destinatariosSeguimiento({all:dbAll,get:dbGet},seguimientoRef);if(!actuales.has(telefonoRecorrido(c.telefono))||!await permisoSeguimiento({all:dbAll},c.telefono)){await dbRun('UPDATE campanas_wa SET total_destinatarios=GREATEST(0,total_destinatarios-1) WHERE id=?',[campanaId]);continue;}}
       if (campanaId) {
@@ -25787,9 +25795,9 @@ const server = app.listen(PORT, async () => {
     }
   } catch (e) { console.error("[Seed] Error migrando split La Tapeta:", e.message); }
 
-  // Enviar mensajes de seguimiento post-visita (cada 5 min)
+  // Enviar mensajes de seguimiento post-visita (cada 5 min). En horario de silencio esperan.
   setInterval(async () => {
-    if (!isReady()) return;
+    if (!isReady() || enSilencioWA()) return;
     try {
       const ahora = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Madrid" }).replace(" ", "T");
       const pendientes = await dbAll(
@@ -25833,7 +25841,9 @@ const server = app.listen(PORT, async () => {
   setInterval(async () => {
     // 1) Campañas con estado 'programada' cuya hora ya llegó.
     try {
-      if (isReady()) {
+      // Ni las programadas ni las que quedaron a medias salen en horario de silencio: una
+      // campaña programada para las 23:00 espera a las 9:00.
+      if (isReady() && !enSilencioWA()) {
       const ahora = new Date().toLocaleString("sv-SE", { timeZone: "Europe/Madrid" }).replace(" ", "T");
       const prog = await dbAll(`SELECT id FROM campanas_wa WHERE estado = 'programada' AND programada_para IS NOT NULL AND programada_para <= ?`, [ahora]);
       for (const c of prog) { try { await dispatchCampana(c.id); } catch (e) { console.error("[campaña programada]", e.message); } }
@@ -26271,6 +26281,18 @@ const server = app.listen(PORT, async () => {
       console.error("Error resolviendo documento:", e.message);
       return null;
     }
+  });
+
+  // Horario de silencio: «nos ha escrito» = un mensaje SUYO en las últimas 24 h. Por los 9
+  // últimos dígitos y no por jid, que a veces llega en otro formato y la respuesta se bloquearía.
+  setClienteEscribioReciente(async (jid) => {
+    const tel9 = String(jid || "").split("@")[0].replace(/\D/g, "").slice(-9);
+    if (!tel9) return false;
+    const r = await dbGet(`SELECT 1 AS x FROM whatsapp_messages
+       WHERE tipo = 'intercambio' AND COALESCE(historico, 0) = 0
+         AND RIGHT(regexp_replace(telefono, '[^0-9]', '', 'g'), 9) = ?
+         AND creado_en::timestamptz >= NOW() - (? || ' hours')::interval LIMIT 1`, [tel9, String(VENTANA_RESPUESTA_HORAS)]);
+    return !!r;
   });
 
   setOnMensajeSaliente(async ({ jid, mensaje, esManual = false,
