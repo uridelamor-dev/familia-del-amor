@@ -96,6 +96,9 @@ export function comoDocumento(fila = {}) {
     porcentaje_iva: fila.porcentaje_iva,
     cuota_iva: fila.cuota_iva,
     total: fila.total,
+    recargo_equivalencia: fila.recargo_equivalencia,
+    retencion: fila.retencion,
+    otros_cargos: fila.otros_cargos,
   };
 }
 
@@ -152,6 +155,7 @@ export function repasarLote(filas = [], { ventanaDias = 10, maxHistorial = 40, h
     // 1) Coherencia, contra las anteriores de ese proveedor (las últimas 40, como en la entrada).
     const previas = candidatas.slice(-maxHistorial);
     const historial = {
+      nifsConfirmados: f.nifs_confirmados || [],
       nifs: previas.map((x) => normNif(x.nif)).filter(Boolean),
       totales: previas.map((x) => x.total),
       fechas: previas.map((x) => x.fecha).filter(Boolean),

@@ -1,3 +1,5 @@
+import {leerCargosBase} from './cargos-base.js';
+import {recordarProveedorRevision} from './aprendizaje-revision.js';
 import {createHash} from 'node:crypto';
 
 export const AUDITORIA_COMPLETA_SCHEMA = `CREATE TABLE IF NOT EXISTS facturas_auditoria_completa (
@@ -20,6 +22,9 @@ const NUMEROS=new Set('id orden base_imponible porcentaje_iva cuota_iva total co
 function campos(obj,keys) {return Object.fromEntries(keys.map(k=>[k,obj[k]==null?null:NUMEROS.has(k)?Number(obj[k]):obj[k]]));}
 export function huellaAuditoria(f,lineas) {
  const cabecera=campos(f,CABECERA);
+ const cargos=leerCargosBase(f.cargos_base);if(cargos.length)cabecera.cargos_base=cargos;
+ if(f.lineas_iva_incluido===true)cabecera.lineas_iva_incluido=true;
+ for(const k of ['recargo_equivalencia','retencion','otros_cargos'])if(Number(f[k]))cabecera[k]=Number(f[k]);
  if(typeof cabecera.iva_desglose==='string'){try{cabecera.iva_desglose=JSON.parse(cabecera.iva_desglose);}catch{}}
  return createHash('sha256').update(JSON.stringify(normalizar({cabecera,lineas:[...lineas].sort((a,b)=>a.id-b.id).map(l=>campos(l,LINEA))}))).digest('hex');
 }
@@ -60,6 +65,7 @@ export function registrarAuditoriaCompleta(app,{auth,pool,puedeAccederLocal}) {
    validarConfirmacion(req.body,huella);
    if(!f.drive_url)throw Object.assign(new Error('Falta el original guardado en Drive.'),{status:400});
    await client.query(`INSERT INTO facturas_auditoria_completa(factura_id,huella,autor,comprobaciones,archivo_nombre,archivo_ruta) VALUES($1,$2,$3,$4,$5,$6)`,[f.id,huella,String(req.user.username||req.user.nombre||req.user.id),JSON.stringify(req.body.comprobaciones),req.body.archivo_nombre.trim(),req.body.archivo_ruta.trim()]);
+   await recordarProveedorRevision((sql,p)=>client.query(sql,p),f,String(req.user.username||req.user.nombre||req.user.id));
    await client.query('COMMIT');res.json({ok:true});
   }catch(e){await client.query('ROLLBACK');res.status(e.status||500).json({ok:false,error:e.message});}
   finally{client.release();}

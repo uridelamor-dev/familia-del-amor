@@ -105,7 +105,7 @@ describe("corregir la fecha hace las CUATRO cosas, no la mitad", () => {
 
   test("pero el vencimiento LEÍDO del papel no se toca", () => {
     // Es un hecho del documento, no una cuenta nuestra.
-    assert.match(ep, /if \(f\.vencimiento_origen !== "factura"\)/);
+    assert.match(ep, /if \(!vencimientoFijado\(f\)\)/);
   });
 
   test("y si Drive o el Sheet fallan, la fecha ya está bien guardada", () => {

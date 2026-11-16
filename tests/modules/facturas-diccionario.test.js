@@ -1,5 +1,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import vm from "node:vm";
+import {canonizarLocal} from "../../src/modules/facturas/local-canonico.js";
+import {filtrosLineas} from "../../src/modules/facturas/filtros-lineas.js";
 import { readFileSync } from "node:fs";
 import { esqueleto, medidas, parecido, proponer, colaDeTrabajo, nombreLimpio, cobertura, MINIMO_PROPUESTA, ordenarCandidatos }
   from "../../src/modules/facturas/diccionario.js";
@@ -153,22 +156,37 @@ describe("agrupar CON el diccionario", () => {
 describe("cableado del diccionario", () => {
   const server = readFileSync(new URL("../../server.js", import.meta.url), "utf8");
 
-  test("la cola sale ordenada por GASTO y sin las ya revisadas", () => {
-    const fn = server.slice(server.indexOf('app.get("/api/facturas/diccionario"'), server.indexOf('app.post("/api/facturas/diccionario"'));
-    assert.match(fn, /ORDER BY gasto DESC/);
-    // La condición va en el array `cond` desde que la cola se puede acotar a un local.
-    assert.match(fn, /LEFT JOIN producto_alias a ON a\.clave = l\.clave/);
-    assert.match(fn, /const cond = \["a\.clave IS NULL"/);
+  async function ejecutarCola(locales=['Girona']) {
+    const inicio=server.indexOf('function filtroProductosRevision(req)');
+    const fin=server.indexOf('app.post("/api/facturas/diccionario"',inicio);
+    const consultas=[];let handler,status=200,body;
+    const ctx={app:{get:(_p,_a,h)=>{handler=h;}},requireAuth:()=>null,filtrosLineas,canonizarLocal,
+      localesScope:()=>locales,localScope:()=>locales[0]||null,comprasDe:l=>[l],proveedoresDeCategorias:async()=>[],claveProducto:s=>s,
+      dbAll:async(sql,params)=>{consultas.push({sql,params});return [];},nombresCasa:async()=>[],
+      colaDeTrabajo,cobertura,noEsProducto:()=>null,console:{error(){}}};
+    vm.runInNewContext(server.slice(inicio,fin),ctx);
+    const res={status:n=>{status=n;return res;},json:b=>{body=b;}};
+    await handler({query:{from:'2026-11-01',local:'Girona'}},res);
+    assert.equal(status,200,'la cola debe responder, sin referencias a variables retiradas');
+    assert.equal(body.ok,true);assert.equal(body.local,canonizarLocal('Girona'));return consultas;
+  }
+  test("la cola sale ordenada por GASTO y sin las ya revisadas", async () => {
+    const [cola]=await ejecutarCola();
+    assert.match(cola.sql,/ORDER BY gasto DESC/);
+    // Un alias decidido se excluye sea un producto, descartado o dejado aparte.
+    assert.match(cola.sql,/LEFT JOIN producto_alias a ON a\.clave = l\.clave/);
+    assert.match(cola.sql,/WHERE a\.clave IS NULL/);
+    assert.match(cola.sql,/COALESCE\(l\.clave,''\) <> ''/);
   });
-
-  test("la COLA se puede acotar a un local, pero el diccionario sigue siendo único", () => {
-    // Un producto es el mismo en Blanes y en Lloret —de eso va unificar, de poder comparar el
-    // precio entre locales—; lo que se acota es el trabajo de revisar, no lo decidido.
-    const fn = server.slice(server.indexOf('app.get("/api/facturas/diccionario"'), server.indexOf('app.post("/api/facturas/diccionario"'));
-    assert.match(fn, /if \(local\) \{ cond\.push\("f\.local = ANY\(\?\)"\); par\.push\(comprasDe\(local\)\); \}/);
-    // La lista de productos canónicos NO lleva filtro de local.
-    const listaProductos = fn.slice(fn.indexOf("FROM productos_canonicos"), fn.indexOf("FROM productos_canonicos") + 300);
-    assert.doesNotMatch(listaProductos, /f\.local/);
+  test("la COLA y cobertura comparten ámbito; el diccionario sigue siendo único", async () => {
+    const consultas=await ejecutarCola(['Girona','Lloret']);
+    const cola=consultas[0],canonicos=consultas.find(c=>c.sql.includes('FROM productos_canonicos'));
+    const coberturaSQL=consultas.find(c=>c.sql.includes('SELECT SUM(l.importe)'));
+    for(const c of [cola,coberturaSQL]){
+      assert.match(c.sql,/f\.local = ANY\(\?\)/);assert.match(c.sql,/f\.fecha >= \?/);
+      assert.deepEqual(JSON.parse(JSON.stringify(c.params)),[['Girona','Lloret'],'2026-11-01']);
+    }
+    assert.doesNotMatch(canonicos.sql,/f\.local/);assert.equal(canonicos.params.length,0);
   });
 
   test("«dejar aparte» se guarda, para que no vuelva a preguntar", () => {

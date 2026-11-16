@@ -33,7 +33,7 @@ export function crearDecisionesHistorico({transaccion,prepararFecha=async()=>nul
     }
     const datos={...cabeceraHistorica(cambios),nif_proveedor:cambios.nif};
     if(!datos.proveedor?.trim()||!['factura','ticket','albaran','otro'].includes(datos.tipo)||!/^\d{4}-\d{2}-\d{2}$/.test(datos.fecha||'')||!Number.isFinite(Date.parse(datos.fecha))||new Date(datos.fecha).toISOString().slice(0,10)!==datos.fecha)throw fallo('Comprueba proveedor, tipo y fecha de emisión');
-    const avisos=controlesLectura(datos);
+    const avisos=controlesLectura({...antes,...datos});
     if(avisos.length && body.excepcion!==true)throw fallo('Persisten avisos. Comprueba el original y confirma la excepción: '+avisos.map(a=>a.texto).join(' '));
     const sets=CAMPOS_HISTORICO.map(k=>`${k}=?`),vals=CAMPOS_HISTORICO.map(k=>datos[k]);
     if(origen==='factura'){

@@ -29,7 +29,7 @@ export async function agregarLineaManual({id,body,transaccion,puedeAcceder,autor
  if(!Number.isSafeInteger(id)||id<=0)throw error('Documento no válido.');
  const l=prepararLineaManual(body);
  return transaccion(async db=>{
-  const f=await db.get('SELECT id,local,tipo,base_imponible::float AS base_imponible FROM facturas WHERE id=? FOR UPDATE',[id]);
+  const f=await db.get('SELECT id,local,tipo,cuota_iva,lineas_iva_incluido,cargos_base,base_imponible::float AS base_imponible FROM facturas WHERE id=? FOR UPDATE',[id]);
   if(!f)throw error('Factura no encontrada.',404);
   if(!puedeAcceder(f.local))throw error('No puedes modificar ese establecimiento.',403);
   const anteriores=await db.all('SELECT id,orden,importe::float AS importe,dudosa FROM factura_lineas WHERE factura_id=? ORDER BY id',[id]);
@@ -37,7 +37,7 @@ export async function agregarLineaManual({id,body,transaccion,puedeAcceder,autor
   const orden=Math.max(0,...anteriores.map(x=>Number(x.orden)||0))+1;
   const creada=await db.get(`INSERT INTO factura_lineas(factura_id,orden,descripcion,cantidad,unidad,precio_unitario,importe,dudosa,clave,creado_en)
    VALUES(?,?,?,?,?,?,?,FALSE,?,?) RETURNING id`,[id,orden,l.descripcion,l.cantidad,l.unidad,l.precio_unitario,l.importe,l.clave,ahora]);
-  const v=validarSuma([...anteriores,{importe:l.importe,dudosa:false}],f.base_imponible,f.tipo);
+  const v=validarSuma([...anteriores,{importe:l.importe,dudosa:false}],f.base_imponible,f.tipo,f);
   await db.run('UPDATE facturas SET lineas_estado=?,lineas_aviso=? WHERE id=?',[v.motivo==='sin_valorar'?'sin_valorar':v.cuadra?(v.dudosas?'dudas':'ok'):'descuadre',mensajeValidacion(v),id]);
   const {lineas_actuales,...detalle}=l;
   await db.run(`INSERT INTO fic_auditoria(entidad,entidad_id,accion,local,autor,detalle,creado_en) VALUES(?,?,?,?,?,?,?)`,['facturas',id,'linea_anadida',f.local,autor,JSON.stringify({...detalle,linea_id:creada.id}),ahora]);

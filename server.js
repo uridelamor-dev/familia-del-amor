@@ -1,3 +1,6 @@
+import {validarCargosBase,leerCargosBase} from './src/modules/facturas/cargos-base.js';
+import {conciliarDocumentos} from './src/modules/facturas/conciliar-decision.js';
+import {nifsConfirmados} from './src/modules/facturas/identidad-confirmada.js';
 import {recordarProveedorRevision} from './src/modules/facturas/aprendizaje-revision.js';
 import {guardarDeshacerRevision,deshacerRevision} from './src/modules/facturas/deshacer-revision.js';
 import { criterioFechaCompras, RECEPCION_REAL_SQL, RECEPCION_SQL, DIA_RECEPCION_SQL } from './src/modules/facturas/fecha-listado.js';
@@ -52,6 +55,7 @@ import { recuperarRespuestaAutorizada } from './src/modules/messaging/recuperaci
 import { rutasTienda } from "./src/modules/tienda/rutas.js";
 import { tiendaDemoPersistente } from "./src/modules/tienda/preparar.js";
 import {normalizarCentroBlanes} from "./src/modules/facturas/centro-blanes.js";
+import {ajustesFiscales} from './src/modules/facturas/ajustes-fiscales.js';
 import {IVA_SCHEMA,validarIva,repasarIva,porcentajeDeIvaValidado} from './src/modules/facturas/iva.js';
 import {DRIVE_SYNC_SCHEMA,configurarBloqueoDrive} from './src/modules/facturas/drive-sync.js';
 import {periodoPago, aplicarPagosEmpresa, pagoPorEmpresa} from './src/modules/facturas/pago-empresa.js';
@@ -99,7 +103,7 @@ import { execSync, execFileSync } from "child_process";
 import zlib from "zlib";
 import { initWhatsApp, sendConfirmacionCliente, sendConfirmacionPendienteCliente, sendCancelacionCliente, sendMensajeLibre, sendDocumentoLibre, sendMediaLibre, sendNotificacionGrupo, sendNotificacionGrupoPendiente, sendCancelacionGrupo, getGroups, isReady, getQRImage, forceReconnect, setOnReserva, setOnReady, setOnMessage, setAtencionEntrada, recuperarEntradaSinAtender, setEntradaDiferidaPermitida, setHistorialLoader, setCampanaLoader, markAwaitingFollowup, setPerfilLoader, setOnMensajeSaliente, setOnActualizarPerfil, setOnPausarIA, olvidarSesion as olvidarSesionWA, addSaraToHistorial, setOnGroupAttachment, setGrupoFacturasPermitido, sendMensajeAGrupo, sendDocumentoAGrupo, setSaraConfigLoader, setGuardarAdjunto, setDocumentoResolver, setCarnetResolver, setReservaLoader, setOnCancelarReserva, setOnModificarReserva, sendModificacionGrupo, setOnContactoLead, setTelefonoInterno, setSeguimientoResolver, numeroTieneWhatsApp } from "./whatsapp.js";
 import Anthropic from "@anthropic-ai/sdk";
-import { procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, archivarPaginasFactura, guardarLineas, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
+import { comprobarRevisionHumana, procesarFactura as procesarFacturaOriginal, procesarFacturaSinLocal as procesarFacturaSinLocalOriginal, asignarFacturaPendiente, combinarArchivosEnPdf, archivarPaginasFactura, guardarLineas, leerIvaOriginal, releerLineasFactura, proveedorConLineas, FacturaDuplicadaError, migrarEstructuraDrive, reconstruirSheetMaestro, resincronizarSheetsFactura, repararTodosLosSheets, reproyectarPendientes, idDeDriveUrl, condicionesDePago, reubicarEnDrive } from "./facturas.js";
 import { indexarHistorialProveedor, sugerirLocalPendiente } from "./src/modules/facturas/asignacion.js";
 // Núcleo técnico portado a PostgreSQL (seguridad 1A, modelo de establecimientos, enforcement).
 import { isProduction, replitEnvWarning, resolveJwtSecret, errorHandler, isAllowedCvUpload, safeUploadName, finalizeCvUpload, CV_MAX_BYTES } from "./security.js";
@@ -358,7 +362,7 @@ import { canonizarLocal, esLocalCanonico, agruparNoCanonicos, LOCALES as LOCALES
 import { nombresDeLaCasa, noEsProducto } from "./src/modules/facturas/no-es-producto.js";
 import { repasarLote, resumenRepaso, pideRelecturaDeLineas, esAlcanceValido, ALCANCES_REPASO, VERSION_LINEAS } from "./src/modules/facturas/repaso.js";
 import { fusionarCompras } from "./src/modules/facturas/compras-fusion.js";
-import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones, vencimientoManualValido } from "./src/modules/facturas/vencimiento.js";
+import { agruparPagos, agruparRecibos, resumenPagos, calcularVencimiento, estadoPago, textoCondiciones, vencimientoManualValido, vencimientoFijado, origenVencimientoEditado } from "./src/modules/facturas/vencimiento.js";
 import { crearZip, nombreDeFactura } from "./src/modules/facturas/zip.js";
 import { repartirImporte, pesosPorVentas, textoReparto, imputarGastoEmpresa } from "./src/modules/facturas/reparto.js";
 import { mensajeDeErrorIA, seCorto } from "./src/modules/ia/errores.js";
@@ -462,6 +466,7 @@ const paginasFacturas=crearPaginas({db:{get:dbGet,all:dbAll,run:dbRun},transacci
 });
 // Una sola lectura externa a la vez; el original ya está guardado si el trabajador está ocupado.
 const recepcionFacturas = crearRecepcion({
+  validarRevision: datos=>comprobarRevisionHumana(datos,{dbAll}),
   antesProcesar: f=>paginasFacturas.antes(f),
   db: {get:dbGet,run:dbRun,all:dbAll},
   lock: async (_hash, fn) => {
@@ -522,7 +527,7 @@ const decidirRepasoHistorico=crearDecisionesHistorico({
   try{await c.query('BEGIN');const resultado=await fn(db);await c.query('COMMIT');return resultado;}
   catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
  },
- prepararFecha:async(db,f,fecha)=>f.vencimiento_origen==='factura'?null:calcularVencimiento({fecha,vencimientoLeido:null,condiciones:await condicionesDePago(db.get,f.proveedor,f.empresa)})
+ prepararFecha:async(db,f,fecha)=>vencimientoFijado(f)?null:calcularVencimiento({fecha,vencimientoLeido:null,condiciones:await condicionesDePago(db.get,f.proveedor,f.empresa)})
 });
 const procesarFactura = o => recepcionFacturas.recibir({...o,canal:o.canal || "WhatsApp"});
 const procesarFacturaSinLocal = o => recepcionFacturas.recibir(o);
@@ -1265,6 +1270,7 @@ async function initDB() {
     try { await client.query(`CREATE INDEX IF NOT EXISTS idx_prov_alias_nif ON facturas_proveedor_alias(nif) WHERE nif IS NOT NULL`); }
     catch (e) { console.error("[DB] idx_prov_alias_nif:", e.message); }
 
+    await client.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS cargos_base JSONB`);
     // Descuento por línea. Muchas facturas traen «IMPORTE» (bruto) y «TOTAL» (lo que se paga):
     // guardando solo el bruto, «Qué compramos» decía un precio que nadie paga y el seguimiento
     // de subidas comparaba tarifas en vez de lo pagado.
@@ -1312,7 +1318,7 @@ async function initDB() {
     // `vencimiento`: cuándo hay que pagar. `vencimiento_origen` dice de dónde salió —del papel
     // o calculado con lo pactado— y no es un adorno: si cambian las condiciones del proveedor,
     // se recalculan las calculadas y NO se tocan las que traía escritas la factura.
-    for (const col of ["lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT", "lineas_version INTEGER", "drive_thumb TEXT",
+    for (const col of ["lineas_iva_incluido BOOLEAN NOT NULL DEFAULT FALSE", "lineas_estado TEXT", "lineas_aviso TEXT", "lineas_leidas_en TEXT", "lineas_version INTEGER", "drive_thumb TEXT",
       "vencimiento TEXT", "vencimiento_origen TEXT",
       // Cuántas veces ha fallado la lectura del detalle. Sin esto, un fallo pasajero —la IA
       // saturada dos minutos— marcaba la factura como ilegible para el resto de su vida.
@@ -3239,7 +3245,7 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS total,
               count(*) FILTER (WHERE ${SIN_ALBARANES} AND (base_imponible IS NULL OR cuota_iva IS NULL))::int AS desglose_incompleto,
               count(*) FILTER (WHERE ${SIN_ALBARANES} AND total IS NULL)::int AS total_ausente,
-              count(*) FILTER (WHERE ${SIN_ALBARANES} AND base_imponible IS NOT NULL AND cuota_iva IS NOT NULL AND total IS NOT NULL AND ABS(total-base_imponible-cuota_iva)>0.02)::int AS desglose_diferente,
+              count(*) FILTER (WHERE ${SIN_ALBARANES} AND base_imponible IS NOT NULL AND cuota_iva IS NOT NULL AND total IS NOT NULL AND ABS(total-base_imponible-cuota_iva-COALESCE(recargo_equivalencia,0)-COALESCE(otros_cargos,0)+COALESCE(retencion,0))>0.02)::int AS desglose_diferente,
               count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0)::int AS pendientes,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0),0)::float AS por_pagar,
               count(*) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0)=0 AND pago_automatico=1)::int AS automaticas,
@@ -3256,7 +3262,10 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
          FROM facturas ${where}`, // OJO con el orden: los «?» se numeran por su sitio en el SQL, y estos van ANTES del WHERE.
       [hoyISO(), hoyISO(), hoyISO(), hoyMas(7), hoyISO(), hoyMas(7), ...params]);
     await cargarDistintivos(rows,dbAll);
-    res.json({ ok: true, data: revisarFacturas(rows, hoyMad), totales: t || null, hayMas: (t?.docs || 0) > rows.length });
+    // La lista incluye albaranes aunque sus importes se excluyan del resumen fiscal.
+    // Comparar solo `docs` ocultaba la continuación de listas mixtas de más de 500.
+    const documentos = Number(t?.docs || 0) + Number(t?.albaranes || 0);
+    res.json({ ok: true, data: revisarFacturas(rows, hoyMad), totales: t || null, hayMas: documentos > rows.length });
   } catch (e) { res.status(500).json({ ok: false, error: e.message, data: [] }); }
 });
 
@@ -3269,8 +3278,10 @@ registrarMemoria(app,{auth:requireAuth(['direccion','contabilidad']),dbAll,dbGet
 app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const antes = await dbGet("SELECT * FROM facturas WHERE id = ?", [req.params.id]);
-    const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "local", "empresa", "pagado", "periodo_facturado", "vencimiento"];
-    if(!vencimientoManualValido(req.body.vencimiento))return res.status(400).json({ok:false,error:'Introduce una fecha de vencimiento válida, comprobada en el original.'});
+    const allowed = ["proveedor", "nif", "concepto", "fecha", "numero_factura", "tipo", "base_imponible", "porcentaje_iva", "cuota_iva", "total", "recargo_equivalencia", "retencion", "otros_cargos", "local", "empresa", "pagado", "periodo_facturado", "vencimiento", "lineas_iva_incluido", "cargos_base"];
+    if(req.body.lineas_iva_incluido !== undefined && (typeof req.body.lineas_iva_incluido !== 'boolean' || req.body.confirmar_iva_lineas !== true))
+      return res.status(400).json({ok:false,error:'Confirma en el original si los precios incluyen IVA.'});
+    if(!vencimientoManualValido(req.body.vencimiento))return res.status(400).json({ok:false,error:'Introduce una fecha de vencimiento válida.'});
     // Corregir a mano tampoco puede colar un local que no existe: es la otra puerta por la
     // que entraron los «Lloret» y «BLANES» sueltos.
     if (req.body.local !== undefined && String(req.body.local || "").trim()) {
@@ -3282,6 +3293,11 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
     if(!antes)return res.status(404).json({error:'Factura no encontrada'});
     if(!puedeAccederLocal(req,antes.local))return res.status(403).json({error:'Sin acceso a esta factura'});
     if(req.body.local&&!puedeAccederLocal(req,req.body.local))return res.status(403).json({error:'Sin acceso al local de destino'});
+    if(req.body.cargos_base!==undefined){
+      try {req.body.cargos_base=validarCargosBase(req.body.cargos_base);}
+      catch(e){return res.status(400).json({error:e.message});}
+      if(JSON.stringify(leerCargosBase(antes.cargos_base))!==JSON.stringify(req.body.cargos_base_antes))return res.status(409).json({error:'Los cargos han cambiado. Vuelve a abrir el detalle antes de guardar.'});
+    }
     let reglaLocal;
     if(req.body.recordar_local===true){
       if(!contabilidadGlobal(req.user))return res.status(403).json({error:'Guardar reglas compartidas requiere acceso a todos los locales de Contabilidad.'});
@@ -3289,6 +3305,7 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
       try{reglaLocal=prepararReglaLocal({...antes,...req.body},establecimientos,req.user.nombre||req.user.username);}
       catch(e){return res.status(400).json({error:e.message});}
     }
+    try{ajustesFiscales({...antes,...req.body});}catch(e){return res.status(400).json({error:e.message});}
     let ivaValidado;
     if(req.body.iva_desglose!==undefined) {
       ivaValidado=validarIva(req.body.iva_desglose,{...antes,...req.body});
@@ -3296,17 +3313,17 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
       req.body.porcentaje_iva=porcentajeDeIvaValidado(ivaValidado);
     }
     const sets = [], vals = [];
-    for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(req.body[k] === "" ? null : req.body[k]); }
+    for (const k of allowed) if (req.body[k] !== undefined) { sets.push(`${k} = ?`); vals.push(k==='cargos_base'?JSON.stringify(req.body[k]):req.body[k] === "" ? null : req.body[k]); }
     if(ivaValidado) {
       sets.push('iva_desglose = ?', "iva_estado = 'manual'", 'iva_aviso = NULL');vals.push(JSON.stringify(ivaValidado.partes));
-    } else if(['base_imponible','cuota_iva','total'].some(k=>req.body[k]!==undefined && Number(req.body[k])!==Number(antes[k]))) {
+    } else if(['base_imponible','cuota_iva','total','recargo_equivalencia','retencion','otros_cargos'].some(k=>req.body[k]!==undefined && Number(req.body[k])!==Number(antes[k]))) {
       sets.push("iva_estado = 'revisar'", "iva_aviso = 'Importes modificados: revisa el desglose de IVA.'");
     }
     if(!sets.length&&(reglaLocal||req.body.confirmar_avisos===true))sets.push('id=id');
     if (!sets.length) return res.json({ ok: true });
     if(req.body.pagado !== undefined) sets.push("pago_origen='manual'", "pago_automatico=0");
     if(req.body.periodo_facturado !== undefined) sets.push("periodo_origen='manual'");
-    if(req.body.vencimiento !== undefined) sets.push(req.body.vencimiento ? "vencimiento_origen='factura'" : "vencimiento_origen=NULL");
+    if(req.body.vencimiento !== undefined) { sets.push('vencimiento_origen=?'); vals.push(origenVencimientoEditado(antes,req.body.vencimiento)); }
     vals.push(req.params.id);
     const client=await pool.connect();
     try{
@@ -3318,8 +3335,22 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
       }
       const run=async(sql,p)=>(await client.query(toPositional(sql),p)).rows[0];
       await run(`UPDATE facturas SET ${sets.join(", ")}, sheet_synced = 0 WHERE id = ?`,vals);
+      if(['lineas_iva_incluido','base_imponible','cuota_iva','tipo','cargos_base'].some(k=>req.body[k]!==undefined)) {
+        const actual=(await client.query('SELECT * FROM facturas WHERE id=$1',[req.params.id])).rows[0];
+        const lineas=(await client.query('SELECT importe::float AS importe,dudosa FROM factura_lineas WHERE factura_id=$1',[req.params.id])).rows;
+        // Corregir la cabecera actualiza el aviso del detalle ya leído, incluso en abonos.
+        // No convertir una factura todavía sin detalle (o no aplicable) en un descuadre.
+        if(lineas.length || req.body.cargos_base!==undefined || req.body.lineas_iva_incluido!==undefined || ['ok','dudas','descuadre','sin_valorar'].includes(actual.lineas_estado)) {
+          const v=validarSuma(lineas,actual.base_imponible,actual.tipo,actual);
+          await run('UPDATE facturas SET lineas_estado=?,lineas_aviso=? WHERE id=?',[v.motivo==='sin_valorar'?'sin_valorar':v.cuadra?(v.dudosas?'dudas':'ok'):'descuadre',mensajeValidacion(v),req.params.id]);
+        }
+      }
+      if(req.body.cargos_base!==undefined)await run('INSERT INTO fic_auditoria(entidad,entidad_id,accion,local,autor,detalle,creado_en) VALUES(?,?,?,?,?,?,?)',['facturas',Number(req.params.id),'cargos_base',antes.local,req.user.nombre||req.user.username,JSON.stringify({antes:leerCargosBase(antes.cargos_base),despues:req.body.cargos_base}),isoConOffset(Date.now())]);
       if(reglaLocal)await guardarReglaLocal(run,reglaLocal);
-      await recordarProveedorRevision((sql,p)=>client.query(sql,p),{...antes,...req.body},req.user.username||req.user.nombre);
+      // Guardar importes o concepto no confirma una identidad OCR. Aprender solo cuando
+      // la persona ha cambiado el NIF; cambiar solo el nombre no confirma el CIF leído.
+      if(req.body.nif!==undefined && String(req.body.nif??'').replace(/[\s.\-/]/g,'').toUpperCase()!==String(antes.nif??'').replace(/[\s.\-/]/g,'').toUpperCase())
+        await recordarProveedorRevision((sql,p)=>client.query(sql,p),{...antes,...req.body},req.user.username||req.user.nombre);
       if(req.body.confirmar_avisos===true){
         const actual=(await client.query('SELECT * FROM facturas WHERE id=$1',[req.params.id])).rows[0];
         let avisos=[];try{avisos=JSON.parse(antes.revisar||'[]');}catch{}
@@ -3373,7 +3404,7 @@ app.post("/api/facturas/:id/fecha", requireAuth(["direccion", "contabilidad"]), 
     // 1. El dato. Y con él, el vencimiento — salvo que se leyera del papel, porque entonces es
     //    un hecho del documento y no una cuenta nuestra.
     let venc = { vencimiento: f.vencimiento, origen: f.vencimiento_origen };
-    if (f.vencimiento_origen !== "factura") {
+    if (!vencimientoFijado(f)) {
       venc = calcularVencimiento({ fecha, vencimientoLeido: null,
         condiciones: await condicionesDePago(dbGet, f.proveedor, f.empresa) });
     }
@@ -3445,18 +3476,18 @@ async function facturasCsv(req, res) {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isFinite).slice(0, 5000) : null;
   if (ids && ids.length) {
     rows = await dbAll(
-      `SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado
+      `SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado, recargo_equivalencia, retencion, otros_cargos
        FROM facturas WHERE id = ANY(?::int[]) ${scope ? "AND local = ?" : ""} ORDER BY fecha DESC NULLS LAST`,
       scope ? [ids, scope] : [ids]);
   } else {
     const { where, params } = facturasWhere(await facturasQueryCategorias(scope ? { ...req.query, local: scope } : req.query));
-    rows = await dbAll(`SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado FROM facturas ${where} ORDER BY fecha DESC NULLS LAST LIMIT 5000`, params);
+    rows = await dbAll(`SELECT fecha, numero_factura, tipo, proveedor, nif, concepto, base_imponible, porcentaje_iva, cuota_iva, total, local, empresa, pagado, recargo_equivalencia, retencion, otros_cargos FROM facturas ${where} ORDER BY fecha DESC NULLS LAST LIMIT 5000`, params);
   }
   // Punto y coma y BOM, como el registro de jornada: es lo que Excel en español abre a la
   // primera. Con coma, un concepto con decimales parte la fila.
-  const header = ["Fecha", "Numero", "Tipo", "Proveedor", "NIF", "Concepto", "Base", "IVA%", "Cuota", "Total", "Local", "Empresa", "Pagado"];
+  const header = ["Fecha", "Numero", "Tipo", "Proveedor", "NIF", "Concepto", "Base", "IVA%", "Cuota", "Total", "Local", "Empresa", "Pagado", "Recargo equivalencia", "Retención", "Otros cargos"];
   const c = (v) => { const s = String(v ?? ""); return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const lines = rows.map((r) => [r.fecha, r.numero_factura, r.tipo, r.proveedor, r.nif, r.concepto, r.base_imponible, r.porcentaje_iva, r.cuota_iva, r.total, r.local, r.empresa, r.pagado ? "Sí" : "No"].map(c).join(";"));
+  const lines = rows.map((r) => [r.fecha, r.numero_factura, r.tipo, r.proveedor, r.nif, r.concepto, r.base_imponible, r.porcentaje_iva, r.cuota_iva, r.total, r.local, r.empresa, r.pagado ? "Sí" : "No", r.recargo_equivalencia, r.retencion, r.otros_cargos].map(c).join(";"));
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="facturas${ids && ids.length ? "-seleccion" : ""}.csv"`);
   res.send("﻿" + [header.join(";"), ...lines].join("\r\n") + "\r\n");
@@ -5815,6 +5846,7 @@ async function comprasDeLocal(query, local) {
          COALESCE('p:' || a.producto_id::text, l.clave) AS clave,
          (array_agg(COALESCE(p.nombre, l.descripcion) ORDER BY f.fecha DESC, l.id DESC))[1] AS descripcion,
          bool_or(a.producto_id IS NOT NULL) AS unificado,
+         bool_or(COALESCE(f.lineas_iva_incluido,FALSE)) AS iva_incluido,
          array_agg(DISTINCT f.proveedor) AS proveedores,
          count(*)::int AS veces,
          count(*) FILTER (WHERE l.dudosa)::int AS dudosas,
@@ -5904,7 +5936,7 @@ async function comprasDeLocal(query, local) {
       grupos,
       lineas: sueltas,
       totales: {
-        importe: Math.round(grupos.reduce((s, g) => s + g.importe, 0) * 100) / 100,
+        importe: grupos.some(g=>g.ivaIncluido) ? null : Math.round(grupos.reduce((s, g) => s + g.importe, 0) * 100) / 100,
         productos: grupos.length,
       },
       // Los albaranes que ya trae su factura y por eso no se cuentan dos veces.
@@ -6008,7 +6040,7 @@ app.get("/api/facturas/diccionario", requireAuth(["direccion", "contabilidad"]),
       cola,
       productos,
       cobertura: cobertura(resueltos, pendientes),
-      local: local || null,
+      local: req.query.local ? canonizarLocal(String(req.query.local)) : null,
       hayMas: pendientes.length >= 200,
     });
   } catch (e) {
@@ -6339,7 +6371,7 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
               l.precio_unitario::float AS precio_unitario, l.importe::float AS importe, l.dudosa,
               l.precio_bruto::float AS precio_bruto, l.descuento_pct::float AS descuento_pct,
               l.factor_unidad::float AS factor_unidad,
-              f.id AS factura_id, f.fecha, f.proveedor, f.local, f.numero_factura, f.drive_url
+              f.id AS factura_id, f.fecha, f.proveedor, f.local, f.numero_factura, f.drive_url, f.lineas_iva_incluido
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id
         WHERE ${cond.join(" AND ")}
         ORDER BY f.fecha DESC NULLS LAST, f.id DESC LIMIT 500`, par);
@@ -6353,14 +6385,16 @@ app.get("/api/facturas/compras/producto", requireAuth(["direccion", "contabilida
     const canonico = unificado ? await dbGet("SELECT nombre FROM productos_canonicos WHERE id = ?", [Number(unificado[1])]) : null;
     const nombre = canonico?.nombre || [...cuenta.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || req.query.clave;
 
-    const conPrecio = compras.filter((c) => c.precio_unitario != null);
+    const conIvaIncluido = compras.some(c => c.lineas_iva_incluido);
+    const conPrecio = conIvaIncluido ? [] : compras.filter((c) => c.precio_unitario != null);
     res.json({
       ok: true, clave, nombre, compras,
       nombres: [...cuenta.keys()],
       resumen: {
         veces: compras.length,
         cantidad: compras.reduce((s2, c) => s2 + (Number(c.cantidad) || 0), 0),
-        importe: Math.round(compras.reduce((s2, c) => s2 + (Number(c.importe) || 0), 0) * 100) / 100,
+        ivaIncluido: conIvaIncluido,
+        importe: conIvaIncluido ? null : Math.round(compras.reduce((s2, c) => s2 + (Number(c.importe) || 0), 0) * 100) / 100,
         proveedores: [...new Set(compras.map((c) => c.proveedor).filter(Boolean))],
         precioMin: conPrecio.length ? Math.min(...conPrecio.map((c) => c.precio_unitario)) : null,
         precioMax: conPrecio.length ? Math.max(...conPrecio.map((c) => c.precio_unitario)) : null,
@@ -6491,7 +6525,7 @@ app.put("/api/facturas/proveedor-pago", requireAuth(["direccion", "contabilidad"
     // no una por factura.
     const candidatas = await dbAll(
       `SELECT id, fecha, proveedor, empresa FROM facturas
-        WHERE COALESCE(pagado,0) = 0 AND COALESCE(vencimiento_origen,'') <> 'factura'
+        WHERE COALESCE(pagado,0) = 0 AND COALESCE(vencimiento_origen,'') NOT IN ('factura','manual')
           AND proveedor IS NOT NULL AND proveedor <> ''`, []);
 
     // Cada factura coge la regla de SU empresa (o la general si esa empresa no tiene la suya),
@@ -7006,40 +7040,14 @@ app.delete("/api/facturas/:id/descartar/:albaranId", requireAuth(["direccion", "
 
 app.post("/api/facturas/:id/conciliar", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const f = await dbGet(`SELECT id, local, proveedor, total::float AS total FROM facturas WHERE id = ?`, [req.params.id]);
-    if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
-    if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
-    const ids = Array.isArray(req.body?.albaranes) ? req.body.albaranes.map(Number).filter(Boolean) : [];
-    const quien = req.user.nombre || req.user.username;
-
-    if (!ids.length) {   // deshacer
-      await dbRun(`UPDATE facturas SET conciliado_con = NULL, conciliado_por = NULL, conciliado_en = NULL WHERE id = ?`, [f.id]);
-      await dbRun(`UPDATE facturas SET conciliado_con = NULL WHERE conciliado_con = ?`, [String(f.id)]).catch(() => {});
-      await ficAuditar("facturas", f.id, "conciliacion_deshecha", quien, { local: f.local });
-      await dbRun("INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",['facturas_anuales_reintentar',String(Date.now())]);
-      return res.json({ ok: true, mensaje: "Conciliación deshecha." });
-    }
-    // Un albarán solo puede pertenecer a UNA factura: si no, se pagaría dos veces lo mismo.
-    // Los que ya estaban ligados a ESTA factura no cuentan: se está reenviando la lista entera
-    // para añadir uno nuevo, que es como se completa una conciliación a medias.
-    const yaUsados = (await dbAll(`SELECT id, conciliado_con FROM facturas WHERE id = ANY(?) AND conciliado_con IS NOT NULL`, [ids]))
-      .filter((a) => String(a.conciliado_con) !== String(f.id));
-    if (yaUsados.length) {
-      return res.status(409).json({ ok: false, error: `Ya hay ${yaUsados.length} albarán(es) conciliados con otra factura. Deshaz esa conciliación primero.` });
-    }
-    // Los que estaban ligados a esta factura y ya no vienen en la lista se sueltan: es como se
-    // descarta uno que se había propuesto por error.
-    await dbRun(`UPDATE facturas SET conciliado_con = NULL WHERE conciliado_con = ? AND NOT (id = ANY(?))`,
-      [String(f.id), ids]).catch(() => {});
-    await dbRun(`UPDATE facturas SET conciliado_con = ?, conciliado_por = ?, conciliado_en = ? WHERE id = ?`,
-      [JSON.stringify(ids), quien, isoConOffset(Date.now()), f.id]);
-    await dbRun(`UPDATE facturas SET conciliado_con = ? WHERE id = ANY(?)`, [String(f.id), ids]);
-    await ficAuditar("facturas", f.id, "conciliada", quien, { local: f.local, detalle: { albaranes: ids, total: f.total } });
-    await dbRun("INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",['facturas_anuales_reintentar',String(Date.now())]);
-    res.json({ ok: true, mensaje: `Conciliada con ${ids.length} albarán(es).` });
-  } catch (e) {
-    console.error("[facturas] conciliar:", e.message);
-    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+    const resultado=await conciliarDocumentos({transaccion:transaccionPaginas,
+      puedeAcceder:local=>puedeAccederLocal(req,local),autor:req.user.nombre||req.user.username,
+      ahora:()=>isoConOffset(Date.now())},req.params.id,req.body?.albaranes);
+    res.json(resultado);
+  } catch(e) {
+    if(e.status)return res.status(e.status).json({ok:false,error:e.message});
+    console.error("[facturas] conciliar:",e.message);
+    res.status(500).json({ok:false,error:"No se pudo guardar. No se ha cambiado la conciliación."});
   }
 });
 
@@ -7369,11 +7377,12 @@ app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilid
  * Es lo que hace que la etiqueta de «descuadre» desaparezca sola al arreglar lo que estaba mal.
  * Sin esto, la factura se quedaría marcada para siempre y nadie volvería a mirarla.
  */
-async function recalcularCuadre(facturaId, baseImponible) {
-  const lineas = await dbAll(`SELECT importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ?`, [facturaId]);
-  const documento=await dbGet("SELECT tipo FROM facturas WHERE id=?",[facturaId]);
-  const v = validarSuma(lineas, baseImponible,documento?.tipo);
-  await dbRun(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ? WHERE id = ?`,
+async function recalcularCuadre(facturaId, baseImponible, deps = {dbAll,dbGet,dbRun}) {
+  const {dbAll:leerTodas,dbGet:leerUna,dbRun:escribir}=deps;
+  const lineas = await leerTodas(`SELECT importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ?`, [facturaId]);
+  const documento=await leerUna("SELECT tipo,cuota_iva,lineas_iva_incluido,cargos_base FROM facturas WHERE id=?",[facturaId]);
+  const v = validarSuma(lineas, baseImponible,documento?.tipo,documento);
+  await escribir(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ? WHERE id = ?`,
     [v.motivo === "sin_valorar" ? "sin_valorar" : v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", mensajeValidacion(v), facturaId]);
   return v;
 }
@@ -7404,7 +7413,7 @@ app.delete("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"]
       { local: l.local, detalle: { descripcion: l.descripcion, importe: l.importe } });
 
     const v = await recalcularCuadre(l.factura_id, l.base_imponible);
-    res.json({ ok: true, suma: v.suma, base: v.base, diferencia: v.diferencia ?? 0, cuadra: !!v.cuadra });
+    res.json({ ok: true, suma: v.suma, base: v.base, diferencia: v.diferencia, referencia:v.referencia, iva_incluido:v.iva_incluido, cuadra: !!v.cuadra });
   } catch (e) {
     console.error("[facturas] borrar línea:", e.message);
     res.status(500).json({ ok: false, error: "No se pudo borrar" });
@@ -7420,29 +7429,35 @@ app.post('/api/facturas/:id/lineas', requireAuth(['direccion','contabilidad']), 
 
 app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
+    const resultado=await transaccionPaginas(async tx=>{
+    const dbGet=tx.get,dbAll=tx.all,dbRun=tx.run;
+    const fallo=(status,error)=>{throw Object.assign(new Error(error),{status});};
     const id = Number(req.params.id);
-    if (!Number.isInteger(id)) return res.status(400).json({ ok: false, error: "Falta la línea" });
+    if (!Number.isInteger(id)) fallo(400,"Falta la línea");
+    // Mismo orden de bloqueo que relectura: padre primero, luego detalle vigente.
+    const padre=await dbGet('SELECT f.id FROM facturas f WHERE f.id=(SELECT factura_id FROM factura_lineas WHERE id=?) FOR UPDATE',[id]);
+    if(!padre)fallo(409,'El detalle ha cambiado. Vuelve a abrir la factura antes de corregir.');
     const l = await dbGet(
       `SELECT l.id, l.unidad, l.descripcion, l.factor_unidad, l.cantidad::float AS cantidad, l.precio_unitario::float AS precio_unitario,
               l.importe::float AS importe, l.clave, f.id AS factura_id, f.proveedor, f.local,
               f.base_imponible::float AS base_imponible
          FROM factura_lineas l JOIN facturas f ON f.id = l.factura_id WHERE l.id = ?`, [id]);
-    if (!l) return res.status(404).json({ ok: false, error: "Esa línea ya no existe" });
-    if (!puedeAccederLocal(req, l.local)) return res.status(403).json({ ok: false, error: "No puedes tocar ese establecimiento" });
+    if (!l) fallo(409,"Esa línea ya no existe. Vuelve a abrir la factura.");
+    if (!puedeAccederLocal(req, l.local)) fallo(403,"No puedes tocar ese establecimiento");
 
     const num = (v) => { if (v === undefined || v === null || v === "") return null; const n = Number(String(v).replace(",", ".")); return Number.isFinite(n) ? n : null; };
     for (const campo of ['cantidad','importe','precio_unitario']) {
-      if (req.body?.[campo] !== undefined && (typeof req.body[campo] === 'boolean' || num(req.body[campo]) == null)) return res.status(400).json({ok:false,error:'Introduce un número válido; un dato vacío no confirma una corrección.'});
+      if (req.body?.[campo] !== undefined && (typeof req.body[campo] === 'boolean' || num(req.body[campo]) == null)) fallo(400,'Introduce un número válido; un dato vacío no confirma una corrección.');
     }
     const cantidad = num(req.body?.cantidad) ?? l.cantidad;
     const unidad = req.body?.unidad !== undefined ? (String(req.body.unidad || "").trim().slice(0, 20) || null) : undefined;
     const descripcion = req.body?.descripcion === undefined ? undefined : String(req.body.descripcion ?? '').trim();
-    if (descripcion !== undefined && (!descripcion || descripcion.length > 300)) return res.status(400).json({ok:false,error:'Escribe el nombre del producto, con un máximo de 300 caracteres.'});
-    if (descripcion !== undefined && req.body?.aplicar_a_todas) return res.status(400).json({ok:false,error:'Corrige primero el nombre de este producto antes de propagar cantidades.'});
+    if (descripcion !== undefined && (!descripcion || descripcion.length > 300)) fallo(400,'Escribe el nombre del producto, con un máximo de 300 caracteres.');
+    if (descripcion !== undefined && req.body?.aplicar_a_todas) fallo(400,'Corrige primero el nombre de este producto antes de propagar cantidades.');
     const importePedido = num(req.body?.importe);
     const precioPedido = num(req.body?.precio_unitario);
 
-    if (cantidad === 0) return res.status(400).json({ ok: false, error: "La cantidad no puede ser cero; usa una cantidad negativa si es una devolución." });
+    if (cantidad === 0) fallo(400,"La cantidad no puede ser cero; usa una cantidad negativa si es una devolución.");
 
     /**
      * QUÉ MANDA AL CORREGIR. Los tres números están atados —cantidad × precio = importe—, así
@@ -7458,7 +7473,7 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
     // El cotejo manual transcribe los tres valores del papel por separado. Puede haber
     // descuentos o redondeos del emisor que impidan deducir uno de los otros dos.
     const conservarOriginal = req.body?.conservar_original === true;
-    if (conservarOriginal && req.body?.aplicar_a_todas) return res.status(400).json({ok:false,error:'El cotejo del original solo se aplica a esta línea.'});
+    if (conservarOriginal && req.body?.aplicar_a_todas) fallo(400,'El cotejo del original solo se aplica a esta línea.');
     if (conservarOriginal) {
       if (importePedido != null) importe = importePedido;
       if (precioPedido != null) precio = precioPedido;
@@ -7476,13 +7491,15 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
     const factorGuardado = req.body?.cantidad === undefined ? l.factor_unidad : factor && factor > 1 && Number.isInteger(factor) ? factor : null;
     const unidadFinal = unidad === undefined ? l.unidad : unidad;
     const dudosa = cantidad == null || precio == null || importe == null || !unidadFinal;
-    await dbRun(
+    const actualizada=await dbGet(
       `UPDATE factura_lineas SET cantidad = ?, precio_unitario = ?, importe = ?,
               ${unidad !== undefined ? "unidad = ?," : ""}
               ${descripcion !== undefined ? "descripcion = ?, clave = ?," : ""}
-              factor_unidad = ?, dudosa = ? WHERE id = ?`,
+              factor_unidad = ?, dudosa = ? WHERE id = ? RETURNING id`,
       [cantidad, precio, importe, ...(unidad !== undefined ? [unidad] : []),
         ...(descripcion !== undefined ? [descripcion, claveProducto(descripcion)] : []), factorGuardado, dudosa, id]);
+
+    if(!actualizada)fallo(409,'La línea ya no existe. Recarga el detalle antes de guardar.');
 
     // Las demás compras del MISMO producto al MISMO proveedor, con el mismo factor. Se guarda
     // el factor y no la cantidad: si un mes pidieron 5 packs y otro 8, la cantidad buena es
@@ -7510,13 +7527,15 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
 
     }
 
-    const v = await recalcularCuadre(l.factura_id, l.base_imponible);
+    const v = await recalcularCuadre(l.factura_id, l.base_imponible,{dbGet,dbAll,dbRun});
 
-    res.json({ ok: true, cantidad, unidad:unidadFinal, descripcion:descripcion ?? l.descripcion, dudosa, precio_unitario: precio, importe, tambien,
-      suma: v.suma, base: v.base, diferencia: v.diferencia ?? 0, cuadra: !!v.cuadra });
+    return { ok: true, cantidad, unidad:unidadFinal, descripcion:descripcion ?? l.descripcion, dudosa, precio_unitario: precio, importe, tambien,
+      suma: v.suma, base: v.base, diferencia: v.diferencia, referencia:v.referencia, iva_incluido:v.iva_incluido, cuadra: !!v.cuadra };
+    });
+    res.json(resultado);
   } catch (e) {
     console.error("[facturas] corregir línea:", e.message);
-    res.status(500).json({ ok: false, error: "No se pudo corregir" });
+    res.status(e.status||500).json({ ok: false, error: e.status?e.message:"No se pudo corregir" });
   }
 });
 
@@ -7530,7 +7549,7 @@ app.patch("/api/facturas/lineas/:id", requireAuth(["direccion", "contabilidad"])
 async function releerTanda({ tanda = REL_TANDA, scope = null } = {}) {
   const n = Math.min(Math.max(Number(tanda) || REL_TANDA, 1), 40);
   const filas = await dbAll(
-    `SELECT id, tipo, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url,
+    `SELECT id, tipo, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, cargos_base, lineas_iva_incluido, cuota_iva, drive_url,
             COALESCE(lineas_intentos,0)::int AS intentos
        FROM facturas
       WHERE lineas_estado IS NULL AND drive_url IS NOT NULL ${scope ? "AND local = ?" : ""}
@@ -7551,11 +7570,14 @@ async function releerTanda({ tanda = REL_TANDA, scope = null } = {}) {
         resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, saltada: "gasto estructural" });
         continue;
       }
-      const r = await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbRun });
+      const r = await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbGet, dbAll, transaccion: transaccionPaginas });
       resultado.leidas += 1;
       if (r.aviso) resultado.conAviso += 1;
       resultado.detalles.push({ id: f.id, proveedor: f.proveedor, fecha: f.fecha, lineas: r.n, aviso: r.aviso || null });
     } catch (e) {
+      if(['CARGOS_BASE_REVISION_MANUAL','RELECTURA_MODIFICADA'].includes(e.codigo)){
+        resultado.saltadas++;resultado.detalles.push({id:f.id,proveedor:f.proveedor,fecha:f.fecha,saltada:e.message});continue;
+      }
       resultado.fallidas += 1;
       // ANTES cualquier fallo la marcaba como ilegible PARA SIEMPRE. Si la IA estaba saturada
       // dos minutos, esa factura se quedaba sin detalle el resto de su vida y nadie se
@@ -7694,7 +7716,7 @@ async function repasoLineasSiToca() {
 const REPASO_COLS = `id, local, tipo, fecha, numero_factura, proveedor, nif,
    base_imponible::float AS base_imponible, porcentaje_iva::float AS porcentaje_iva,
    cuota_iva::float AS cuota_iva, total::float AS total, dup_estado, dup_de, revisar,
-   lineas_estado, lineas_version, drive_url,
+   lineas_estado, lineas_version, drive_url, empresa, recargo_equivalencia, retencion, otros_cargos,
    -- Para poder repasar también la FECHA hacia atrás: la evidencia del PDF, cuándo llegó el
    -- documento y si el vencimiento se leyó del papel o lo calculamos nosotros.
    fecha_pistas, creado_en, vencimiento, vencimiento_origen, concepto`;
@@ -7709,7 +7731,8 @@ async function repasoCargar(scope,empresa="") {
                 ORDER BY id LIMIT ${REPASO_MAX}`, ambito.params);
   const decisiones=await dbAll("SELECT key,value FROM config WHERE key LIKE 'contabilidad_revision_%'");
   const mapa=new Map(decisiones.flatMap(r=>{try{return [[r.key,JSON.parse(r.value)]];}catch{return [];}}));
-  return filas.map(f=>({...f,avisos_aceptados:avisosAceptados(f,mapa.get('contabilidad_revision_'+f.id))}));
+  const fichas=await dbAll('SELECT clave,nif,proveedor,autor FROM facturas_proveedor_alias');
+  return filas.map(f=>({...f,nifs_confirmados:nifsConfirmados(f.proveedor,fichas),avisos_aceptados:avisosAceptados(f,mapa.get('contabilidad_revision_'+f.id))}));
 }
 
 // Mirar. No escribe nada: dice qué cambiaría y cuánto.
@@ -7811,7 +7834,7 @@ app.post("/api/facturas/repaso/lineas", requireAuth(["direccion", "contabilidad"
     if (scope) { cond.push("local = ?"); par.push(scope); }
     if (saltar.length) { cond.push(`NOT (id = ANY(?))`); par.push(saltar); }
     const filas = await dbAll(
-      `SELECT id, tipo, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, drive_url
+      `SELECT id, tipo, local, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible, cargos_base, lineas_iva_incluido, cuota_iva, drive_url
          FROM facturas WHERE ${cond.join(" AND ")}
         ORDER BY fecha DESC NULLS LAST, id DESC LIMIT ?`, [...par, tanda]);
 
@@ -7819,7 +7842,7 @@ app.post("/api/facturas/repaso/lineas", requireAuth(["direccion", "contabilidad"
     for (const f of filas) {
       try {
         const antes = await dbGet(`SELECT count(*)::int AS n FROM factura_lineas WHERE factura_id = ?`, [f.id]);
-        await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbRun });
+        await releerLineasFactura({ factura: f, getToken: getDriveAccessToken, dbGet, dbAll, transaccion: transaccionPaginas });
         const ahora = await dbGet(
           `SELECT count(*)::int AS n, count(*) FILTER (WHERE descuento_pct IS NOT NULL)::int AS con_dto
              FROM factura_lineas WHERE factura_id = ?`, [f.id]);
@@ -7854,7 +7877,7 @@ app.post("/api/facturas/repaso/lineas", requireAuth(["direccion", "contabilidad"
 app.get("/api/facturas/:id/lineas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     const f = await dbGet(`SELECT id, local, tipo, empresa, nif, total, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible,
-                                  lineas_estado, lineas_aviso, drive_url FROM facturas WHERE id = ?`, [Number(req.params.id)]);
+                                  lineas_estado, lineas_aviso, lineas_iva_incluido, cargos_base, cuota_iva, drive_url FROM facturas WHERE id = ?`, [Number(req.params.id)]);
     if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
     if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
     const lineas = await dbAll(
@@ -7863,9 +7886,10 @@ app.get("/api/facturas/:id/lineas", requireAuth(["direccion", "contabilidad"]), 
     // La suma de las líneas, calculada aquí: es lo que hay que poner al lado de la base para
     // que «descuadre» deje de ser una etiqueta y pase a ser un número que se puede perseguir.
     const suma = Math.round(lineas.reduce((s2, l) => s2 + (Number(l.importe) || 0), 0) * 100) / 100;
+    const v=validarSuma(lineas,f.base_imponible,f.tipo,f);
     const valoradas=await referenciasAlbaran(dbAll,f,lineas);
-    res.json({ ok: true, factura: estadoAlbaran(f), lineas:valoradas, suma:lineas.some(l=>l.importe!=null)?suma:null,
-      diferencia: f.base_imponible != null ? Math.round((suma - Number(f.base_imponible)) * 100) / 100 : null });
+    res.json({ ok: true, factura: estadoAlbaran(f), lineas:valoradas, cargos_base:leerCargosBase(f.cargos_base), suma:lineas.some(l=>l.importe!=null)||leerCargosBase(f.cargos_base).length?v.suma:null,
+      diferencia:v.diferencia, referencia:v.referencia, base:v.base, iva_incluido:v.iva_incluido });
   } catch (e) { res.status(500).json({ ok: false, error: "No se pudo cargar el detalle" }); }
 });
 
@@ -20384,6 +20408,7 @@ app.get("/api/inventario/proveedores/:id/catalogo", requireAuth(INV_ROLES), asyn
          LEFT JOIN producto_alias a ON a.clave = l.clave AND a.producto_id IS NOT NULL
          LEFT JOIN productos_canonicos p2 ON p2.id = a.producto_id
         WHERE COALESCE(f.dup_estado,'') <> 'duda' AND COALESCE(l.clave,'') <> ''
+          AND NOT EXISTS (SELECT 1 FROM producto_alias ap WHERE ap.clave = l.clave AND ap.descartado)
           AND f.proveedor = ANY(?) AND f.fecha >= ?
           ${restringido ? "AND f.local = ANY(?)" : ""}
           AND NOT ${ALBARAN_YA_CONTADO}

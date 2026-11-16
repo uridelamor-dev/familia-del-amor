@@ -236,7 +236,7 @@ describe("releer las antiguas — cableado", () => {
     // Proveedor, fecha e importes pueden estar corregidos a mano; volver a escribirlos con
     // lo que diga el modelo desharía ese trabajo.
     const fx = fs.readFileSync(path.join(RAIZ, "facturas.js"), "utf8");
-    const fn = /export async function releerLineasFactura[\s\S]{0,1200}?\n}/.exec(fx)[0];
+    const fn = /export async function releerLineasFactura[\s\S]*?\n}/.exec(fx)[0];
     assert.equal(/UPDATE facturas SET (?!lineas_)/.test(fn), false, "solo debe tocar las líneas");
     assert.match(fn, /DELETE FROM factura_lineas WHERE factura_id/, "y ser idempotente");
   });
@@ -485,8 +485,8 @@ describe("corregir a mano la lectura de una compra", () => {
     // recalcular, la factura seguiría marcada para siempre y nadie volvería a tocarla.
     // El recálculo vive en `recalcularCuadre`, que comparten corregir y borrar: tenerlo dos
     // veces garantizaría que un día una de las dos se quedara sin actualizar el estado.
-    assert.match(fn, /const v = await recalcularCuadre\(l\.factura_id, l\.base_imponible\);/);
-    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible\)[\s\S]{0,800}v\.motivo === "sin_valorar" \? "sin_valorar" : v\.cuadra \? \(v\.dudosas \? "dudas" : "ok"\) : "descuadre"/);
+    assert.match(fn, /const v = await recalcularCuadre\(l\.factura_id, l\.base_imponible,\{dbGet,dbAll,dbRun\}\);/);
+    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible, deps = \{dbAll,dbGet,dbRun\}\)[\s\S]{0,1000}v\.motivo === "sin_valorar" \? "sin_valorar" : v\.cuadra \? \(v\.dudosas \? "dudas" : "ok"\) : "descuadre"/);
   });
 
   test("y solo en los establecimientos que esa persona puede tocar", () => {

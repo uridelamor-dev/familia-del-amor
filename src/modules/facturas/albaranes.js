@@ -20,7 +20,7 @@ export async function referenciasAlbaran(dbAll,f,lineas){
  WHERE f.tipo='factura' AND LOWER(TRIM(f.proveedor))=LOWER(TRIM(?))
  AND COALESCE(f.nif,'')=COALESCE(?,'') AND COALESCE(f.empresa,'')=COALESCE(?,'') AND f.local=?
  AND f.fecha<=? AND f.id<>? AND COALESCE(f.dup_estado,'') NOT IN ('duda','duplicado')
- AND f.lineas_estado='ok' AND f.iva_estado='manual' AND COALESCE(f.revisar,'') IN ('','[]')
+ AND COALESCE(f.lineas_iva_incluido,FALSE)=FALSE AND f.lineas_estado='ok' AND f.iva_estado='manual' AND COALESCE(f.revisar,'') IN ('','[]')
  AND l.dudosa=FALSE AND l.precio_unitario>0 AND l.clave=ANY(?)
  ORDER BY f.fecha DESC,f.id DESC,l.orden DESC LIMIT 5000`,[f.proveedor,f.nif,f.empresa,f.local,f.fecha,f.id,claves]);
  return valorarAlbaran(f,lineas,historial);

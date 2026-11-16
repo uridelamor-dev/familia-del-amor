@@ -64,7 +64,7 @@ describe("contra el historial del proveedor", () => {
       "con un solo antecedente no se afirma nada");
     const a = contraHistorial({ nif_proveedor: "B99999999" }, { nifs: ["B17972860", "B17972860"] });
     assert.equal(a.length, 1);
-    assert.match(a[0].texto, /no cambia de NIF/);
+    assert.match(a[0].texto, /historial puede contener errores/);
   });
   test("da igual cómo venga escrito el NIF", () => {
     assert.deepEqual(contraHistorial({ nif_proveedor: "b-17.972.860" }, { nifs: ["B17972860", "B17972860"] }), []);

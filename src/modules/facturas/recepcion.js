@@ -30,7 +30,7 @@ export function errorRecibido(id) {
 
 // El original se confirma en PostgreSQL antes de llamar a Google o a la IA.
 // lock debe serializar por hash entre procesos; no mantener transacciones abiertas durante la IA.
-export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar, ahora = () => new Date()}) {
+export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar, validarRevision = controlesLectura, ahora = () => new Date()}) {
   async function ejecutar(id) {
     const inicial = await db.get('SELECT hash FROM facturas_recepciones WHERE id = ?', [id]);
     if (!inicial) throw new Error('Recepción no encontrada');
@@ -121,7 +121,7 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       if(f.estado!=='revision' || !f.original) throw new Error('Este documento ya no está pendiente de revisión');
       if(confirmado!==true) throw new Error('Confirma que has comprobado el original');
       const datos=datosRevision(f.resultado?.datos,cambios);
-      const avisos=controlesLectura(datos);
+      const avisos=await validarRevision(datos);
       if(avisos.some(a=>["fecha","proveedor","tipo"].includes(a.campo))) throw new Error("Completa proveedor, tipo y fecha válidos antes de registrar");
       if(avisos.length && aceptarAvisos!==true) throw new Error("Quedan avisos. Corrígelos o confirma expresamente la excepción");
       const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};

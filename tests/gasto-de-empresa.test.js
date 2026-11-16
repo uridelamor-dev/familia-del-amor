@@ -6,6 +6,7 @@
 // distintas del mismo mes es peor que una sola cifra mala, porque no se sabe cuál creerse.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import vm from "node:vm";
 import { readFileSync } from "node:fs";
 
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
@@ -36,14 +37,18 @@ describe("el gasto de empresa se imputa por local en todas las pantallas", () =>
     assert.match(q[0], /COALESCE\(reparto,''\) <> 'empresa'/);
   });
 
-  test("el reparto del periodo se calcula una vez, no una por local", () => {
-    // Se piden hasta ocho establecimientos en serie; hacerlo dentro del bucle eran tres
-    // consultas más por local en la pantalla de la que ya se quejó que iba lenta.
-    const i = server.indexOf("const deLosLocales = async (q)");
-    const bloque = server.slice(i, i + 700);
-    assert.match(bloque, /await gastoDeEmpresaPorLocal\(/);
-    assert.equal((bloque.match(/gastoDeEmpresaPorLocal\(/g) || []).length, 1,
-      "una sola llamada, fuera del for");
+  test("el reparto del periodo se calcula una vez, no una por local", async () => {
+    const inicio = server.indexOf("const calcularLocales = async (q)");
+    const fin = server.indexOf("const compararDesde=", inicio);
+    assert.ok(inicio > 0 && fin > inicio);
+    let repartos = 0;
+    const vistos = [], reparto = {Girona:10,Lloret:20};
+    const ctx = vm.createContext({locales:['Girona','Lloret'],
+      gastoDeEmpresaPorLocal:async()=>{repartos++;return reparto;},
+      periodoDeLocal:async(q,local,partes)=>{vistos.push(local);assert.equal(partes,reparto);return local;},
+      fusionarPeriodo:partes=>partes});
+    await vm.runInContext('(async()=>{'+server.slice(inicio,fin)+'return calcularLocales({from:"2026-11-01",to:"2026-11-17"});})()',ctx);
+    assert.equal(repartos,1);assert.deepEqual(vistos,['Girona','Lloret']);
   });
 
   test("el panel dice cuánto del gasto es parte imputada", () => {

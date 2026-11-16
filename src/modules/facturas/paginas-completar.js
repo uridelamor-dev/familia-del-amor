@@ -1,19 +1,28 @@
+import {leerCargosBase} from './cargos-base.js';
 import {guardarIvaLeido} from './iva.js';
 import {createHash} from 'node:crypto';
-export const CAMPOS_PAGINAS=['drive_url','drive_thumb','base_imponible','porcentaje_iva','cuota_iva','total','iva_desglose','iva_estado','iva_aviso','lineas_estado','lineas_aviso','lineas_leidas_en','lineas_version'];
+export const CAMPOS_PAGINAS=['drive_url','drive_thumb','base_imponible','porcentaje_iva','cuota_iva','total','recargo_equivalencia','retencion','otros_cargos','iva_desglose','iva_estado','iva_aviso','lineas_estado','lineas_aviso','lineas_leidas_en','lineas_version'];
 const norm=v=>String(v||'').trim().toUpperCase().replace(/\s+/g,'');
 export function validarComplemento(f,d){
  for(const [k,lectura] of [['tipo','tipo'],['numero_factura','numero_factura'],['nif','nif_proveedor'],['fecha','fecha']]){
   if(!norm(f[k])||!norm(d[lectura])||norm(f[k])!==norm(d[lectura]))throw new Error('La identidad del documento unido no coincide con la factura registrada. Revisa número, NIF y fecha antes de unir.');
  }
- for(const k of ['base_imponible','cuota_iva','total'])if(f[k]!=null&&(d[k]==null||Math.abs(Number(f[k])-Number(d[k]))>0.02))throw new Error('La lectura conjunta cambia los importes registrados. Revisa la factura antes de unir las páginas; no se ha modificado.');
+ for(const k of ['base_imponible','cuota_iva','total','recargo_equivalencia','retencion','otros_cargos'])if(f[k]!=null&&(d[k]==null||Math.abs(Number(f[k])-Number(d[k]))>0.02))throw new Error('La lectura conjunta cambia los importes registrados. Revisa la factura antes de unir las páginas; no se ha modificado.');
 }
-export function huellaPaginas(f,lineas){return createHash('sha256').update(JSON.stringify([['tipo','local','proveedor','nif','fecha','numero_factura',...CAMPOS_PAGINAS].map(k=>f[k]??null),lineas])).digest('hex');}
+export function huellaPaginas(f,lineas){
+ const nuevos=['recargo_equivalencia','retencion','otros_cargos'];
+ const datos=[['tipo','local','proveedor','nif','fecha','numero_factura',...CAMPOS_PAGINAS.filter(k=>!nuevos.includes(k))].map(k=>f[k]??null),lineas];
+ const ajustes=Object.fromEntries(nuevos.filter(k=>Number(f[k])).map(k=>[k,Number(f[k])]));
+ if(Object.keys(ajustes).length)datos.push(ajustes);
+ const cargos=leerCargosBase(f.cargos_base);if(cargos.length)datos.push({cargos_base:cargos});
+ return createHash('sha256').update(JSON.stringify(datos)).digest('hex');
+}
 // Mantiene el ID, pagos y vínculos de la factura. Google conserva también el archivo anterior.
 export function crearCompletarPaginas({db,transaccion,leer,archivar,guardarLineas}){
  return async({a,b,p,buffer,autor})=>{
   const f=a.contexto?.facturaId ? await db.get('SELECT * FROM facturas WHERE id=? AND local=?',[a.contexto.facturaId,a.local]) : await db.get('SELECT * FROM facturas WHERE file_hash=? AND local=?',[a.hash,a.local]);
   if(!f)throw new Error('El primer documento aún no está asignado a una factura. Asígnalo antes de completar sus páginas.');
+  if(leerCargosBase(f.cargos_base).length)throw new Error('La factura tiene cargos revisados manualmente. Revisa sus páginas y detalle manualmente para no duplicar cargos.');
   const lineas=await db.all('SELECT * FROM factura_lineas WHERE factura_id=? ORDER BY id',[f.id]);
   const huella=huellaPaginas(f,lineas);
   const d=await leer(buffer,'application/pdf');
@@ -26,10 +35,10 @@ export function crearCompletarPaginas({db,transaccion,leer,archivar,guardarLinea
    const propuesta=await tx.get('SELECT estado FROM facturas_paginas WHERE id=? FOR UPDATE',[p.id]);
    const recepcion=await tx.get('SELECT estado FROM facturas_recepciones WHERE id=? FOR UPDATE',[b.id]);
    if(propuesta?.estado!=='revision'||!['paginas','pendiente','revision','leyendo'].includes(recepcion?.estado))throw new Error('La propuesta ya se ha resuelto');
-   await tx.run('UPDATE facturas SET drive_url=?,drive_thumb=NULL,base_imponible=COALESCE(base_imponible,?),porcentaje_iva=COALESCE(porcentaje_iva,?),cuota_iva=COALESCE(cuota_iva,?),total=COALESCE(total,?),sheet_synced=0 WHERE id=?',[driveUrl,d.base_imponible,d.porcentaje_iva,d.cuota_iva,d.total,f.id]);
+   await tx.run('UPDATE facturas SET drive_url=?,drive_thumb=NULL,base_imponible=COALESCE(base_imponible,?),porcentaje_iva=COALESCE(porcentaje_iva,?),cuota_iva=COALESCE(cuota_iva,?),total=COALESCE(total,?),recargo_equivalencia=COALESCE(recargo_equivalencia,?),retencion=COALESCE(retencion,?),otros_cargos=COALESCE(otros_cargos,?),sheet_synced=0 WHERE id=?',[driveUrl,d.base_imponible,d.porcentaje_iva,d.cuota_iva,d.total,d.recargo_equivalencia??null,d.retencion??null,d.otros_cargos??null,f.id]);
    await tx.run('DELETE FROM factura_lineas WHERE factura_id=?',[f.id]);
-   await guardarLineas(tx.run,f.id,{...d,tipo:f.tipo},new Date().toISOString());
-   if(f.iva_estado!=='manual')await guardarIvaLeido({dbRun:tx.run},{...f,drive_url:driveUrl,base_imponible:f.base_imponible??d.base_imponible,cuota_iva:f.cuota_iva??d.cuota_iva,total:f.total??d.total},d.iva_desglose);
+   await guardarLineas(tx.run,f.id,{...d,tipo:f.tipo,cargos_base:f.cargos_base,lineas_iva_incluido:f.lineas_iva_incluido},new Date().toISOString());
+   if(f.iva_estado!=='manual')await guardarIvaLeido({dbRun:tx.run},{...f,drive_url:driveUrl,base_imponible:f.base_imponible??d.base_imponible,cuota_iva:f.cuota_iva??d.cuota_iva,total:f.total??d.total,recargo_equivalencia:f.recargo_equivalencia??d.recargo_equivalencia,retencion:f.retencion??d.retencion,otros_cargos:f.otros_cargos??d.otros_cargos},d.iva_desglose);
    const despues=await tx.get('SELECT * FROM facturas WHERE id=?',[f.id]);
    const nuevas=await tx.all('SELECT * FROM factura_lineas WHERE factura_id=? ORDER BY id',[f.id]);
    const pruebas={...p.pruebas,completada:{facturaId:f.id,recepcionAnterior:a.id,recepcionAnadida:b.id,antes:Object.fromEntries(CAMPOS_PAGINAS.map(k=>[k,f[k]])),lineas,huella:huellaPaginas(despues,nuevas)}};

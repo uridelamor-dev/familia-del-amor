@@ -1,6 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 import { proponerConciliacion, buscarCombinacion, resumenConciliacion, estadoConciliada } from "../../src/modules/facturas/conciliacion.js";
 
 const P = { proveedor: "Grau Distribucions", nif: "B17972860" };
@@ -111,13 +112,22 @@ describe("un albarán no es gasto: no puede sumar dos veces", () => {
     assert.notEqual(i, -1, "los totales tienen que filtrar los albaranes");
   });
 
-  test("y los declaran, en vez de esconderlos", () => {
-    // Un número que no cuadra con la tabla de debajo es peor que un número grande.
-    assert.match(server, /AS albaranes,/);
-    // El aviso es ahora un chip («3 albaranes · 810 €») en vez de una frase larga encima de
-    // la tabla, pero sigue diciendo cuántos son, cuánto valen y por qué no suman.
-    assert.match(panel, /<b>\$\{num\(t\.albaranes\)\}<\/b> \$\{t\.albaranes === 1 \? "albarán" : "albaranes"\}/);
-    assert.match(panel, /No suman: son la entrega, no el pago/);
+  test("conserva el desglose contable sin el chip de albaranes retirado", () => {
+    assert.match(server, /count\(\*\) FILTER \(WHERE NOT \(\$\{SIN_ALBARANES\}\)\)::int AS albaranes/);
+    for (const campo of ['total','base_imponible','cuota_iva']) {
+      assert.ok(server.includes(`SUM(${campo}) FILTER (WHERE \${SIN_ALBARANES})`), `${campo} excluye albaranes`);
+    }
+    const inicio=panel.indexOf('function facKpisHtml()');
+    const fin=panel.indexOf('/** Los avisos de coherencia',inicio);
+    const ctx=vm.createContext({FAC_TOT:{docs:2,total:121,base:100,iva:21,albaranes:5,albaranesImporte:500},
+      facFiltrosActivos:()=>[],num:String,esc:String,eur:v=>`${v} €`});
+    vm.runInContext(panel.slice(inicio,fin),ctx);
+    const html=vm.runInContext('facKpisHtml()',ctx);
+    assert.match(html,/>2<\/b> facturas/);
+    assert.match(html,/121 €/);assert.match(html,/100 €/);assert.match(html,/21 €/);
+    assert.doesNotMatch(html,/albaranes|fchips|500 €/);
+    ctx.FAC_TOT.albaranes=100;ctx.FAC_TOT.albaranesImporte=99999;
+    assert.equal(vm.runInContext('facKpisHtml()',ctx),html,'Las entregas no inflan el resumen fiscal');
   });
 
   test("el dashboard también los excluye, en TODAS sus consultas de dinero", () => {

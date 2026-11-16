@@ -5,8 +5,8 @@ ALTER TABLE facturas ADD COLUMN IF NOT EXISTS drive_revision_sync BIGINT NOT NUL
 ALTER TABLE facturas ADD COLUMN IF NOT EXISTS drive_sync_intento TIMESTAMPTZ;
 CREATE OR REPLACE FUNCTION facturas_marcar_drive() RETURNS trigger AS $$
 BEGIN
-  IF ROW(NEW.local,NEW.empresa,NEW.fecha,NEW.proveedor,NEW.numero_factura,NEW.drive_url)
-     IS DISTINCT FROM ROW(OLD.local,OLD.empresa,OLD.fecha,OLD.proveedor,OLD.numero_factura,OLD.drive_url) THEN
+  IF ROW(NEW.local,NEW.empresa,NEW.fecha,NEW.proveedor,NEW.numero_factura,NEW.tipo,NEW.drive_url)
+     IS DISTINCT FROM ROW(OLD.local,OLD.empresa,OLD.fecha,OLD.proveedor,OLD.numero_factura,OLD.tipo,OLD.drive_url) THEN
     NEW.drive_revision := OLD.drive_revision + 1;
     NEW.sheet_synced := 0;
   END IF;
@@ -30,8 +30,9 @@ export async function sincronizarArchivo(deps,id,mover) {
       const resultado=await mover(actual);
       if(resultado.movido || resultado.motivo==='ya estaba en su sitio') {
         // Una edición durante la llamada a Google deja su nueva revisión pendiente.
-        await deps.dbRun('UPDATE facturas SET drive_revision_sync = ? WHERE id = ? AND drive_revision = ?',
+        const confirmada=await deps.dbRun('UPDATE facturas SET drive_revision_sync = ? WHERE id = ? AND drive_revision = ? RETURNING id',
           [actual.drive_revision,id,actual.drive_revision]);
+        if(!confirmada) return {movido:false,motivo:'La factura cambió durante la organización; queda pendiente de reintento'};
       }
       return resultado;
     });
@@ -41,7 +42,9 @@ export async function reintentarArchivos(deps,mover) {
   const pendientes=await deps.dbAll("SELECT id FROM facturas WHERE drive_revision_sync < drive_revision AND COALESCE(drive_url,'') <> '' ORDER BY drive_sync_intento ASC NULLS FIRST, id LIMIT 50");
   let fallidos=0;
   for(const f of pendientes) {
-    const r=await mover(f);
+    let r;
+    try { r=await mover(f); } catch(e) { r={movido:false,motivo:e.message}; }
+    if(!r)r={movido:false,motivo:'La organización no devolvió un resultado verificable'};
     if(!r.movido && r.motivo!=='ya estaba en su sitio') { fallidos++; console.warn(`[Drive] #${f.id} sigue pendiente: ${r.motivo}`); }
   }
   return {revisados:pendientes.length,fallidos};

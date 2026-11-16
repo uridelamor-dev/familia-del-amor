@@ -60,21 +60,24 @@ export function cuadraIva(d) {
 /**
  * 3) Contra el historial del proveedor.
  *
- * `historial` = { nifs: [...], totales: [...] } de las facturas anteriores de ese proveedor.
+ * `historial` = { nifs: [...], nifsConfirmados: [...], totales: [...] }.
  * Dos señales:
- *   · El NIF no es el de siempre. Un proveedor no cambia de NIF; lo que cambia es la lectura.
+ *   · Contrasta identidades humanas antes que OCR; nombres iguales pueden ser entidades distintas.
  *   · El importe se sale muchísimo de lo habitual. Es el caso del punto decimal perdido:
  *     una factura de 400 € leída como 40.000 € se paga sin que nadie lo mire.
  */
 export function contraHistorial(d, historial = {}) {
   const avisos = [];
-  const nifs = (historial.nifs || []).filter(Boolean);
-  const nif = String(d.nif_proveedor || d.nif || "").replace(/[\s.\-/]/g, "").toUpperCase();
-  if (nif && nifs.length >= 2 && !nifs.includes(nif)) {
-    avisos.push({
-      clave: "nif_distinto", grave: false,
-      texto: `Este proveedor siempre ha venido con el NIF ${nifs[0]} y esta vez pone ${nif}. Un proveedor no cambia de NIF: lo que suele cambiar es la lectura.`,
-    });
+  const normalizar=v=>String(v||'').replace(/[\s.\-/]/g,'').toUpperCase();
+  const nifs = (historial.nifs || []).map(normalizar).filter(Boolean);
+  const confirmados=[...new Set((historial.nifsConfirmados || []).map(normalizar).filter(Boolean))];
+  const nif = normalizar(d.nif_proveedor || d.nif);
+  if(nif && confirmados.length && !confirmados.includes(nif)) {
+    avisos.push({clave:'nif_distinto',grave:false,texto:confirmados.length===1
+      ? `La identidad confirmada manualmente de este nombre tiene NIF ${confirmados[0]}, pero el documento indica ${nif}. Comprueba el original y si corresponde a la misma entidad; no se ha sustituido el NIF.`
+      : `Hay varias identidades fiscales confirmadas para este nombre. Comprueba el NIF ${nif} en el original; no se elige una por frecuencia.`});
+  } else if(nif && !confirmados.length && nifs.length>=2 && !nifs.includes(nif)) {
+    avisos.push({clave:'nif_distinto',grave:false,texto:`El NIF ${nif} difiere del historial leído de este nombre. El historial puede contener errores u otra entidad: comprueba el original, sin sustituir el NIF por frecuencia.`});
   }
 
   const totales = (historial.totales || []).map(n).filter((x) => x != null && x > 0);

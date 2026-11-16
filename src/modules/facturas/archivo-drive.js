@@ -3,17 +3,24 @@ import {createHash} from 'node:crypto';
 const BASE='https://www.googleapis.com/drive/v3/files';
 const meses=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const limpio=v=>String(v||'').replace(/[\\/:*?"<>|\r\n]/g,'-').trim().slice(0,90);
-export function rutaArchivo(f) {
+function fechaArchivo(f) {
  const fecha=String(f.fecha||'').slice(0,10);
  const valida=/^\d{4}-\d{2}-\d{2}$/.test(fecha)&&!isNaN(Date.parse(fecha))&&new Date(fecha).toISOString().slice(0,10)===fecha;
+ return valida?fecha:null;
+}
+export function rutaArchivo(f) {
+ const fecha=fechaArchivo(f),valida=!!fecha;
  return [limpio(f.empresa)||'Sin empresa asignada',valida?fecha.slice(0,4):'Sin fecha',valida?`${fecha.slice(5,7)} · ${meses[Number(fecha.slice(5,7))-1]}`:'Por revisar',limpio(f.local)||'Sin local'];
 }
 export function nombreArchivo(f,ext='.pdf') {
- const fecha=String(f.fecha||'').slice(0,10)||'Sin fecha';
+ const fecha=fechaArchivo(f)||'Sin fecha';
  return [fecha,({factura:'Factura',albaran:'Albarán',ticket:'Ticket',otro:'Documento'})[f.tipo]||'Documento',limpio(f.proveedor)||'Proveedor sin identificar',limpio(f.numero_factura)||'Sin número',limpio(f.local),f.id?`ID-${f.id}`:'Pendiente de registro'].filter(Boolean).join(' · ')+ext;
 }
 async function api(token,url,method='GET',body) {
- const r=await fetch(url,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return r.json();
+ const r=await fetch(url,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+ const data=await r.json();
+ if(!data || typeof data!=='object' || data.error)throw new Error('Drive no devolvió una respuesta válida');
+ return data;
 }
 const locks=new Map();
 export async function carpetaDrive(token,nombre,padre='root') {
@@ -23,7 +30,8 @@ export async function carpetaDrive(token,nombre,padre='root') {
   const escape=s=>String(s).replaceAll('\\','\\\\').replaceAll("'","\\'");
   const q=`name = '${escape(nombre)}' and '${escape(padre)}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
   const d=await api(token,BASE+'?q='+encodeURIComponent(q)+'&fields=files(id)&pageSize=100');
-  if(d.files?.length>1)throw new Error(`Hay varias carpetas llamadas ${nombre}; revisar antes de mover documentos.`);
+  if(!Array.isArray(d.files))throw new Error('No se pudo comprobar la carpeta en Drive');
+  if(d.files.length>1)throw new Error(`Hay varias carpetas llamadas ${nombre}; revisar antes de mover documentos.`);
   if(d.files?.[0])return d.files[0].id;
   const made=await api(token,BASE+'?fields=id','POST',{name:nombre,mimeType:'application/vnd.google-apps.folder',parents:[padre]});
   if(!made.id)throw new Error('No se pudo crear la carpeta');return made.id;
@@ -36,16 +44,17 @@ export async function carpetaEjercicio(token,root,g,crear=carpetaDrive) {
  let id=root;for(const nombre of [limpio(g.empresa),g.year])id=await crear(token,nombre,id);return id;
 }
 export async function moverVerificado(token,deps,id,parent,name) {
- const meta=await api(token,`${BASE}/${id}?fields=id,name,parents,md5Checksum,size`);
- if(meta.parents?.includes(parent)&&(!name||meta.name===name))return false;
+ const meta=await api(token,`${BASE}/${id}?fields=id,name,parents,md5Checksum,size,trashed`);
+ if(meta.id!==id || !Array.isArray(meta.parents) || meta.trashed)throw new Error('No se pudo verificar el archivo original en Drive');
+ if(meta.parents.length===1&&meta.parents[0]===parent&&(!name||meta.name===name))return false;
  // Diario previo: permite reconstruir nombre y ubicación sin cambiar el contenido.
  const key='facturas_drive_origen_v1:'+id;
  await deps.dbRun('INSERT INTO config (key,value) VALUES (?,?) ON CONFLICT(key) DO NOTHING',[key,JSON.stringify(meta)]);
- const query=new URLSearchParams({fields:'id,name,parents,md5Checksum,size',addParents:parent});
+ const query=new URLSearchParams({fields:'id,name,parents,md5Checksum,size,trashed',addParents:parent});
  if(meta.parents?.length)query.set('removeParents',meta.parents.filter(p=>p!==parent).join(','));
  const moved=await api(token,`${BASE}/${id}?${query}`,'PATCH',name?{name}:{});
- const check=await api(token,`${BASE}/${id}?fields=id,name,parents,md5Checksum,size`);
- if(moved.id!==id||check.id!==id||!check.parents?.includes(parent)||(name&&check.name!==name)||(meta.md5Checksum&&check.md5Checksum!==meta.md5Checksum)||(meta.size&&check.size!==meta.size))throw new Error(`No se ha podido verificar el movimiento de ${meta.name}. Se conserva el diario original.`);
+ const check=await api(token,`${BASE}/${id}?fields=id,name,parents,md5Checksum,size,trashed`);
+ if(moved.id!==id||check.id!==id||check.trashed||!Array.isArray(check.parents)||check.parents.length!==1||check.parents[0]!==parent||(name&&check.name!==name)||(meta.md5Checksum&&check.md5Checksum!==meta.md5Checksum)||(meta.size&&check.size!==meta.size))throw new Error(`No se ha podido verificar el movimiento de ${meta.name}. Se conserva el diario original.`);
  return true;
 }
 export async function respaldoDatos(token,deps,root,rows) {

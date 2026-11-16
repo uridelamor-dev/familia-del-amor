@@ -1,11 +1,14 @@
+import { avisosTipoDocumento } from './tipo-documento.js';
+import { avisosAbono } from './abonos.js';
 import { completarIva } from './iva-inferido.js';
 import { nifValido, normNif } from './emisor.js';
+import { normalizarLinea, validarSuma } from './lineas.js';
 import { revisarCoherencia } from './coherencia.js';
 
 export const CAMPOS_REVISION = ['tipo','proveedor','nif_proveedor','fecha','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'];
 const numero = v => v === null || v === undefined || v === '' ? null : Number(v);
 export function controlesLectura(d = {}) {
-  const avisos = [];
+  const avisos = [...avisosAbono(d), ...avisosTipoDocumento(d)];
   const aviso = (campo,texto) => avisos.push({campo,texto});
   if (!String(d.proveedor || '').trim()) aviso('proveedor','No se ha identificado al proveedor.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.fecha || '') || !Number.isFinite(Date.parse(d.fecha)) || new Date(d.fecha).toISOString().slice(0,10) !== d.fecha) aviso('fecha','Falta una fecha de emisión válida.');
@@ -24,6 +27,23 @@ export function controlesLectura(d = {}) {
     for(const [campo,k] of [['base_imponible','base'],['cuota_iva','cuota']]) if(numero(d[campo])!=null && Math.abs(d.iva_desglose.reduce((s,f)=>s+(numero(f[k])||0),0)-Number(d[campo]))>0.05) aviso(campo,'La suma del desglose fiscal no coincide con el resumen.');
   }
   if (numero(d.porcentaje_iva) === 0 && numero(d.cuota_iva) != null && Math.abs(numero(d.cuota_iva)) > 0.05) aviso('porcentaje_iva','El tipo figura como 0 % pero hay una cuota de IVA. Comprueba el resumen fiscal.');
+  // La segunda lectura puede omitir el detalle. Solo controlar líneas realmente recibidas.
+  if (Array.isArray(d.lineas) && d.lineas.length) {
+    const lineas = d.lineas.map((l,i)=>normalizarLinea({...l,descripcion:l?.descripcion || 'Detalle'},i,d.tipo));
+    d.lineas.forEach((l,i)=> {
+      if (!l || l.lectura_dudosa === true || l.dudosa === true
+        || ((d.tipo !== 'albaran' || numero(d.base_imponible) != null) && lineas[i].importe == null)
+        || (numero(l.cantidad) != null && numero(l.precio_unitario) != null && lineas[i].dudosa)) {
+        aviso('lineas',`La línea ${i+1} tiene una lectura dudosa o cantidades, precios y descuentos incoherentes. Comprueba el original.`);
+      }
+    });
+    if (lineas.every(l=>l.importe != null) && numero(d.base_imponible) != null) {
+      try {
+        const suma = validarSuma(lineas,d.base_imponible,d.tipo,d);
+        if (suma.diferencia != null && Math.abs(suma.diferencia) > Math.max(0.05,lineas.length*0.02)) aviso('lineas','El detalle no coincide con el resumen: comprueba productos, descuentos, cargos y si los precios incluyen IVA.');
+      } catch { aviso('lineas','No se pueden comprobar los cargos y el detalle del documento.'); }
+    }
+  }
   if (d._lecturaIncompleta) aviso('lineas','La respuesta se cortó: puede faltar parte del documento.');
   if (d.calidad_imagen === 'ilegible' || d.calidad_imagen === 'recortada') aviso('imagen','Hay partes ilegibles o recortadas. Comprueba el original antes de pedir otra foto.');
   for (const campo of (Array.isArray(d.campos_dudosos) ? d.campos_dudosos : [])) {

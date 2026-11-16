@@ -1,6 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {puedeLocal} from '../src/modules/usuarios/locales.js';
+import {barras as barrasDelCentro,ambitoDeRuta} from '../src/modules/locales/centros.js';
 import {readFileSync} from 'node:fs';
 import {buildManageQuery} from '../src/modules/reviews/reviews.service.js';
 const src=readFileSync(new URL('../public/panel/app.js',import.meta.url),'utf8');
@@ -26,8 +28,23 @@ test('abre la reseña exacta fuera de la página actual',async()=>{
 test('el identificador de reseña usa parámetros SQL',()=>{
  const q=buildManageQuery({id:"x' OR 1=1"});assert.match(q.where,/id = \?/);assert.equal(q.params[0],"x' OR 1=1");
 });
-test('la lectura individual de factura comprueba ámbito y rol',()=>{
+test('la lectura individual de factura comprueba ámbito y rol',async()=>{
  const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
  const route=server.slice(server.indexOf('app.get("/api/facturas/documento/:id"'),server.indexOf('app.get("/api/facturas/pendientes",'));
- assert.match(route,/requireAuth\(\["direccion", "contabilidad"\]\)/);assert.match(route,/documentoEnAmbito\(row,localesScope/);assert.match(route,/status\(403\)/);
+ assert.match(route,/requireAuth\(\["direccion", "contabilidad"\]\)/);
+ const acceso=server.slice(server.indexOf('function puedeAccederLocal('),server.indexOf('// Auth endpoints'));
+ let handler,roles;const consultas=[];
+ const ctx=vm.createContext({puedeLocal,barrasDelCentro,ambitoDeRuta,
+  app:{get:(_path,_middleware,fn)=>{handler=fn;}},requireAuth:r=>{roles=Array.from(r);},
+  dbGet:async(sql,args)=>{consultas.push({sql,args:Array.from(args)});return {id:999,local:'La Tapeta - Girona',drive_thumb:'privado'};},
+  estadoPago:()=>({}),instanteMadrid:()=>({fecha:'2026-11-17'})});
+ vm.runInContext(acceso+route,ctx);
+ assert.deepEqual(roles,['direccion','contabilidad']);
+ async function pedir(local){let status=200,body;
+  const res={status:n=>{status=n;return res;},json:b=>{body=b;}};
+  await handler({params:{id:999},path:'/api/facturas/documento/999',user:{rol:'contabilidad',local}},res,e=>{throw e;});return {status,body};}
+ const fuera=await pedir('La Tapeta - Lloret');assert.equal(fuera.status,403);assert.equal(fuera.body.data,undefined);
+ const dentro=await pedir('La Tapeta - Girona');assert.equal(dentro.status,200);assert.equal(dentro.body.data.id,999);assert.equal(dentro.body.data.drive_thumb,undefined);
+ assert.deepEqual(consultas[0].args,[999]);assert.match(consultas[0].sql,/WHERE id=\?/);
+
 });

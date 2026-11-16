@@ -9,6 +9,6 @@ export async function recordarProveedorRevision(q,datos,autor) {
  await q('SELECT pg_advisory_xact_lock(hashtext($1))',['revision-proveedor-'+nif]);
  const existentes=(await q('SELECT proveedor FROM facturas_proveedor_alias WHERE nif=$1',[nif])).rows;
  if(existentes.some(f=>f.proveedor.trim().toLocaleLowerCase()!==proveedor.toLocaleLowerCase()))return false;
- await q(`INSERT INTO facturas_proveedor_alias(clave,nif,proveedor,autor,creado_en) VALUES($1,$2,$3,$4,$5) ON CONFLICT(clave) DO NOTHING`,['revision-nif-'+nif,nif,proveedor,autor,new Date().toISOString()]);
+ await q(`INSERT INTO facturas_proveedor_alias(clave,nif,proveedor,autor,creado_en) VALUES($1,$2,$3,$4,$5) ON CONFLICT(clave) DO NOTHING`,['revision-nif-confirmado-'+nif,nif,proveedor,autor,new Date().toISOString()]);
  return true;
 }

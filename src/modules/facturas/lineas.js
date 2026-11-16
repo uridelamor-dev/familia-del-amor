@@ -1,3 +1,4 @@
+import {sumaCargosBase, leerCargosBase} from './cargos-base.js';
 import { unidadComparable } from "./precio-referencia.js";
 // Facturas — las líneas del detalle. PURO.
 //
@@ -51,6 +52,7 @@ const n = (v) => {
  */
 export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
   const descripcion = String(cruda.descripcion ?? "").trim().slice(0, 300);
+  const lecturaDudosa = cruda.lectura_dudosa === true;
   const cantidad = n(cruda.cantidad);
   const precioBruto = n(cruda.precio_unitario);
   const dto = n(cruda.descuento_pct);
@@ -102,14 +104,14 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
     // Cuántas unidades traía cada paquete. Se guarda para poder explicar de dónde sale la
     // cantidad —«3 PACK × 150»— y para que se vea que aquí ha pasado algo.
     factor_unidad: factor,
-    precio_unitario: descuadreCantidad ? null : precioNeto,
+    precio_unitario: descuadreCantidad || lecturaDudosa ? null : precioNeto,
     importe: neto,
     // Lo de tarifa, para poder ver el descuento y notar si un mes deja de aplicarse.
     precio_bruto: precioBruto,
     importe_bruto: bruto != null && neto != null && Math.abs(bruto - neto) > 0.01 ? bruto : null,
     descuento_pct: dto != null && dto > 0 && dto <= 100 ? dto : null,
     // Una línea es dudosa si le falta lo mínimo para servir de algo.
-    dudosa: !descripcion || (neto == null && tipo !== "albaran") || cantidadFinal == null || cantidadFinal === 0 || incoherente,
+    dudosa: lecturaDudosa || !descripcion || (neto == null && tipo !== "albaran") || cantidadFinal == null || cantidadFinal === 0 || incoherente,
   };
 }
 
@@ -119,25 +121,30 @@ export function normalizarLineas(crudas, tipo = "factura") {
 }
 
 // ¿Cuadran las líneas con la base imponible de la cabecera?
-export function validarSuma(lineas = [], baseImponible, tipo = "factura") {
-  const base = n(baseImponible);
+export function validarSuma(lineas = [], baseImponible, tipo = "factura", documento = {}) {
+  const ivaIncluido = documento.lineas_iva_incluido === true;
+  const neta = n(baseImponible), cuota = n(documento.cuota_iva);
+  // Solo una confirmación explícita cambia la referencia. Recargos y retenciones
+  // no forman parte del precio con IVA; nunca se usa la diferencia para inventarlos.
+  const base = ivaIncluido ? (neta != null && cuota != null ? red(neta + cuota) : null) : neta;
+  const referencia = ivaIncluido ? "base más IVA" : "base imponible";
   const conImporte = lineas.filter((l) => l.importe != null);
-  const suma = Math.round(conImporte.reduce((s, l) => s + l.importe, 0) * 100) / 100;
+  const suma = Math.round((conImporte.reduce((s, l) => s + Number(l.importe), 0) + sumaCargosBase(documento.cargos_base,ivaIncluido)) * 100) / 100;
 
-  if (!lineas.length) return { cuadra: false, motivo: "sin_lineas", suma: 0, base, diferencia: null };
-  if (base == null && tipo === "albaran") return {cuadra:true,motivo:"sin_valorar",suma:conImporte.length?suma:null,base:null,diferencia:null,dudosas:lineas.filter(l=>l.dudosa).length};
-  if (base == null) return { cuadra: false, motivo: "sin_base", suma, base: null, diferencia: null };
+  if (!lineas.length && !leerCargosBase(documento.cargos_base).length) return { referencia, iva_incluido: ivaIncluido, cuadra: false, motivo: "sin_lineas", suma: 0, base, diferencia: null };
+  if (base == null && tipo === "albaran" && !ivaIncluido) return { referencia, iva_incluido: ivaIncluido,cuadra:true,motivo:"sin_valorar",suma:conImporte.length?suma:null,base:null,diferencia:null,dudosas:lineas.filter(l=>l.dudosa).length};
+  if (base == null) return { referencia, iva_incluido: ivaIncluido, cuadra: false, motivo: "sin_base", suma, base: null, diferencia: null };
 
   const tolerancia = Math.max(TOLERANCIA_MIN, lineas.length * TOLERANCIA_ABS, Math.abs(base) * TOLERANCIA_PCT);
   const diferencia = Math.round((suma - base) * 100) / 100;
   const dudosas = lineas.filter((l) => l.dudosa).length;
 
   if (Math.abs(diferencia) > tolerancia) {
-    return { cuadra: false, motivo: "descuadre", suma, base, diferencia, tolerancia: Math.round(tolerancia * 100) / 100, dudosas };
+    return { referencia, iva_incluido: ivaIncluido, cuadra: false, motivo: "descuadre", suma, base, diferencia, tolerancia: Math.round(tolerancia * 100) / 100, dudosas };
   }
   // Aunque cuadre, si hay líneas que no se leyeron se dice: el número global puede estar
   // bien y aun así faltar el detalle de dos productos.
-  return { cuadra: true, motivo: dudosas ? "cuadra_con_dudosas" : "ok", suma, base, diferencia, dudosas };
+  return { referencia, iva_incluido: ivaIncluido, cuadra: true, motivo: dudosas ? "cuadra_con_dudosas" : "ok", suma, base, diferencia, dudosas };
 }
 
 export function mensajeValidacion(v) {
@@ -145,9 +152,9 @@ export function mensajeValidacion(v) {
   if (v.motivo === "sin_lineas") return "No se pudo leer el detalle de esta factura.";
   if (v.motivo === "sin_base") return "El detalle se leyó, pero la factura no trae base imponible con la que contrastarlo.";
   if (v.motivo === "descuadre") {
-    return `El detalle suma ${v.suma} € y la base imponible es ${v.base} € (${v.diferencia > 0 ? "+" : ""}${v.diferencia} €). Revísalo antes de fiarte de las cantidades.`;
+    return `El detalle suma ${v.suma} € y la ${v.referencia || "base imponible"} es ${v.base} € (${v.diferencia > 0 ? "+" : ""}${v.diferencia} €). Revísalo antes de fiarte de las cantidades.`;
   }
-  if (v.motivo === "cuadra_con_dudosas") return `Cuadra con la base, pero ${v.dudosas} ${v.dudosas === 1 ? "línea" : "líneas"} no se leyeron del todo.`;
+  if (v.motivo === "cuadra_con_dudosas") return `Cuadra con la ${v.referencia || "base imponible"}, pero ${v.dudosas} ${v.dudosas === 1 ? "línea" : "líneas"} no se leyeron del todo.`;
   return null;
 }
 
@@ -197,7 +204,7 @@ export function medianaPrecios(precios = [], { minimo = 3, ventana = 12 } = {}) 
  */
 export function grupoDeSQL(fila = {}) {
   const unidades = (fila.unidades || []).map(unidadComparable);
-  const comparable = unidades.length > 0 && unidades.every(u => u && u === unidades[0]) && !Number(fila.dudosas);
+  const comparable = !fila.iva_incluido && unidades.length > 0 && unidades.every(u => u && u === unidades[0]) && !Number(fila.dudosas);
   const precios = (comparable ? fila.precios || [] : []).map((precio, i) => ({
     precio: Number(precio),
     fecha: String((fila.precios_fechas || [])[i] || "").slice(0, 10),
@@ -226,7 +233,8 @@ export function grupoDeSQL(fila = {}) {
     // null significa «no se pudo leer», no «cero». Si ninguna línea traía la cantidad, la
     // cantidad sigue sin existir en vez de convertirse en un 0 que se lee como «no compramos».
     cantidad: comparable && conCantidad ? Number(fila.cantidad) : null,
-    importe: conImporte ? Number(fila.importe) : null,
+    ivaIncluido: !!fila.iva_incluido,
+    importe: conImporte && !fila.iva_incluido ? Number(fila.importe) : null,
     precioMin: precioMin == null ? null : Number(precioMin),
     precioMax: precioMax == null ? null : Number(precioMax),
     primera: fila.primera || null,

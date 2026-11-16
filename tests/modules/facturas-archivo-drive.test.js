@@ -36,3 +36,25 @@ test('el respaldo incluye líneas y se comprueba descargándolo de nuevo',async(
  assert.equal(await respaldoDatos('t',{dbAll:async()=>lineas},'root',rows),'backup');
  assert.deepEqual(JSON.parse(contenido),{version:1,facturas:rows,lineas});
 });
+
+test('fecha imposible tampoco se publica como válida en el nombre',()=>{
+ assert.match(nombreArchivo({id:1,fecha:'2026-02-31'}),/^Sin fecha ·/);
+});
+test('metadatos incompletos o papelera nunca permiten confirmar ni mover',async()=>{
+ for(const meta of [{name:'final.pdf',parents:['destino']},{id:'pdf',name:'final.pdf',parents:['destino'],trashed:true}]){
+  let llamadas=0;globalThis.fetch=async()=>{llamadas++;return {ok:true,json:async()=>meta};};
+  await assert.rejects(moverVerificado('t',{dbRun:async()=>assert.fail('No diario inválido')},'pdf','destino','final.pdf'),/verificar el archivo original/);
+  assert.equal(llamadas,1);
+ }
+});
+test('PATCH aplicado pero lectura de comprobación fallida sigue siendo error reintentable',async()=>{
+ let meta={id:'pdf',name:'antes.pdf',parents:['vieja'],size:'123'};let llamadas=0;
+ globalThis.fetch=async(url,opt={})=>{llamadas++;if(opt.method==='PATCH')meta={...meta,name:'final.pdf',parents:['destino']};if(llamadas===3)throw new Error('red temporal');return {ok:true,json:async()=>({...meta})};};
+ await assert.rejects(moverVerificado('t',{dbRun:async()=>{}},'pdf','destino','final.pdf'),/red temporal/);
+ assert.equal(await moverVerificado('t',{dbRun:async()=>assert.fail('Ya aplicado')},'pdf','destino','final.pdf'),false);
+});
+
+test('no confirma una ubicación parcial que conserva otro padre',async()=>{
+ let n=0;globalThis.fetch=async()=>({ok:true,json:async()=>({id:'pdf',name:'x.pdf',parents:++n===1?['vieja']:['nueva','vieja']})});
+ await assert.rejects(moverVerificado('t',{dbRun:async()=>{}},'pdf','nueva','x.pdf'),/verificar/);
+});

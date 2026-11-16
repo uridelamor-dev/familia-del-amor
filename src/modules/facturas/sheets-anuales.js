@@ -7,7 +7,7 @@ import {indiceCategorias,categoriasDe,soloCategorias,colorCategoria} from './cat
 
 const PREFIX = 'facturas_anual_v1:';
 const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-export const HEADERS = ['Fecha','Nº documento','Tipo','Proveedor','NIF proveedor','Categoría','Base (€)','IVA (%)','Cuota IVA (€)','Total (€)','Canal','PDF original','Registrado','Local','Empresa','ID panel','Estado','Avisos','Contabiliza'];
+export const HEADERS = ['Fecha','Nº documento','Tipo','Proveedor','NIF proveedor','Categoría','Base (€)','IVA (%)','Cuota IVA (€)','Total (€)','Canal','PDF original','Registrado','Local','Empresa','ID panel','Estado','Avisos','Contabiliza','Recargo equivalencia (€)','Retención (€)','Otros cargos (€)'];
 const norm = s => String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu,'').trim().replace(/\s+/g,' ').toLowerCase();
 const iso = v => v instanceof Date ? v.toISOString().slice(0,10) : String(v || '').slice(0,10);
 const dateOK = v => /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
@@ -55,7 +55,7 @@ export function filaAnual(f, empresa) {
   return [f.fecha??'',f.numero_factura??'',f.tipo??'',f.proveedor??'',f.nif??'',categoriaSheets(f._categorias).texto,
     ...['base_imponible','porcentaje_iva','cuota_iva','total'].map(k=> f[k]==null ? '' : Number(f[k])),
     f.canal??'',f.drive_url??'',String(f.creado_en??''),f.local??'',empresa,String(f.id),
-    pendiente ? 'Posible duplicado' : f._albaranContado ? `Albarán incluido en factura #${f.conciliado_con}` : 'Registrada',[f.revisar,avisoFecha].filter(Boolean).join(' · '),pendiente||f._albaranContado ? 'No' : 'Sí'];
+    pendiente ? 'Posible duplicado' : f._albaranContado ? `Albarán incluido en factura #${f.conciliado_con}` : 'Registrada',[f.revisar,avisoFecha].filter(Boolean).join(' · '),pendiente||f._albaranContado ? 'No' : 'Sí',...['recargo_equivalencia','retencion','otros_cargos'].map(k=>f[k]==null?'':Number(f[k]))];
 }
 export function filasAnuales(f,empresa) {
   const original=filaAnual(f,empresa);
@@ -67,7 +67,7 @@ export function filasAnuales(f,empresa) {
   return v.partes.map((p,i)=>{
     const row=[...original];row[6]=p.base;row[7]=p.tipo;row[8]=p.cuota;
     // El ID de cómputo y el total aparecen una sola vez, sin duplicar documentos en el resumen.
-    if(i<v.partes.length-1){row[9]='';row[15]='';}
+    if(i<v.partes.length-1){row[9]='';row[15]='';row[19]='';row[20]='';row[21]='';}
     return row;
   });
 }

@@ -72,7 +72,7 @@ describe("los avisos de coherencia, hacia atrás", () => {
     const r = repasarLote(filas);
     assert.equal(r.revisiones.length, 1);
     assert.equal(r.revisiones[0].id, 3);
-    assert.match(r.revisiones[0].textos[0], /siempre ha venido con el NIF B17972860/);
+    assert.match(r.revisiones[0].textos[0], /NIF B17972868 difiere del historial/);
   });
 
   test("cada factura se juzga con lo que había ANTES que ella, no con todo el historial", () => {

@@ -69,7 +69,10 @@ export function elegirLecturaContrastada(primera,segunda,tercera) {
       && JSON.stringify(candidata.iva_desglose || [])===JSON.stringify(tercera.iva_desglose || [])) {
       // Nunca recuperar una extracción de líneas cortada con una lectura que no incluye líneas.
       if(['ilegible','recortada'].includes(primera.calidad_imagen) || primera._lecturaIncompleta || (primera.campos_dudosos || []).some(c=>/linea|producto/i.test(c))) return null;
-      return {...structuredClone(candidata),lineas:structuredClone(primera.lineas || []),_pistasFecha:primera._pistasFecha};
+      const resultado={...structuredClone(candidata),lineas:structuredClone(primera.lineas || []),_pistasFecha:primera._pistasFecha};
+      // La cabecera elegida no puede validar un detalle extraído contra otra base.
+      if(controlesLectura(resultado).length) return null;
+      return resultado;
     }
   }
   return null;

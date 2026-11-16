@@ -235,10 +235,23 @@ export function agruparRecibos(filas = []) {
     .sort((a, b) => String(a.vencimiento || "9999").localeCompare(String(b.vencimiento || "9999")));
 }
 
-/** Quitar la fecha elimina la excepción del papel; las reglas de pago siguen vigentes. */
+/** Quitar la fecha elimina la excepción individual; las reglas de pago siguen vigentes. */
 export function vencimientoManualValido(valor) {
   if (valor === undefined || valor === null || valor === '') return true;
   if (typeof valor !== 'string' || !ISO.test(valor)) return false;
   const fecha = new Date(valor + 'T00:00:00Z');
   return Number.isFinite(fecha.getTime()) && fecha.toISOString().slice(0,10) === valor;
+}
+
+/** Una fecha individual válida (leída o revisada manualmente) no se recalcula. */
+export function vencimientoFijado(f = {}) {
+  return ['factura', 'manual'].includes(f.vencimiento_origen)
+    && !!f.vencimiento && vencimientoManualValido(f.vencimiento);
+}
+
+/** Guardar de nuevo la misma fecha no cambia su procedencia; una corrección es manual. */
+export function origenVencimientoEditado(antes = {}, valor) {
+  if (valor === undefined) return antes.vencimiento_origen ?? null;
+  if (!valor) return null;
+  return valor === antes.vencimiento ? (antes.vencimiento_origen ?? 'manual') : 'manual';
 }

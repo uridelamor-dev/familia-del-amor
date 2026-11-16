@@ -5,6 +5,9 @@ import {prepararReglaLocal,guardarReglaLocal,reglasLocales,aplicarReglaLocal,reg
 import {decisionAvisos,avisosAceptados,guardarDecisionAvisos} from '../../src/modules/facturas/avisos-memoria.js';
 import {repasarLote} from '../../src/modules/facturas/repaso.js';
 import {nifConocido} from '../../src/modules/facturas/nif-conocido.js';
+import {vencimientoManualValido} from '../../src/modules/facturas/vencimiento.js';
+import {ajustesFiscales} from '../../src/modules/facturas/ajustes-fiscales.js';
+import {contabilidadGlobal} from '../../src/modules/usuarios/contabilidad-global.js';
 const locales=[{local:'Uno',empresa:'Empresa A'},{local:'Dos',empresa:'Empresa A'},{local:'Tres',empresa:'Empresa B'}];
 const factura={id:1,proveedor:'Proveedor',nif:'B12345678',empresa:'Empresa A',local:'Dos',tipo:'factura',fecha:'2026-10-01',numero_factura:'F1',base_imponible:100,cuota_iva:21,porcentaje_iva:21,total:122};
 test('Una regla solo se aplica al CIF y empresa confirmados, y se puede desactivar',()=>{
@@ -27,8 +30,8 @@ test('Un aviso aceptado no reaparece, pero un cambio de importe o un aviso nuevo
  assert.ok(repasarLote([{...factura,avisos_aceptados:['Otro aviso']}],{hoy:'2026-10-27'}).revisiones.length);
 });
 test('El CIF confirmado prevalece sobre errores del histórico sin tapar un CIF leído',()=>{
- const alias=[{clave:'proveedor',proveedor:'Proveedor',nif:'B12345678'}];
- assert.equal(nifConocido({proveedor:'Proveedor'},alias,[{nif:'B87654321',numero_factura:'old'}]),'B12345678');
+ const alias=[{clave:'proveedor',proveedor:'Proveedor',nif:'B12345674',autor:'Silvia'}];
+ assert.equal(nifConocido({proveedor:'Proveedor'},alias,[{nif:'B87654321',numero_factura:'old'}]),'B12345674');
  assert.equal(nifConocido({proveedor:'Proveedor',nif_proveedor:'B87654321'},alias,[]),null);
 });
 test('Persistencia real de reglas; edición con versión y permisos, sin alterar facturas',async t=>{
@@ -69,8 +72,10 @@ test('PATCH real guarda factura y regla juntas; no reabre revisiones por formato
  const source=readFileSync(new URL('../../server.js',import.meta.url),'utf8');
  const a=source.indexOf('app.patch("/api/facturas/:id",'),b=source.indexOf('\n});',a)+4;
  let handler,antesDeConectar;const toPositional=s=>{let i=0;return s.replace(/\?/g,()=>'$'+(++i));};
- runInNewContext(source.slice(a,b),{app:{patch:(p,auth,h)=>handler=h},requireAuth:()=>()=>{},dbGet:db.get,dbAll:db.all,dbRun:db.run,pool:{connect:async()=>{if(antesDeConectar){await antesDeConectar();antesDeConectar=null;}return {query:db.raw,release(){}};}},toPositional,prepararReglaLocal,guardarReglaLocal,decisionAvisos,guardarDecisionAvisos,huellaRevision,documentoEnAmbito:()=>true,localesScope:()=>[],canonizarLocal:l=>l,ficAuditar:async()=>{},getDriveAccessToken:()=>{},reubicarEnDrive:async()=>{},resincronizarSheetsFactura:async()=>{},console});
- const call=async body=>{let status=200,result;await handler({body,params:{id:1},user:{nombre:'Silvia'}},{status:n=>{status=n;return{json:r=>result=r};},json:r=>result=r});return{status,result};};
+ runInNewContext(source.slice(a,b),{app:{patch:(p,auth,h)=>handler=h},requireAuth:()=>()=>{},dbGet:db.get,dbAll:db.all,dbRun:db.run,pool:{connect:async()=>{if(antesDeConectar){await antesDeConectar();antesDeConectar=null;}return {query:db.raw,release(){}};}},toPositional,prepararReglaLocal,guardarReglaLocal,decisionAvisos,guardarDecisionAvisos,huellaRevision,vencimientoManualValido,ajustesFiscales,contabilidadGlobal,puedeAccederLocal:(req,local)=>req.user.locales.includes(local),documentoEnAmbito:()=>true,localesScope:()=>[],canonizarLocal:l=>l,ficAuditar:async()=>{},getDriveAccessToken:()=>{},reubicarEnDrive:async()=>{},resincronizarSheetsFactura:async()=>{},console});
+ const call=async (body,user={nombre:'Silvia',rol:'contabilidad',locales:['Uno','Dos']})=>{let status=200,result;await handler({body,params:{id:1},user},{status:n=>{status=n;return{json:r=>result=r};},json:r=>result=r});return{status,result};};
+ assert.equal((await call({concepto:'Sin permiso'},{nombre:'Silvia',rol:'contabilidad',locales:['Uno']})).status,403);
+ assert.equal((await call({recordar_local:true},{nombre:'Silvia',rol:'equipo',locales:['Dos']})).status,403);
  assert.equal((await call({nif:'',recordar_local:true})).status,400);
  antesDeConectar=()=>db.run("UPDATE facturas SET concepto='Cambio de otra persona' WHERE id=1");
  assert.equal((await call({concepto:'Cambio obsoleto',confirmar_avisos:true})).status,409);

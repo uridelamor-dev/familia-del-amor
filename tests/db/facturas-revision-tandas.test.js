@@ -13,8 +13,9 @@ test('revisión sobrevive reinicio, no reintenta IA y aprobación conserva audit
  await assert.rejects(q.recibir(archivo),e=>e.recibido);
  let f=await db.get('SELECT * FROM facturas_recepciones');assert.equal(f.estado,'revision');assert.deepEqual(f.original,archivo.buffer);
  await q.reintentar();assert.equal(lecturas,1);
- await assert.rejects(q.aprobar(f.id,{}, {confirmado:true,autor:'Silvia'}),/Indica/);
- await q.aprobar(f.id,{}, {confirmado:true,autor:'Silvia',motivo:'Comprobado con el original'});
+ await assert.rejects(q.aprobar(f.id,{}, {confirmado:false,autor:'Silvia'}),/Confirma/);
+ await q.aprobar(f.id,{}, {confirmado:true,autor:'Silvia'});
+ assert.equal((await db.get('SELECT * FROM facturas_recepciones')).resultado.aprobacion.motivo,'Corrección confirmada en Compras.');
  await q.reintentar();f=await db.get('SELECT * FROM facturas_recepciones');assert.equal(f.estado,'registrado');assert.equal(lecturas,2);assert.equal(f.resultado.revisionPrevia.aprobacion.autor,'Silvia');
  await assert.rejects(q.aprobar(f.id,{}, {confirmado:true,motivo:'Otra vez'}),/ya no/);
 }));

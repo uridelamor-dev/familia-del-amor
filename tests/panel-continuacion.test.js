@@ -28,8 +28,8 @@ test('contenido: huella estable, borrados restaurables y validación de claves',
 });
 test('calidad detecta fechas imposibles, futuras y coincidencias sin confundir abonos ni ejercicios',()=> {
   assert.equal(fechaValida('2026-02-30'),false); assert.equal(fechaValida('2024-02-29'),true);
-  const f={local:'Blanes',proveedor:'Proveedor',numero_factura:'A1',fecha:'2026-09-01',total:30};
-  const rows=revisarFacturas([f,{...f,total:0},{...f,fecha:'2025-09-01'},{...f,numero_factura:'A2',total:-30},{...f,fecha:'2028-07-01',numero_factura:'A3'}],'2026-09-22');
+  const f={local:'Blanes',proveedor:'Proveedor',numero_factura:'A1',fecha:'2026-09-01',total:30,base_imponible:30,cuota_iva:0};
+  const rows=revisarFacturas([f,{...f,total:0},{...f,fecha:'2025-09-01'},{...f,numero_factura:'A2',total:-30,base_imponible:-30},{...f,fecha:'2028-07-01',numero_factura:'A3'}],'2026-09-22');
   assert.ok(rows[0].calidad.some(x=>x.includes('Mismo proveedor')));
   assert.ok(rows[1].calidad.some(x=>x.includes('cero')));
   assert.deepEqual(rows[2].calidad,[]); assert.deepEqual(rows[3].calidad,[]);

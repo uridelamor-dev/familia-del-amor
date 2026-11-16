@@ -15,8 +15,8 @@ test('la actualización mantiene la procedencia del original y protege cambios s
  let sql,params;
  const original={...f,vencimiento:'2026-11-15',vencimiento_origen:'factura',pago_automatico:0,fecha_pago:null};
  await aplicarPagosEmpresa({dbAll:async s=>s.includes('facturas_pago_reglas')?[]:[original],dbRun:async(s,p)=>{sql=s;params=p;}},'2026-11-06');
- assert.equal(params[0],'2026-11-15');assert.equal(params[1],0);
- assert.match(sql,/CASE WHEN vencimiento_origen='factura'/);
+ assert.equal(params[0],'2026-11-15');assert.equal(params[1],'factura');assert.equal(params[2],0);
+ assert.match(sql,/vencimiento_origen=\?/);
  assert.match(sql,/AND vencimiento IS NOT DISTINCT FROM \? AND vencimiento_origen IS NOT DISTINCT FROM \?/);
 });
 test('todo septiembre vence el 15 octubre y diciembre pasa al año siguiente',()=>{

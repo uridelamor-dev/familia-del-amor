@@ -17,6 +17,9 @@ test('SQL real: migración repetible, reintento Drive y desglose histórico sin 
   let f=await deps.dbGet('SELECT * FROM facturas WHERE id=1');assert.equal(f.sheet_synced,0);assert.notEqual(f.drive_revision,f.drive_revision_sync);
   await sincronizarArchivo(deps,1,async a=>{assert.equal(a.local,'Girona');return {movido:true};});
   f=await deps.dbGet('SELECT * FROM facturas WHERE id=1');assert.equal(f.drive_revision,f.drive_revision_sync);
+  await pg.exec("UPDATE facturas SET tipo='albaran' WHERE id=1");
+  f=await deps.dbGet('SELECT * FROM facturas WHERE id=1');assert.notEqual(f.drive_revision,f.drive_revision_sync,'el tipo cambia el nombre y debe reintentarse');
+  await pg.exec("UPDATE facturas SET tipo='factura' WHERE id=1");
   const partes=[{base:100,tipo:4,cuota:4},{base:100,tipo:10,cuota:10},{base:100,tipo:21,cuota:21}];
   await repasarIva(deps,async()=>partes);
   f=await deps.dbGet('SELECT * FROM facturas WHERE id=1');assert.equal(f.iva_estado,'ok');assert.equal(JSON.parse(f.iva_desglose).length,3);

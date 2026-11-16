@@ -34,7 +34,7 @@ export async function conEsquema() {
     const {PGlite} = await import(process.env.TEST_PGLITE_MODULE);
     const pg = new PGlite();
     const raw = async (sql,params=[]) => {
-      const r = await pg.query(sql,params);
+      const r = params.length ? await pg.query(sql,params) : (await pg.exec(sql)).at(-1) || {rows:[]};
       r.rows = r.rows.map(row=>Object.fromEntries(Object.entries(row).map(([k,v])=>[k,v instanceof Uint8Array ? Buffer.from(v) : v])));
       return r;
     };

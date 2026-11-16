@@ -6,6 +6,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 
 const panel = readFileSync(new URL("../public/panel/app.js", import.meta.url), "utf8");
 // El CSS del panel vive en `public/css/base.css` (tokens) y `public/css/panel.css`
@@ -283,9 +284,25 @@ describe("la ficha de una factura", () => {
     assert.match(panel, /<span class="fic-gt">Dinero<\/span>/);
   });
 
-  test("la suma se comprueba mientras se escribe", () => {
-    assert.match(panel, /Base \+ IVA da el total/);
-    assert.match(panel, /el\.addEventListener\("input", pintarSuma\)/);
+  test("la suma se comprueba mientras se escribe, incluyendo ajustes explícitos", () => {
+    const caja={innerHTML:''}, controles={};
+    for(const k of ['base_imponible','cuota_iva','total','porcentaje_iva','recargo_equivalencia','retencion','otros_cargos'])
+      controles[k]={value:'',addEventListener:(evento,fn)=>{assert.equal(evento,'input');controles[k].input=fn;}};
+    const ov={querySelector:s=>s==='#ficSuma'?caja:controles[s.match(/data-fic="([^"]+)"/)[1]],
+      querySelectorAll:s=>[...s.matchAll(/data-fic="([^"]+)"/g)].map(m=>controles[m[1]])};
+    const ctx=vm.createContext({ov,esc:String,eur2:n=>Number(n).toFixed(2)+' €'});
+    const helper=panel.slice(panel.indexOf('function facAjustesFiscales('),panel.indexOf('function facFicha('));
+    const inicio=panel.indexOf('  // ── La suma, comprobada en vivo');
+    const fin=panel.indexOf('  ov.addEventListener("click"',inicio);
+    vm.runInContext(helper+panel.slice(inicio,fin),ctx);
+    const escribir=(k,v)=>{assert.equal(typeof controles[k].input,'function',k+' debe actualizar al escribir');controles[k].value=v;controles[k].input();};
+    escribir('base_imponible','150.70');escribir('cuota_iva','15.07');escribir('total','165.77');
+    assert.match(caja.innerHTML,/class="ok".*Base \+ IVA da el total/);
+    escribir('total','167.88');assert.match(caja.innerHTML,/class="mal"/);
+    escribir('recargo_equivalencia','2.11');assert.match(caja.innerHTML,/class="ok".*ajustes.*167.88/);
+    escribir('retencion','2.11');assert.match(caja.innerHTML,/class="mal"/);
+    escribir('otros_cargos','2.11');assert.match(caja.innerHTML,/class="ok"/);
+    escribir('base_imponible','');assert.match(caja.innerHTML,/Faltan importes/);
   });
 
   test("y «Eliminar» deja de ser un botón rojo al lado de «Guardar»", () => {

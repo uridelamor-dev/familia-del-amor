@@ -217,7 +217,7 @@ describe("el servidor no cobra dos veces ni paga lo que no toca", () => {
 
   test("al cambiar las condiciones NO se pisa la fecha que traía el papel", () => {
     const put = server.slice(server.indexOf('app.put("/api/facturas/proveedor-pago"'), server.indexOf('// Ficha de un proveedor'));
-    assert.match(put, /COALESCE\(vencimiento_origen,''\) <> 'factura'/);
+    assert.match(put, /COALESCE\(vencimiento_origen,''\) NOT IN \('factura','manual'\)/);
     assert.match(put, /COALESCE\(pagado,0\) = 0/, "una factura ya pagada no cambia de vencimiento");
   });
 

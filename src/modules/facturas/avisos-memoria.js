@@ -1,8 +1,15 @@
+import {leerCargosBase} from './cargos-base.js';
 import {createHash} from 'node:crypto';
-const numeros=new Set(['base_imponible','porcentaje_iva','cuota_iva','total']);
+const numeros=new Set(['base_imponible','porcentaje_iva','cuota_iva','total','recargo_equivalencia','retencion','otros_cargos']);
 const campos=['proveedor','nif','tipo','fecha','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','concepto','vencimiento','vencimiento_origen'];
 export function huellaRevision(f){
- return createHash('sha256').update(JSON.stringify(campos.map(k=>numeros.has(k)?f[k]==null||f[k]===''?null:Number(f[k]):String(f[k]??'')))).digest('hex');
+ const cargos=leerCargosBase(f.cargos_base);
+ const valores=campos.map(k=>numeros.has(k)?f[k]==null||f[k]===''?null:Number(f[k]):String(f[k]??''));
+ const ajustes=Object.fromEntries(['recargo_equivalencia','retencion','otros_cargos'].filter(k=>Number(f[k])).map(k=>[k,Number(f[k])]));
+ if(Object.keys(ajustes).length)valores.push(ajustes);
+ if(f.lineas_iva_incluido===true)valores.push({lineas_iva_incluido:true});
+ if(cargos.length)valores.push({cargos_base:cargos});
+ return createHash('sha256').update(JSON.stringify(valores)).digest('hex');
 }
 export function decisionAvisos(f,avisos,autor){return {huella:huellaRevision(f),avisos:[...new Set(avisos.map(String))],autor,fecha:new Date().toISOString()};}
 export function avisosAceptados(f,decision){return decision?.huella===huellaRevision(f)&&Array.isArray(decision.avisos)?decision.avisos:[];}

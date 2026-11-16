@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import {canonico as localCentro} from '../src/modules/locales/centros.js';
 
 test('recuperar adjuntos tras publicar no envía avisos de reconexión y conserva las tandas', async () => {
  const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
@@ -13,7 +14,7 @@ test('recuperar adjuntos tras publicar no envía avisos de reconexión y conserv
  vm.runInNewContext(source.slice(inicio,fin),{
   setOnGroupAttachment: fn=>{recibir=fn;},
   dbGet:async()=>({local:'Oficina'}),dbAll:async()=>[],dbRun:async()=>{},
-  canonizarLocal:l=>l, console:{log(){},warn(){},error(){}},
+  canonizarLocal:l=>l, localCentro, console:{log(){},warn(){},error(){}},
   getDriveAccessToken:async()=>'',
   tandasFacturas:{registrar:async o=>registrados.push(o)},
   sendMensajeAGrupo:async(...args)=>envios.push(args),
