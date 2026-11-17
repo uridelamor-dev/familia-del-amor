@@ -7876,8 +7876,7 @@ app.post("/api/facturas/repaso/lineas", requireAuth(["direccion", "contabilidad"
 // El detalle de una factura concreta, para poder mirarlo cuando algo no cuadra.
 app.get("/api/facturas/:id/lineas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
-    const f = await dbGet(`SELECT id, local, tipo, empresa, nif, total, proveedor, numero_factura, fecha, base_imponible::float AS base_imponible,
-                                  lineas_estado, lineas_aviso, lineas_iva_incluido, cargos_base, cuota_iva, drive_url FROM facturas WHERE id = ?`, [Number(req.params.id)]);
+    const f = await dbGet('SELECT * FROM facturas WHERE id = ?', [Number(req.params.id)]);
     if (!f) return res.status(404).json({ ok: false, error: "Factura no encontrada" });
     if (!puedeAccederLocal(req, f.local)) return res.status(403).json({ ok: false, error: "Sin acceso" });
     const lineas = await dbAll(
@@ -7887,6 +7886,7 @@ app.get("/api/facturas/:id/lineas", requireAuth(["direccion", "contabilidad"]), 
     // que «descuadre» deje de ser una etiqueta y pase a ser un número que se puede perseguir.
     const suma = Math.round(lineas.reduce((s2, l) => s2 + (Number(l.importe) || 0), 0) * 100) / 100;
     const v=validarSuma(lineas,f.base_imponible,f.tipo,f);
+    await cargarDistintivos([f],dbAll);
     const valoradas=await referenciasAlbaran(dbAll,f,lineas);
     res.json({ ok: true, factura: estadoAlbaran(f), lineas:valoradas, cargos_base:leerCargosBase(f.cargos_base), suma:lineas.some(l=>l.importe!=null)||leerCargosBase(f.cargos_base).length?v.suma:null,
       diferencia:v.diferencia, referencia:v.referencia, base:v.base, iva_incluido:v.iva_incluido });

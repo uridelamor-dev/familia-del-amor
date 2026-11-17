@@ -1,3 +1,6 @@
+import { vencimientoManualValido } from './vencimiento.js';
+import { numeroDocumentoAusente } from './numero-documento.js';
+import { avisosEvidenciaCabecera } from './evidencia-cabecera.js';
 import { avisosTipoDocumento } from './tipo-documento.js';
 import { avisosAbono } from './abonos.js';
 import { completarIva } from './iva-inferido.js';
@@ -5,15 +8,16 @@ import { nifValido, normNif } from './emisor.js';
 import { normalizarLinea, validarSuma } from './lineas.js';
 import { revisarCoherencia } from './coherencia.js';
 
-export const CAMPOS_REVISION = ['tipo','proveedor','nif_proveedor','fecha','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'];
+export const CAMPOS_REVISION = ['tipo','proveedor','nif_proveedor','fecha','vencimiento','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'];
 const numero = v => v === null || v === undefined || v === '' ? null : Number(v);
 export function controlesLectura(d = {}) {
-  const avisos = [...avisosAbono(d), ...avisosTipoDocumento(d)];
+  const avisos = [...avisosAbono(d), ...avisosTipoDocumento(d), ...avisosEvidenciaCabecera(d)];
   const aviso = (campo,texto) => avisos.push({campo,texto});
   if (!String(d.proveedor || '').trim()) aviso('proveedor','No se ha identificado al proveedor.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.fecha || '') || !Number.isFinite(Date.parse(d.fecha)) || new Date(d.fecha).toISOString().slice(0,10) !== d.fecha) aviso('fecha','Falta una fecha de emisión válida.');
+  if (!vencimientoManualValido(d.vencimiento)) aviso('vencimiento','La fecha de vencimiento leída no es válida. Comprueba la fecha escrita en el original.');
   if (!['factura','ticket','albaran','otro'].includes(d.tipo)) aviso('tipo','Hay que confirmar el tipo de documento.');
-  if (d.tipo === 'factura' && !d.numero_factura) aviso('numero_factura','No se ha leído el número de factura.');
+  if (['factura','albaran'].includes(d.tipo) && numeroDocumentoAusente(d.numero_factura)) aviso('numero_factura',`No se ha leído el número de ${d.tipo==='albaran'?'albarán':'factura'}. Comprueba el original; si realmente no lleva número, confirma expresamente la excepción.`);
   if (d.tipo === 'factura' && !d.nif_proveedor) aviso('nif_proveedor','Falta el NIF del proveedor.');
   if (d.nif_proveedor && !nifValido(d.nif_proveedor)) aviso('nif_proveedor','Revisa el identificador fiscal del proveedor (puede ser extranjero).');
   for (const campo of ['total', ...(d.tipo === 'factura' ? ['base_imponible','cuota_iva'] : [])]) {

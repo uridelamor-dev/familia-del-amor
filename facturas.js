@@ -71,6 +71,7 @@ markdown, con esta estructura exacta
   "titulo_documento": "título literal de cabecera (Factura, Abono, Nota de crédito...), o null",
   "fecha": "YYYY-MM-DD",
   "fecha_texto": "fecha de emisión copiada literalmente del documento, sin convertirla, o null",
+  "evidencia_fecha": {"etiqueta": "etiqueta literal de la fecha de emisión", "texto": "fecha literal", "ubicacion": "ubicación de esa fecha en el documento"},
   "periodo_facturado": "YYYY-MM o null",
   "vencimiento": "YYYY-MM-DD",
   "numero_factura": "string",
@@ -89,13 +90,16 @@ markdown, con esta estructura exacta
   "recargo_equivalencia": number,
   "otros_cargos": number,
   "total": number,
+  "evidencia_total": {"etiqueta": "etiqueta literal del total final", "importe_texto": "importe literal con separadores", "ubicacion": "ubicación del total en el documento"},
   "lineas": [
     { "descripcion": "string", "cantidad": number, "unidad": "string", "precio_unitario": number, "importe": number, "descuento_pct": number, "importe_neto": number, "lectura_dudosa": boolean }
   ]
 }
 TIPO DE DOCUMENTO: manda el título principal literal, no las etiquetas de referencias. Un documento titulado «Factura» con un campo «Albarán» sigue siendo factura. Ejemplo DDI: título Factura, Número 7822113451 y Albarán 829464418: tipo="factura", numero_factura="7822113451"; 829464418 es sólo la entrega referenciada. Un albarán que menciona una factura mensual sigue siendo albarán. Factura proforma y presupuesto son "otro", no factura fiscal. No clasifiques por tener IVA ni por el nombre del archivo. Si falta un título legible y no puedes distinguir el tipo, o hay títulos contradictorios/varios documentos, marca "tipo" en campos_dudosos; no resuelvas por intuición.
+NÚMERO DEL DOCUMENTO: numero_factura es también el número del albarán cuando tipo="albaran". Busca «Nº albarán», «Núm. albarán» o «Número de documento» y copia la referencia completa con sus barras, guiones y ceros. Ejemplo: Nº albarán 2026/47159 → numero_factura="2026/47159". No lo confundas con número de cliente, pedido o trazabilidad. Si no se ve, devuelve null y marca numero_factura en campos_dudosos; no inventes «s/n».
 ABONOS: copia el título literal de la cabecera en titulo_documento. Un documento titulado Abono o Nota de crédito reduce la compra: representa sus bases, cuotas, totales e importes de devolución con signo negativo aunque el papel imprima magnitudes positivas. No deduzcas un abono de una mención en concepto, forma de pago o referencia. Una factura rectificativa puede aumentar o reducir: si no es explícito, marca total como dudoso. Si el archivo contiene factura y abono con números distintos, no los mezcles: marca numero_factura y total como dudosos para separarlos.
 DESGLOSE FISCAL: copia en iva_desglose cada base, tipo porcentual y cuota del resumen fiscal del documento, incluidos tipos cero. Si hay varios tipos, porcentaje_iva es null; base_imponible y cuota_iva son las sumas. Nunca uses un tipo medio ni deduzcas el reparto a partir del total. No mezcles recargo de equivalencia, retenciones ni otros impuestos con IVA. Copia sus importes en retencion, recargo_equivalencia y otros_cargos solo si aparecen expresamente; si no, null. Si no puedes identificar todas las bases con seguridad, devuelve iva_desglose: [].
+TOTAL DEL DOCUMENTO: lee el cuadro final de Totales, incluso si está separado del producto. El importe neto de una línea no es el total de la compra. Ejemplo Peix Ros: línea 81,00; cuadro Base 81,00, IVA 10% 8,10, Total 89,10 → base_imponible=81, cuota_iva=8.10, porcentaje_iva=10, total=89.10. No pongas IVA cero porque no aparezca junto al producto. Copia en evidencia_total la etiqueta literal, el importe_texto impreso y su ubicación; no presentes una columna Importe o Neto como Total. Si no se ve el cuadro final, deja los campos ausentes a null y marca la duda; un albarán puede estar sin valorar, pero no se inventa un total con sus líneas.
 QUIÉN EMITE Y QUIÉN RECIBE. Es el error más fácil de cometer y el más caro:
 - Lee también el texto fiscal vertical de los márgenes y el pie. El NIF del proveedor puede estar allí, mientras el NIF grande de la cabecera pertenece al cliente.
 - Copia el nombre fiscal literal del emisor en proveedor y evidencia_emisor.nombre_literal. No uses una marca de los productos, ni el nombre del archivo, ni un proveedor conocido por intuición.
@@ -114,6 +118,13 @@ se declara el IVA y cuándo hay que pagarla. Un año mal leído no se nota hasta
 declarado.
 - "fecha" es la FECHA DE EMISIÓN: la que va en la cabecera junto al número de factura, como
   "Fecha", "Fecha factura", "Fecha de expedición", "Data". Ninguna otra.
+  Si el documento ES un albarán, usa la fecha de su propia cabecera junto a su número de albarán.
+- NUNCA uses fechas de congelación, fabricación, lote, caducidad o consumo preferente de los
+  productos. Ejemplo Peix Ros: albarán 26CPRAVE-093958, Fecha 16-11-2026; en el producto aparecen
+  Congelación 09-07-2026 y Caducidad 09-07-2028 → fecha=2026-11-16. La fecha de pedido tampoco
+  sustituye por sí sola a la emisión. Si no encuentras la emisión, null, aunque veas otras fechas.
+- En evidencia_fecha copia la etiqueta, el texto literal y su ubicación REAL. No cambies el
+  nombre de una etiqueta de producto a «Fecha factura» para justificar la fecha elegida.
 - NO SON la fecha de emisión, aunque estén más a la vista: la de vencimiento o pago, la del
   albarán o el pedido que la factura agrupa, la de entrega o salida de almacén, la de impresión
   o descarga del PDF, el periodo facturado ("del 01/11 al 30/11"), la fecha de registro contable
@@ -140,19 +151,31 @@ respuesta es null, no la de hoy.
 En "vencimiento" pon la fecha en que hay que pagar, SOLO si aparece escrita: suele venir como
 "Vencimiento", "Fecha de vencimiento", "Vto." o "Fecha de pago". Si lo que pone son condiciones
 ("a 30 días", "pago a 60 días fecha factura") y no una fecha concreta, pon null: la fecha la
-calculamos nosotros. Nunca la deduzcas.
+calculamos nosotros. Nunca la deduzcas. «Efectivo» es el medio de pago, no una fecha ni prueba
+ de que esté pagada: si pone «Efectivo; Vto. 06/12/2026», vencimiento es 2026-12-06,
+ aunque la emisión sea 07/10/2026. Una fecha de vencimiento escrita prevalece sobre
+ «Efectivo», «Contado» u otra forma de pago; sin fecha explícita devuelve null.
 
 En "local_receptor" pon el LOCAL o establecimiento CONCRETO del cliente si aparece: normalmente entre paréntesis tras el nombre del cliente (p. ej. "(TAPETA LLORET)"), o en la dirección de entrega, la referencia o el pie. Copia el texto tal cual (p. ej. "TAPETA LLORET", "Can Mateu Tordera"). Si no aparece ningún local concreto, pon null.
 En "periodo_facturado" recoge el mes del periodo facturado SOLO cuando aparece expresamente en el documento. No uses la fecha de llegada ni supongas el mes anterior. Si abarca varios meses o es ambiguo, devuelve null.
 IMPORTANTE: distingue el NOMBRE COMERCIAL DEL ESTABLECIMIENTO de la RAZÓN SOCIAL y de la DIRECCIÓN FISCAL. Busca también las etiquetas "Nombre Cliente", "Cliente", "Centro", "Punto de venta" y "Dirección entrega" en todas las páginas. "Nombre Fiscal: DEL AMOR URIEL S.L.U.; Nombre Cliente: LA TAPETA (BLANES); Dir. Facturación: PERE QUART 13, TORDERA" significa nombre_receptor="DEL AMOR URIEL S.L.U." y local_receptor="LA TAPETA (BLANES)". Tordera es aquí el domicilio fiscal: NO lo añadas a local_receptor ni lo conviertas en el local. Aunque esa dirección fiscal se repita bajo Dirección entrega, conserva el nombre explícito LA TAPETA (BLANES). Copia el establecimiento literalmente; no deduzcas un local a partir del domicilio fiscal, del proveedor, ni de un CIF compartido. Si aparecen DOS establecimientos concretos diferentes como destinatarios de esta factura, recoge ambos en local_receptor para revisión; no elijas uno.
 
 En "lineas" pon UNA ENTRADA POR CADA LÍNEA DE PRODUCTO del detalle, en el orden en que aparecen.
+Conserva íntegra la descripción, incluidos formatos, pesos y unidades por envase. Ejemplo:
+«PATATA LIONESA POCHADA AGATA 2000 G/2UND» conserva «G/2UND», no «G/UND».
+Ese 2 describe el envase, no sustituye la cantidad facturada de la columna Unidades.
 - "descripcion": el texto del producto tal cual está escrito en la factura, sin traducir ni abreviar.
 - "cantidad" y "unidad": lo que diga la línea (2 / "cajas", 1.5 / "kg", 12 / "ud"). Busca la unidad también en la cabecera de su columna (Uds., Kg, Litros), no solo junto al número. Si no consta explícitamente, pon null en "unidad", pero conserva la cantidad y el precio legibles. El peso del nombre del producto (p. ej. harina 1 kg) no demuestra que la cantidad esté facturada en kg.
 - CANTIDAD Y PRECIO TIENEN QUE HABLAR DE LO MISMO: cantidad × precio_unitario debe dar el
   importe. Hay facturas con DOS columnas de cantidad ("UDS. PACK" y "UDS. TOTALES", o
   "BULTOS" y "UNIDADES"): si el precio es por unidad suelta, la cantidad que va aquí es la de
   UNIDADES TOTALES, no la de paquetes. Comprueba la multiplicación antes de responder.
+  También puede haber BULTOS o PIEZAS junto a PESO/KG: si el precio está en €/kg,
+  usa el peso facturado y unidad kg, no las cajas o piezas logísticas. Ejemplos:
+  1 CJ / 7,580 KG / 57,90 €/kg / 438,88 € → cantidad=7.580, unidad="kg", precio_unitario=57.90;
+  10 UN / 70,930 KG / 28,40 €/kg / 2014,41 € → cantidad=70.930, unidad="kg", precio_unitario=28.40.
+  Conserva el precio impreso aunque la multiplicación necesite redondeo a céntimos;
+  no sustituyas esos precios por importe dividido entre cajas o piezas.
 - IDENTIFICA LAS COLUMNAS ANTES DE COPIAR NÚMEROS: «IVA», «IVA %» o «Tipo» es el porcentaje fiscal, nunca la cantidad. «Unds», «Uds» o «Cantidad» son las unidades; «Precio» es el precio unitario; «Subtotal» es el importe de la línea. Respeta la alineación de cada fila con su cabecera, aunque IVA sea la primera columna numérica.
   Ejemplo de columnas IVA% / Unds / Precio / Subtotal: «21 / 1 / 2,90 / 2,90» significa cantidad=1, precio_unitario=2.90, importe=2.90; «21 / 2 / 5,95 / 11,90» significa cantidad=2, precio_unitario=5.95, importe=11.90. El 21 no son unidades. Una cantidad real de 21 unidades sí es válida si está en su columna y cuadra con el precio y el importe.
   Si cantidad × precio no concuerda con el importe, vuelve a leer las cabeceras y esa fila. No cambies números para hacer cuadrar la cuenta ni calcules un precio ficticio para justificar una cantidad dudosa. Conserva los datos legibles; los ambiguos deben ser null y "lectura_dudosa" debe ser true. Marca también true si no puedes distinguir las columnas con seguridad; false solo si la lectura es clara.
@@ -487,6 +510,7 @@ export async function extraerDatosDocumento(buffer, mimeType, { hoy = null, revi
   // Las pistas van con guión bajo para que se vea de un vistazo que NO vienen del modelo: son
   // lo que había escrito en el papel, y sirven precisamente para contrastarlas con lo que dijo.
   r.valor._exigirEvidenciaEmisor = true;
+  r.valor._exigirEvidenciaCabecera = true;
   if (pistas) r.valor._pistasFecha = pistas;
   if (evidenciaAbono) r.valor._evidenciaAbono = evidenciaAbono;
   if (r.recortado || response.stop_reason === "max_tokens") r.valor._lecturaIncompleta = true;
@@ -498,7 +522,7 @@ export async function extraerDatosDocumento(buffer, mimeType, { hoy = null, revi
 export async function comprobarRevisionHumana(datos, {dbAll} = {}) {
   const nuestras = dbAll ? await dbAll("SELECT empresa,cif FROM facturas_locales") : [];
   const fichas = dbAll ? await dbAll("SELECT clave,proveedor,nif,autor FROM facturas_proveedor_alias WHERE clave NOT LIKE 'revision-nif-%' OR clave LIKE 'revision-nif-confirmado-%'") : [];
-  const d = {...datos, _exigirEvidenciaEmisor:false};
+  const d = {...datos, _exigirEvidenciaEmisor:false, _exigirEvidenciaCabecera:false};
   const avisos = [...controlesLectura(d), ...avisosIdentidad(d,fichas)];
   // La fecha cotejada por la persona prevalece sobre la transcripción OCR anterior.
   // Una fecha futura todavía requiere una excepción explícita y no alimenta memoria.

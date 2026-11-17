@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {revisarFacturas} from '../../src/modules/facturas/calidad.js';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-const base={tipo:'factura',fecha:'2026-11-04',local:'Girona',total:121,base_imponible:100,cuota_iva:21};
+const base={tipo:'factura',numero_factura:'F-1',fecha:'2026-11-04',local:'Girona',total:121,base_imponible:100,cuota_iva:21};
 test('la revisión distingue desglose incompleto, diferencias y documentos coherentes',()=>{
  const [correcta,incompleta,diferente,cero,albaran]=revisarFacturas([base,{...base,cuota_iva:null},{...base,total:130},{...base,cuota_iva:0,total:100},{...base,tipo:'albaran',base_imponible:null,cuota_iva:null,total:null}],'2026-11-04');
  assert.deepEqual(correcta.calidad,[]);assert.ok(incompleta.calidad.includes('Falta base imponible o cuota de IVA'));

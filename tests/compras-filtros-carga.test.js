@@ -17,7 +17,7 @@ test('avisos de revisión aplican el tipo antes de paginar con parámetros SQL',
  assert.match(f.sql,/f.tipo = ANY\(\?::text\[\]\)/);assert.deepEqual(f.params,[['Blanes'],'A',['factura','ticket']]);
 });
 test('una carga antigua no sustituye la lista ni los totales del nuevo filtro',async()=>{
- const view={innerHTML:''},peticiones=[];
+ const view={innerHTML:'',isConnected:true,querySelector:()=>null},peticiones=[];
  const ctx={_facSeq:0,_facTimer:null,clearTimeout,FACTAB:'facturas',CURRENT:'facturas',FACF:{tipo:'',q:''},document:{getElementById:()=>view},skeleton:()=> 'cargando',facScope(){},facFiltrosActivos:()=>[1],viendoVarios:()=>false,facQS:()=>new URLSearchParams(ctx.FACF).toString(),facRevisionQS:()=>'',pidePorLocales:fn=>new Promise(resolve=>peticiones.push({url:fn(''),resolve})),apiOptional:async()=>[],facSumaTotales:r=>r.totales,renderFacturas:l=>l.map(f=>f.tipo).join(','),facCargarRecepciones(){},facCargarMiniaturas(){},facAvisoLocales(){},facDuplicados(){},errorCard:String};
  vm.createContext(ctx);vm.runInContext(app.slice(app.indexOf('async function loadFacturas()'),app.indexOf('// `ir` = true')),ctx);
  const antigua=ctx.loadFacturas();ctx.FACF.tipo='factura';const nueva=ctx.loadFacturas();

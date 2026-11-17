@@ -4,7 +4,7 @@ import {controlesLectura} from '../../src/modules/facturas/validacion-lectura.js
 import {revisarFacturas} from '../../src/modules/facturas/calidad.js';
 import {valorarAlbaran,referenciasAlbaran} from '../../src/modules/facturas/albaranes.js';
 import {decisionAvisos,avisosAceptados} from '../../src/modules/facturas/avisos-memoria.js';
-const f={id:8,tipo:'albaran',proveedor:'Prueba',fecha:'2026-10-28',local:'Girona',empresa:'Empresa',nif:'12345678Z',total:null,base_imponible:null};
+const f={id:8,tipo:'albaran',numero_factura:'A-8',proveedor:'Prueba',fecha:'2026-10-28',local:'Girona',empresa:'Empresa',nif:'12345678Z',total:null,base_imponible:null};
 test('albarán legible sin precios no genera incidencias monetarias ni convierte ausencia en cero',()=>{
  const lineas=normalizarLineas([{descripcion:'Aceite 1L',cantidad:2,unidad:'l'}],'albaran');
  assert.equal(lineas[0].importe,null);assert.equal(lineas[0].precio_unitario,null);assert.equal(lineas[0].dudosa,false);

@@ -573,18 +573,31 @@ function deltaMismoDiaSemana(serie, hoyISO, campo) {
 // la respuesta vale 30 s: si no, cada navegación arrastraba una petición extra compitiendo por
 // la conexión con la que sí trae los datos de la pantalla.
 let WA_PILL = { hasta: 0, ok: null };
+let WA_PILL_CARGA = null, WA_PILL_SESION = null;
 function pintarWaPill(ok) {
   const p = document.getElementById("waPill"); if (!p) return;
   p.innerHTML = `<span class="sdot ${ok ? "st-ok" : "st-crit"}"></span>${ok ? "Sara conectada" : "Sara caída"}`;
 }
 async function refreshWaPill(forzar = false) {
+  const sesion = token();
+  if (WA_PILL_SESION !== sesion) {
+    WA_PILL_SESION = sesion; WA_PILL_CARGA = null;
+    WA_PILL = { hasta: 0, ok: null };
+  }
   if (!forzar && WA_PILL.ok !== null && Date.now() < WA_PILL.hasta) return pintarWaPill(WA_PILL.ok);
-  try {
-    const r = await fetch("/api/whatsapp/status", { headers: { Authorization: "Bearer " + token() } });
-    const j = await r.json();
-    WA_PILL = { ok: !!(j && j.connected), hasta: Date.now() + 30000 };
-    pintarWaPill(WA_PILL.ok);
-  } catch { /* opcional: si falla, la píldora se queda como estaba */ }
+  if (WA_PILL_CARGA) return WA_PILL_CARGA;
+  const carga = (async () => {
+    try {
+      const r = await fetch("/api/whatsapp/status", { headers: { Authorization: "Bearer " + sesion } });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (token() !== sesion) return;
+      WA_PILL = { ok: !!(j && j.connected), hasta: Date.now() + 30000 };
+      pintarWaPill(WA_PILL.ok);
+    } catch { /* Un fallo de conexión no confirma que Sara esté desconectada. */ }
+  })();
+  WA_PILL_CARGA = carga;
+  try { await carga; } finally { if (WA_PILL_CARGA === carga) WA_PILL_CARGA = null; }
 }
 
 // ── Modal ligero ─────────────────────────────────────────────────────────────
@@ -8361,21 +8374,7 @@ const eur = (n) => num(Math.round(Number(n) || 0)) + " €";
 // Con céntimos. Para precios unitarios, donde redondear a euros enteros se carga justo el
 // dato: un aceite que pasa de 9,50 a 9,90 se vería como «10 €» las dos veces.
 const eur2 = (n) => (Number(n) || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: "always" }) + " €";
-function renderFacturas(list, pend, stats, empresas) {
-  facScope();
-  const empOpts =['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
-  const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
-  const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"], ["automatico", "Pago automático"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
-  // Las cifras salen de `totales`, que el servidor calcula con el MISMO filtro: así cambian
-  // al filtrar, que es lo que se espera al poner un filtro.
-  const resumen = facKpisHtml();
-  // Barra simple: buscar (en vivo, como estaba) y un botón que abre el panel con todo lo
-  // demás. Antes había seis campos siempre a la vista para algo que se toca de vez en
-  // cuando, y se comían la pantalla por encima de la tabla, que es lo que se viene a ver.
-  // Buscar y los botones van EN LA MISMA FILA que las pestañas. Antes era una fila entera para
-  // un campo de texto: sesenta píxeles que empujaban las facturas fuera de la pantalla en un
-  // portátil, y lo que se viene a ver aquí es la tabla.
-  const toolbar = facChipsHtml();
+function facEstadisticasHtml(stats) {
   const maxLocal = Math.max(1, ...(((stats && stats.porLocal) || []).map((x) => Number(x.total) || 0)));
   // Con un establecimiento elegido el desglose por local sobra: sería una sola barra al 100%.
   // PLEGADOS Y AL FINAL. Están bien tenerlos, pero encima de la tabla se comían el sitio de lo
@@ -8398,9 +8397,27 @@ function renderFacturas(list, pend, stats, empresas) {
   // los días.
   const vizGrid = (porLocal && topProv) ? `<div class="grid g2" style="margin-top:16px">${porLocal}${topProv}</div>`
     : (porLocal || topProv) ? `<div style="margin-top:16px">${porLocal}${topProv}</div>` : "";
+  return vizGrid;
+}
+function renderFacturas(list, pend, stats, empresas) {
+  facScope();
+  const empOpts =['<option value="">Todas las empresas</option>'].concat((empresas || []).map((e) => `<option value="${esc(e)}" ${FACF.empresa === e ? "selected" : ""}>${esc(e)}</option>`)).join("");
+  const tipoOpts = ['<option value="">Todos los tipos</option>'].concat(["factura", "albaran", "ticket", "otro"].map((t) => `<option value="${t}" ${FACF.tipo === t ? "selected" : ""}>${cap(t)}</option>`)).join("");
+  const estOpts = [["", "Todos los estados"], ["pagada", "Pagadas"], ["pendiente", "Pendientes"], ["automatico", "Pago automático"]].map(([v, l]) => `<option value="${v}" ${FACF.estado === v ? "selected" : ""}>${l}</option>`).join("");
+  // Las cifras salen de `totales`, que el servidor calcula con el MISMO filtro: así cambian
+  // al filtrar, que es lo que se espera al poner un filtro.
+  const resumen = facKpisHtml();
+  // Barra simple: buscar (en vivo, como estaba) y un botón que abre el panel con todo lo
+  // demás. Antes había seis campos siempre a la vista para algo que se toca de vez en
+  // cuando, y se comían la pantalla por encima de la tabla, que es lo que se viene a ver.
+  // Buscar y los botones van EN LA MISMA FILA que las pestañas. Antes era una fila entera para
+  // un campo de texto: sesenta píxeles que empujaban las facturas fuera de la pantalla en un
+  // portátil, y lo que se viene a ver aquí es la tabla.
+  const toolbar = facChipsHtml();
+  const vizGrid = facEstadisticasHtml(stats);
   const pendCard=facPendientesHtml(pend);
   // La tabla va aparte y dentro de #facRes: es lo único que se repinta al filtrar en vivo.
-  return `${facHeader()}${resumen}${toolbar}<details class="cont-review-notice" id="facAvisos"><summary class="btn">Pendientes de revisión</summary><p class="mut">Abre un documento para ver qué necesita y resolverlo. Al guardar volverás a esta lista. Los avisos de documentos ya contabilizados siguen los filtros de la tabla. Las recepciones, los posibles duplicados y los documentos sin asignar se filtran por establecimiento, empresa y tipo, pero no por la búsqueda ni el periodo. Los documentos sin establecimiento aparecen en Todos los establecimientos.</p><div id="facCalidadAvisos">${facCalidadHtml(list)}</div><div id="facRecepciones"></div><div id="facDups"></div><div id="facLocalesRaros"></div><div id="facPendientes">${pendCard}</div></details><div id="facRes">${facTablaHtml(list)}</div>${vizGrid}`;
+  return `${facHeader()}${resumen}${toolbar}<details class="cont-review-notice" id="facAvisos"><summary class="btn">Pendientes de revisión</summary><p class="mut">Abre un documento para ver qué necesita y resolverlo. Al guardar volverás a esta lista. Los avisos de documentos ya contabilizados siguen los filtros de la tabla. Las recepciones, los posibles duplicados y los documentos sin asignar se filtran por establecimiento, empresa y tipo, pero no por la búsqueda ni el periodo. Los documentos sin establecimiento aparecen en Todos los establecimientos.</p><div id="facCalidadAvisos">${facCalidadHtml(list)}</div><div id="facRecepciones"></div><div id="facDups"></div><div id="facLocalesRaros"></div><div id="facPendientes">${pendCard}</div></details><div id="facRes">${facTablaHtml(list)}</div><div id="facEstadisticas">${vizGrid}</div>`;
 }
 function facPendientesHtml(pend) {
   const pendRow = (p) => {
@@ -9671,6 +9688,15 @@ function facAlternarFecha() {
  FAC_SEL=new Set();
  facRefresh();
 }
+function facResumenDocumental(f) {
+ return f?.auditoria_completa?.vigente===true
+   && f.auditoria_completa.detalle_documento?.tipo==='resumen_albaranes'
+   && f.auditoria_completa.detalle_documento.confirmado_original===true;
+}
+function facResumenDocumentalHtml(f) {
+ if(!facResumenDocumental(f))return '';
+ return `<p class="mut"><b>Resumen de albaranes; original sin productos.</b><br>${esc(f.auditoria_completa.detalle_documento.referencias)}<br>Ausencia de productos comprobada manualmente. Esta revisión no acredita la conciliación de los albaranes ni el pago.</p>`;
+}
 function facDistintivoAuditoria(f) {
  const a=f.auditoria_completa;
  if(!a)return '';
@@ -9681,11 +9707,22 @@ async function facConfirmarAuditoria(id) {
  try {
   const r=await api(`/api/facturas/${id}/auditoria-completa`);
   const puntos=[['original','He leído todas las páginas del original.'],['identidad','Proveedor, NIF, empresa y establecimiento coinciden.'],['fechas','Número, fecha y vencimiento están comprobados.'],['importes','Bases, impuestos, descuentos y total coinciden.'],['lineas','Productos, cantidades, unidades y precios están comprobados.'],['duplicados','He comprobado duplicados y relación con albaranes.'],['drive','He comprobado el nombre y la carpeta del archivo en Drive.']];
-  const ov=modal('Confirmar revisión completa',`<p><b>${esc(r.proveedor||'Documento')} · ${esc(r.numero||'#'+id)}</b></p><p>Marca solo lo que hayas comprobado con el original. Este distintivo registra una revisión manual; no lo concede la lectura automática.</p><form id="auditForm">${puntos.map(([k,l])=>`<p><label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="${k}" required> ${l}</label></p>`).join('')}<div class="field"><label for="auditNombre">Nombre del archivo comprobado</label><input id="auditNombre" required maxlength="2000"></div><div class="field"><label for="auditRuta">Carpeta completa de Drive comprobada</label><input id="auditRuta" required maxlength="2000" placeholder="Contabilidad / Empresa / Año / Mes / Local"></div><p class="mut">Si los datos o las líneas cambian, será necesario volver a revisarlo. La carpeta de Drive queda registrada tal como la has comprobado ahora.</p><p id="auditError" role="alert"></p><div class="toolbar"><button class="btn" type="button" data-close>Cancelar</button><button class="btn primary" type="submit">Marcar revisado al 100 %</button></div></form>`);
+  const ov=modal('Confirmar revisión completa',`<p><b>${esc(r.proveedor||'Documento')} · ${esc(r.numero||'#'+id)}</b></p><p>Marca solo lo que hayas comprobado con el original. Este distintivo registra una revisión manual; no lo concede la lectura automática.</p><form id="auditForm">${r.permite_resumen ? '<p><label><input type="checkbox" id="auditResumen"> El original solo resume albaranes y no contiene productos.</label></p><div class="field" id="auditResumenCampos" hidden><label for="auditReferencias">Referencias del original: números de albarán, fechas e importes</label><textarea id="auditReferencias" maxlength="2000" rows="3"></textarea><p class="mut">Copia lo que aparece en el original. No se crean productos ni se vinculan albaranes automáticamente.</p></div>' : ''}${puntos.map(([k,l])=>`<p><label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="${k}" required> <span ${k==='lineas'?'id="auditLineasTexto"':''}>${l}</span></label></p>`).join('')}<div class="field"><label for="auditNombre">Nombre del archivo comprobado</label><input id="auditNombre" required maxlength="2000"></div><div class="field"><label for="auditRuta">Carpeta completa de Drive comprobada</label><input id="auditRuta" required maxlength="2000" placeholder="Contabilidad / Empresa / Año / Mes / Local"></div><p class="mut">Si los datos o las líneas cambian, será necesario volver a revisarlo. La carpeta de Drive queda registrada tal como la has comprobado ahora.</p><p id="auditError" role="alert"></p><div class="toolbar"><button class="btn" type="button" data-close>Cancelar</button><button class="btn primary" type="submit">Marcar revisado al 100 %</button></div></form>`);
+  const resumen=ov.querySelector('#auditResumen');
+  if(resumen)resumen.onchange=()=>{
+   ov.querySelector('#auditResumenCampos').hidden=!resumen.checked;
+   ov.querySelector('#auditReferencias').required=resumen.checked;
+   ov.querySelector('#auditLineasTexto').textContent=resumen.checked
+    ? 'He comprobado el resumen y que el original no contiene productos, cantidades ni precios de productos.'
+    : 'Productos, cantidades, unidades y precios están comprobados.';
+   ov.querySelector('[name="lineas"]').checked=false;
+  };
   ov.querySelector('#auditForm').onsubmit=async e=>{
    e.preventDefault();const boton=e.submitter;boton.disabled=true;boton.textContent='Guardando…';
    try{
-    await apiSend('POST',`/api/facturas/${id}/auditoria-completa`,{huella:r.huella,comprobaciones:Object.fromEntries(puntos.map(([k])=>[k,ov.querySelector(`[name="${k}"]`).checked])),archivo_nombre:ov.querySelector('#auditNombre').value,archivo_ruta:ov.querySelector('#auditRuta').value});
+    const comprobaciones=Object.fromEntries(puntos.map(([k])=>[k,ov.querySelector(`[name="${k}"]`).checked]));
+    if(resumen?.checked)comprobaciones.detalle_documento={tipo:'resumen_albaranes',confirmado_original:true,referencias:ov.querySelector('#auditReferencias').value.trim()};
+    await apiSend('POST',`/api/facturas/${id}/auditoria-completa`,{huella:r.huella,comprobaciones,archivo_nombre:ov.querySelector('#auditNombre').value,archivo_ruta:ov.querySelector('#auditRuta').value});
     await facTerminarRevision(ov);toast('Revisión completa registrada');
    }catch(error){ov.querySelector('#auditError').textContent=error.message;boton.disabled=false;boton.textContent='Marcar revisado al 100 %';}
   };
@@ -9711,7 +9748,7 @@ function facTablaHtml(list) {
     facDistintivoAuditoria(f),
     f.tipo && f.tipo !== "factura" ? `<span class="pill" style="font-size:10px">${esc(f.tipo)}</span>` : "",
     f.revisar ? `<span class="pill warn" style="font-size:10px" title="${esc(facRevisarTxt(f).join(" · "))}">revisar</span>` : "",
-    f.lineas_estado === "descuadre" ? `<span class="pill warn" style="font-size:10px" title="El detalle leído no cuadra con la referencia del documento">descuadre</span>` : "",
+    f.lineas_estado === "descuadre" && !facResumenDocumental(f) ? `<span class="pill warn" style="font-size:10px" title="El detalle leído no cuadra con la referencia del documento">descuadre</span>` : "",
     facPillVinculo(f, true),
     // Gasto de toda la sociedad: el papel está archivado aquí, pero el importe se reparte entre
     // los locales de esa empresa al sumar. Sin la marca parecería un gasto de este local.
@@ -9991,7 +10028,7 @@ function facFicha(id) {
     facPillPago(f),
     facDistintivoAuditoria(f),
     f.tipo && f.tipo !== "factura" ? `<span class="pill">${esc(f.tipo)}</span>` : "",
-    f.lineas_estado === "descuadre" ? `<span class="pill warn" title="${esc(f.lineas_aviso || "El detalle leído no suma la base imponible")}">descuadre</span>` : "",
+    f.lineas_estado === "descuadre" && !facResumenDocumental(f) ? `<span class="pill warn" title="${esc(f.lineas_aviso || "El detalle leído no suma la base imponible")}">descuadre</span>` : "",
     facPillVinculo(f),
   ].filter(Boolean).join(" ");
 
@@ -10039,7 +10076,7 @@ function facFicha(id) {
       </div>
     </div>
     <details class="card fold" style="margin:14px 0 0" id="ficLineas">
-      <summary><h3>Productos y costes leídos</h3><span class="foldr"><span class="pill ${["dudas","descuadre"].includes(f.lineas_estado) ? "bad" : ""}" id="ficNLin">${["dudas","descuadre"].includes(f.lineas_estado) ? "Por revisar" : "Ver detalle"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+      <summary><h3>Productos y costes leídos</h3><span class="foldr"><span class="pill ${!facResumenDocumental(f) && ["dudas","descuadre"].includes(f.lineas_estado) ? "bad" : ""}" id="ficNLin">${facResumenDocumental(f) ? "Resumen sin productos" : ["dudas","descuadre"].includes(f.lineas_estado) ? "Por revisar" : "Ver detalle"}</span><span class="car">${ic("chev", 16)}</span></span></summary>
       <div id="ficLinCuerpo"><p class="mut" style="margin:0">Cargando…</p></div>
     </details>
     ${f.revisar&&f.revisar!=='[]'?'<p><label><input type="checkbox" id="ficConfirmarAvisos"> Aceptar como correcto: he comprobado estos avisos con el original</label></p><p class="mut">Estos avisos quedarán resueltos para esta factura. Si cambian sus datos, se comprobarán de nuevo. El IVA y las líneas pendientes se revisan por separado.</p>':''}
@@ -10109,7 +10146,7 @@ function facFicha(id) {
     try {
       const j = await apiRaw(`/api/facturas/${encodeURIComponent(id)}/lineas`);
       const ls = j.lineas || [];
-      ov.querySelector("#ficNLin").textContent = ls.length ? `${num(ls.length)} línea${ls.length === 1 ? "" : "s"}` : "sin detalle";
+      ov.querySelector("#ficNLin").textContent = ls.length ? `${num(ls.length)} línea${ls.length === 1 ? "" : "s"}` : facResumenDocumental(j.factura) ? "Resumen sin productos" : "sin detalle";
       // QUÉ DESCUADRE ES. La etiqueta decía «descuadre» y ahí se acababa: no se veía cuánto
       // suman las líneas, cuánto dice la factura ni de cuánto va la cosa. Sin eso no se puede
       // perseguir, y una factura marcada que no se puede revisar acaba ignorándose.
@@ -10139,7 +10176,7 @@ function facFicha(id) {
                    gasto, ensucia «Qué compramos» y descuadra la factura. Se borra. */""}
              <td class="r"><button class="linkbtn mut" data-linborrar="${l.linea_id}" title="Esta línea no es un producto (un subtotal, un porte…): se borra" style="padding:0 4px">✕</button></td></tr>`).join("")}</tbody></table></div>
            <p class="mut" style="margin:8px 0 0;font-size:12px">Copia los datos del original y sal del recuadro: se guardan solos. Cantidad, precio e importe se conservan por separado; cambiar uno no recalcula los otros. Usa cantidades negativas en las devoluciones. La ✕ elimina una línea leída por error.</p>`
-        : `<p class="mut" style="margin:0">De esta factura no se ha leído el detalle por líneas.</p>`;
+        : facResumenDocumentalHtml(j.factura) || `<p class="mut" style="margin:0">De esta factura no se ha leído el detalle por líneas.</p>`;
 
       // Los cargos integrados en la base son gastos del documento, nunca productos.
       const cargosGuardados=j.cargos_base||[];
@@ -10627,10 +10664,10 @@ async function facRevisionRecepcion(id) {
   try {
     const j=await apiRaw(`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`);
     const f=j.data, d=f.resultado?.datos || {}, segunda=f.resultado?.segunda || {};
-    const campos=[['proveedor','Proveedor'],['nif_proveedor','NIF del proveedor'],['fecha','Fecha de emisión'],['numero_factura','Número de documento'],['base_imponible','Base imponible'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['retencion','Retención'],['recargo_equivalencia','Recargo de equivalencia'],['otros_cargos','Otros cargos'],['total','Total']];
+    const campos=[['proveedor','Proveedor'],['nif_proveedor','NIF del proveedor'],['fecha','Fecha de emisión'],['vencimiento','Vencimiento escrito en el original'],['numero_factura','Número de documento'],['base_imponible','Base imponible'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['retencion','Retención'],['recargo_equivalencia','Recargo de equivalencia'],['otros_cargos','Otros cargos'],['total','Total']];
     const numericos=new Set(['base_imponible','porcentaje_iva','cuota_iva','retencion','recargo_equivalencia','otros_cargos','total']);
     const avisos=f.resultado?.avisos || [];
-    const ov=modal('Revisar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo" name="tipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${k==='fecha'?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" data-close>Revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
+    const ov=modal('Revisar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo" name="tipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${['fecha','vencimiento'].includes(k)?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='vencimiento' ? ' · Déjalo vacío si el original no indica una fecha; no la deduzcas de Efectivo o Contado.' : ''}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" data-close>Revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
     facPrepararModalRevision(ov,'Pendiente de validar · No contabilizado todavía','fac-recepcion-revision',id,d,avisos);
     ov.querySelector('.modal').style.width='min(1050px, 96vw)';
     ov.querySelector('.modal').style.maxWidth='1050px';
@@ -10685,14 +10722,14 @@ async function loadFacturas() {
     if (FACTAB === "pagos") return loadPagos();
     if (FACTAB === "conciliar") return loadConciliacion();
     // Igual que en reservas: una petición por local y se juntan las filas.
-    const [lst, pend, stats, empresas] = await Promise.all([
+    // La tabla no espera a los informes anuales ni a los documentos sin asignar.
+    // Capturamos las consultas antes de esperar: otro filtro puede cambiar el ámbito.
+    const pendientesCarga = apiOptional("/api/facturas/pendientes?"+facRevisionQS());
+    const estadisticasCarga = (viendoVarios() || facFiltrosActivos().length || FACF.q)
+      ? Promise.resolve(null)
+      : apiOptional("/api/facturas/stats" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : ""));
+    const [lst, empresas] = await Promise.all([
       pidePorLocales((loc) => { const q = facQS(loc); return "/api/facturas" + (q ? "?" + q : ""); }, { raw: true }),
-      apiOptional("/api/facturas/pendientes?"+facRevisionQS()),
-      // El resumen viene YA AGREGADO del servidor y es de UN local. Viendo varios juntos
-      // enseñaría el de uno solo junto a una tabla con los dos, que es la peor mezcla posible:
-      // un número que parece el total y no lo es. Se pide solo cuando hay un local.
-      (viendoVarios() || facFiltrosActivos().length || FACF.q) ? Promise.resolve(null)
-        : apiOptional("/api/facturas/stats" + (FACF.local ? "?local=" + encodeURIComponent(FACF.local) : "")),
       apiOptional("/api/facturas/empresas"),
     ]);
     if(!vigente())return;
@@ -10703,8 +10740,22 @@ async function loadFacturas() {
     FAC_EMPRESAS = empresas || [];
     FAC_TOT = facSumaTotales(lst);
     FAC_HAY_MAS = !!(lst && lst.hayMas);
-    FAC_PEND = pend || [];
-    view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, stats, empresas || []);
+    FAC_PEND = [];
+    view.innerHTML = renderFacturas(FAC_LIST, FAC_PEND, null, empresas || []);
+    const pendientesCaja = view.querySelector("#facPendientes");
+    if (pendientesCaja) pendientesCaja.innerHTML = '<p class="mut">Cargando documentos sin asignar…</p>';
+    pendientesCarga.then(pend => {
+      if (!vigente() || !view.isConnected) return;
+      FAC_PEND = pend || [];
+      if (pendientesCaja) pendientesCaja.innerHTML = pend === null
+        ? '<p class="mut">No se pudieron cargar los documentos sin asignar. Vuelve a abrir Compras para reintentar.</p>'
+        : facPendientesHtml(FAC_PEND);
+    });
+    estadisticasCarga.then(stats => {
+      if (!vigente() || !view.isConnected) return;
+      const caja = view.querySelector("#facEstadisticas");
+      if (caja) caja.innerHTML = facEstadisticasHtml(stats);
+    });
     facCargarRecepciones();
     facCargarMiniaturas(view);
     facAvisoLocales(); facDuplicados(); // no se esperan: la tabla ya está

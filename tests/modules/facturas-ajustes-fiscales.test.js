@@ -8,7 +8,7 @@ import {revisarFacturas} from '../../src/modules/facturas/calidad.js';
 import {huellaAuditoria} from '../../src/modules/facturas/auditoria-completa.js';
 import {huellaRevision} from '../../src/modules/facturas/avisos-memoria.js';
 import {filasAnuales,HEADERS} from '../../src/modules/facturas/sheets-anuales.js';
-const f={id:534,tipo:'factura',fecha:'2026-11-13',local:'Can Mateu - Tordera',base_imponible:150.7,cuota_iva:15.07,total:167.88,recargo_equivalencia:2.11,iva_desglose:[{base:150.7,tipo:10,cuota:15.07}],iva_estado:'manual'};
+const f={id:534,tipo:'factura',numero_factura:'022026-10/2606074',fecha:'2026-11-13',local:'Can Mateu - Tordera',base_imponible:150.7,cuota_iva:15.07,total:167.88,recargo_equivalencia:2.11,iva_desglose:[{base:150.7,tipo:10,cuota:15.07}],iva_estado:'manual'};
 test('Joric: recargo explícito explica total sin cambiar IVA',()=>{
  assert.equal(ajustesFiscales(f),2.11);
  assert.equal(validarIva(f.iva_desglose,f).ok,true);

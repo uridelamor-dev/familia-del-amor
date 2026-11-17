@@ -28,9 +28,25 @@ export function huellaAuditoria(f,lineas) {
  if(typeof cabecera.iva_desglose==='string'){try{cabecera.iva_desglose=JSON.parse(cabecera.iva_desglose);}catch{}}
  return createHash('sha256').update(JSON.stringify(normalizar({cabecera,lineas:[...lineas].sort((a,b)=>a.id-b.id).map(l=>campos(l,LINEA))}))).digest('hex');
 }
-export function validarConfirmacion(body,huella) {
+// Declaración manual ligada a la misma huella que el resto de la auditoría.
+// No convierte referencias de albaranes en productos ni modifica el resultado OCR.
+export function validarDetalleResumen(detalle,f,lineas) {
+ if(detalle==null)return null;
+ if(detalle.tipo!=='resumen_albaranes' || detalle.confirmado_original!==true
+   || f?.tipo!=='factura' || !Array.isArray(lineas) || lineas.length || leerCargosBase(f.cargos_base).length
+   || typeof detalle.referencias!=='string' || !detalle.referencias.trim() || detalle.referencias.length>2000)
+  throw Object.assign(new Error('El resumen requiere una factura sin productos, referencias del original y confirmación expresa.'),{status:400});
+ return {tipo:'resumen_albaranes',confirmado_original:true,referencias:detalle.referencias.trim()};
+}
+export function resumenDocumentalVigente(f) {
+ return f?.auditoria_completa?.vigente===true
+   && f.auditoria_completa.detalle_documento?.tipo==='resumen_albaranes'
+   && f.auditoria_completa.detalle_documento.confirmado_original===true;
+}
+export function validarConfirmacion(body,huella,documento={}) {
  if(!COMPROBACIONES.every(k=>body.comprobaciones?.[k]===true))throw Object.assign(new Error('Comprueba todos los puntos antes de marcar la revisión completa.'),{status:400});
  if(body.huella!==huella)throw Object.assign(new Error('El documento ha cambiado. Vuelve a abrirlo y revisa los datos actuales.'),{status:409});
+ validarDetalleResumen(body.comprobaciones?.detalle_documento,documento.f,documento.lineas);
  for(const campo of ['archivo_nombre','archivo_ruta'])if(typeof body[campo]!=='string'||!body[campo].trim()||body[campo].length>2000)throw Object.assign(new Error('Indica el nombre y la carpeta de Drive que has comprobado.'),{status:400});
 }
 
@@ -42,7 +58,20 @@ export async function cargarDistintivos(rows,dbAll) {
  FROM facturas_auditoria_completa a JOIN facturas f ON f.id=a.factura_id
  WHERE a.factura_id=ANY(?::int[]) ORDER BY a.factura_id,a.id DESC`,[rows.map(f=>f.id)]);
  const porId=new Map(auditorias.map(a=>[String(a.factura_id),a]));
- for(const f of rows){const a=porId.get(String(f.id));if(a)f.auditoria_completa={vigente:a.huella===huellaAuditoria(a.factura,a.lineas),autor:a.autor,fecha:a.fecha};}
+ for(const f of rows){
+  // Nunca reutilizar una clasificación de una respuesta anterior sin recotejarla.
+  delete f.auditoria_completa;
+  const a=porId.get(String(f.id));if(!a)continue;
+  const vigente=a.huella===huellaAuditoria(a.factura,a.lineas);
+  f.auditoria_completa={vigente,autor:a.autor,fecha:a.fecha};
+  if(vigente){
+   try{
+    const comprobaciones=typeof a.comprobaciones==='string'?JSON.parse(a.comprobaciones):a.comprobaciones;
+    const detalle=validarDetalleResumen(comprobaciones?.detalle_documento,a.factura,a.lineas);
+    if(detalle)f.auditoria_completa.detalle_documento=detalle;
+   }catch{} // Declaraciones antiguas o inválidas no conceden una excepción.
+  }
+ }
 }
 
 export function registrarAuditoriaCompleta(app,{auth,pool,puedeAccederLocal}) {
@@ -51,18 +80,18 @@ export function registrarAuditoriaCompleta(app,{auth,pool,puedeAccederLocal}) {
   if(!f)throw Object.assign(new Error('Factura no encontrada'),{status:404});
   if(!puedeAccederLocal(req,f.local))throw Object.assign(new Error('Sin acceso a esta factura'),{status:403});
   const lineas=(await client.query('SELECT * FROM factura_lineas WHERE factura_id=$1 ORDER BY id',[f.id])).rows;
-  return {f,huella:huellaAuditoria(f,lineas)};
+  return {f,lineas,huella:huellaAuditoria(f,lineas)};
  }
  app.get('/api/facturas/:id/auditoria-completa',auth,async(req,res)=>{
-  try{const {f,huella}=await leer(pool,req);res.json({ok:true,data:{huella,proveedor:f.proveedor,numero:f.numero_factura}});}
+  try{const {f,lineas,huella}=await leer(pool,req);res.json({ok:true,data:{huella,proveedor:f.proveedor,numero:f.numero_factura,permite_resumen:f.tipo==='factura'&&lineas.length===0&&leerCargosBase(f.cargos_base).length===0}});}
   catch(e){res.status(e.status||500).json({ok:false,error:e.message});}
  });
  app.post('/api/facturas/:id/auditoria-completa',auth,async(req,res)=>{
   const client=await pool.connect();
   try{
    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
-   const {f,huella}=await leer(client,req);
-   validarConfirmacion(req.body,huella);
+   const {f,lineas,huella}=await leer(client,req);
+   validarConfirmacion(req.body,huella,{f,lineas});
    if(!f.drive_url)throw Object.assign(new Error('Falta el original guardado en Drive.'),{status:400});
    await client.query(`INSERT INTO facturas_auditoria_completa(factura_id,huella,autor,comprobaciones,archivo_nombre,archivo_ruta) VALUES($1,$2,$3,$4,$5,$6)`,[f.id,huella,String(req.user.username||req.user.nombre||req.user.id),JSON.stringify(req.body.comprobaciones),req.body.archivo_nombre.trim(),req.body.archivo_ruta.trim()]);
    await recordarProveedorRevision((sql,p)=>client.query(sql,p),f,String(req.user.username||req.user.nombre||req.user.id));

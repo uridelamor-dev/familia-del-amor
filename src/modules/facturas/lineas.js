@@ -104,7 +104,13 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
     // Cuántas unidades traía cada paquete. Se guarda para poder explicar de dónde sale la
     // cantidad —«3 PACK × 150»— y para que se vea que aquí ha pasado algo.
     factor_unidad: factor,
-    precio_unitario: descuadreCantidad || lecturaDudosa ? null : precioNeto,
+    // Sin descuento ni conversión de envase, conserva el precio impreso cuando
+    // explica el importe al redondear a céntimos. Dividir el importe redondeado
+    // por kg inventaba decimales (438,88 / 7,580 → 57,899736 en vez de 57,90).
+    precio_unitario: descuadreCantidad || lecturaDudosa ? null
+      : precioBruto != null && cantidadFinal != null && !factor && (dto == null || dto === 0)
+        && neto != null && Math.abs(red(cantidadFinal * precioBruto) - neto) < 0.000001
+        ? precioBruto : precioNeto,
     importe: neto,
     // Lo de tarifa, para poder ver el descuento y notar si un mes deja de aplicarse.
     precio_bruto: precioBruto,
