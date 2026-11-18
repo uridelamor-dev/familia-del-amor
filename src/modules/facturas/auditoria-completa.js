@@ -52,11 +52,16 @@ export function validarConfirmacion(body,huella,documento={}) {
 
 export async function cargarDistintivos(rows,dbAll) {
  if(!rows.length)return;
- // Solo recupera líneas de documentos con una auditoría explícita, en una consulta.
- const auditorias=await dbAll(`SELECT DISTINCT ON(a.factura_id) a.*,to_jsonb(f) - 'drive_thumb' AS factura,
- COALESCE((SELECT jsonb_agg(to_jsonb(l)) FROM factura_lineas l WHERE l.factura_id=f.id),'[]'::jsonb) AS lineas
- FROM facturas_auditoria_completa a JOIN facturas f ON f.id=a.factura_id
- WHERE a.factura_id=ANY(?::int[]) ORDER BY a.factura_id,a.id DESC`,[rows.map(f=>f.id)]);
+ // Elegir primero la última auditoría evita releer las líneas por cada revisión
+ // anterior. La proyección comparte los campos de la huella, sin miniaturas/OCR.
+ const facturaCampos=[...CABECERA,'cargos_base','lineas_iva_incluido','recargo_equivalencia','retencion','otros_cargos'];
+ const objeto=(alias,keys)=>`jsonb_build_object(${keys.map(k=>`'${k}',${alias}.${k}`).join(',')})`;
+ const auditorias=await dbAll(`SELECT a.*,${objeto('f',facturaCampos)} AS factura,
+ COALESCE((SELECT jsonb_agg(${objeto('l',LINEA)}) FROM factura_lineas l WHERE l.factura_id=f.id),'[]'::jsonb) AS lineas
+ FROM (SELECT DISTINCT ON(factura_id) factura_id,huella,autor,fecha,comprobaciones
+       FROM facturas_auditoria_completa WHERE factura_id=ANY(?::int[])
+       ORDER BY factura_id,id DESC) a
+ JOIN facturas f ON f.id=a.factura_id`,[rows.map(f=>f.id)]);
  const porId=new Map(auditorias.map(a=>[String(a.factura_id),a]));
  for(const f of rows){
   // Nunca reutilizar una clasificación de una respuesta anterior sin recotejarla.

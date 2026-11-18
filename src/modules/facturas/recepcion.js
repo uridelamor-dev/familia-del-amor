@@ -11,7 +11,9 @@ export const RECEPCION_SCHEMA = `CREATE TABLE IF NOT EXISTS facturas_recepciones
   original BYTEA, estado TEXT NOT NULL DEFAULT 'pendiente', intentos INTEGER NOT NULL DEFAULT 0,
   proximo TIMESTAMPTZ NOT NULL DEFAULT NOW(), error TEXT, resultado JSONB, contexto JSONB,
   creado TIMESTAMPTZ NOT NULL DEFAULT NOW(), actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)`;
+);
+CREATE INDEX IF NOT EXISTS idx_recepcion_factura_fecha ON facturas_recepciones ((resultado->>'facturaId'), creado);
+CREATE INDEX IF NOT EXISTS idx_recepcion_hash_fecha ON facturas_recepciones (hash, creado);`;
 export function canalFactura(origen = 'Manual') {
   return ({manual:'Manual',web:'Manual',email:'Email',correo:'Email',gmail:'Email',drive:'Drive',whatsapp:'WhatsApp'})[String(origen).toLowerCase()] || 'Manual';
 }

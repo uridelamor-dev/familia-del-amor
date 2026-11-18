@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {listadoFacturasSQL} from '../src/modules/facturas/fecha-listado.js';
 
 const source = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 const start = source.indexOf('app.get("/api/facturas",');
@@ -21,7 +22,7 @@ async function consultar({facturas, albaranes}) {
     facturasQueryCategorias:async q=>q,
     facturasWhere:()=>({where:'',params:[]}),
     criterioFechaCompras:()=>({orden:'fecha DESC'}),
-    RECEPCION_SQL:'creado_en', DIA_RECEPCION_SQL:'creado_en', RECEPCION_REAL_SQL:'creado_en',
+    listadoFacturasSQL,
     SIN_ALBARANES:"COALESCE(tipo,'factura') <> 'albaran'",
     dbAll:async sql=>{
       const limite=Number(/LIMIT (\d+)/.exec(sql)?.[1]);

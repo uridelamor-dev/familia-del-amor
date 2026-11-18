@@ -9464,34 +9464,43 @@ function facAvisoAnio(f, revisar) {
  * abrir la pantalla. Con el observador, se piden al asomarse.
  */
 let THUMB_OBS = null;
+let THUMB_CARGA = null;
+function facCancelarMiniaturas() {
+  THUMB_OBS?.disconnect(); THUMB_OBS = null;
+  THUMB_CARGA?.abort(); THUMB_CARGA = null;
+}
 function facCargarMiniaturas(raiz) {
+  facCancelarMiniaturas();
   const cajas = [...(raiz || document).querySelectorAll("[data-thumb]")];
   if (!cajas.length) return;
-  if (!("IntersectionObserver" in window)) { cajas.forEach(facPintarMiniatura); return; }
-  THUMB_OBS?.disconnect();
+  THUMB_CARGA = new AbortController();
+  const signal = THUMB_CARGA.signal;
+  if (!("IntersectionObserver" in window)) { cajas.forEach(c => facPintarMiniatura(c, signal)); return; }
   THUMB_OBS = new IntersectionObserver((entradas, obs) => {
     for (const e of entradas) {
       if (!e.isIntersecting) continue;
       obs.unobserve(e.target);
-      facPintarMiniatura(e.target);
+      facPintarMiniatura(e.target, signal);
     }
   }, { rootMargin: "300px" });
   cajas.forEach((c) => THUMB_OBS.observe(c));
 }
 
-async function facPintarMiniatura(caja) {
+async function facPintarMiniatura(caja, signal) {
   const id = caja.getAttribute("data-thumb");
-  if (!id || caja.dataset.cargada) return;
+  if (!id || caja.dataset.cargada || !caja.isConnected || signal?.aborted) return;
   caja.dataset.cargada = "1";
   try {
-    const r = await fetch(`/api/facturas/${encodeURIComponent(id)}/miniatura`, { headers: { Authorization: "Bearer " + token() } });
+    const r = await fetch(`/api/facturas/${encodeURIComponent(id)}/miniatura`, { headers: { Authorization: "Bearer " + token() }, signal });
     if (!r.ok) { caja.remove(); return; }          // sin papel o sin Drive: la fila sigue igual
-    const url = URL.createObjectURL(await r.blob());
+    const blob = await r.blob();
+    if (!caja.isConnected || signal?.aborted) return;
+    const url = URL.createObjectURL(blob);
     const img = new Image();
     img.className = "thumb";
     img.alt = "";
     img.src = url;
-    img.onload = () => URL.revokeObjectURL(url);
+    img.onload = img.onerror = () => URL.revokeObjectURL(url);
     caja.replaceWith(img);
   } catch { caja.remove(); }
 }
@@ -12367,18 +12376,26 @@ async function facRefresh({mantenerRevision=false} = {}) {
     FAC_TOT = facSumaTotales(lst);
     FAC_HAY_MAS = !!(lst && lst.hayMas);
     box.innerHTML = facTablaHtml(FAC_LIST);
-    await Promise.allSettled([facDuplicados(), facCargarRecepciones(mantenerRevision ? FAC_RECEPCIONES_ANTES : null, mantenerRevision ? "actualizar" : "primera"), facAvisoLocales()]);
-    if(seq!==_facSeq || CURRENT!=="facturas" || !box.isConnected)return;
+    // Tabla y totales corresponden a la misma respuesta: se muestran juntos.
     const calidad=document.getElementById("facCalidadAvisos");if(calidad)calidad.innerHTML=facCalidadHtml(FAC_LIST);
-    const pend=await apiOptional("/api/facturas/pendientes?"+facRevisionQS());
-    if(seq!==_facSeq || CURRENT!=="facturas" || !box.isConnected)return;
-    FAC_PEND=pend||[];
-    const pendiente=document.getElementById("facPendientes");if(pendiente)pendiente.innerHTML=facPendientesHtml(FAC_PEND);
-    facCargarMiniaturas(box);
-    // Y las cifras de arriba, que son de lo filtrado: si no se repintan, dicen otra cosa que
-    // la tabla que tienen debajo, que es la forma más fácil de leer un número equivocado.
     const kpis = document.getElementById("facKpis");
     if (kpis) kpis.outerHTML = facKpisHtml();
+    facCargarMiniaturas(box);
+    box.classList.remove("livebusy");
+    // Guardar y seguir sí espera a toda la bandeja, pero la tabla ya es utilizable.
+    const [resultadoPend] = await Promise.allSettled([
+      apiOptional("/api/facturas/pendientes?"+facRevisionQS()),
+      facDuplicados(),
+      facCargarRecepciones(mantenerRevision ? FAC_RECEPCIONES_ANTES : null, mantenerRevision ? "actualizar" : "primera"),
+      facAvisoLocales()
+    ]);
+    if(seq!==_facSeq || CURRENT!=="facturas" || !box.isConnected)return;
+    const pend=resultadoPend.status==='fulfilled'?resultadoPend.value:null;
+    FAC_PEND=pend||[];
+    const pendiente=document.getElementById("facPendientes");
+    if(pendiente)pendiente.innerHTML=pend===null
+      ? '<p class="mut">No se pudieron cargar los documentos sin asignar. Vuelve a abrir Compras para reintentar.</p>'
+      : facPendientesHtml(FAC_PEND);
   } catch (e) {
     if (seq === _facSeq && e.message !== "noauth") box.innerHTML = errorCard(e.message);
   } finally {
@@ -18452,6 +18469,7 @@ function escribirUrl(view, sub) {
 function go(view, { desdeUrl = false } = {}) {
   if (!VIEWS[view]) view = "dashboard";
   // Retirar los refrescos de la pantalla anterior antes de construir la nueva.
+  facCancelarMiniaturas();
   if(typeof CONV!=="undefined"){convGuardarBorrador();clearInterval(CONV.timer);CONV.timer=null;}
   clearInterval(FIC_TIMER);FIC_TIMER=null;
   clearInterval(WA_POLL);WA_POLL=null;

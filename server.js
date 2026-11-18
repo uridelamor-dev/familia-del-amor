@@ -3,7 +3,7 @@ import {conciliarDocumentos} from './src/modules/facturas/conciliar-decision.js'
 import {nifsConfirmados} from './src/modules/facturas/identidad-confirmada.js';
 import {recordarProveedorRevision} from './src/modules/facturas/aprendizaje-revision.js';
 import {guardarDeshacerRevision,deshacerRevision} from './src/modules/facturas/deshacer-revision.js';
-import { criterioFechaCompras, RECEPCION_REAL_SQL, RECEPCION_SQL, DIA_RECEPCION_SQL } from './src/modules/facturas/fecha-listado.js';
+import { criterioFechaCompras, listadoFacturasSQL } from './src/modules/facturas/fecha-listado.js';
 import { completarIva } from './src/modules/facturas/iva-inferido.js';
 import { recuperarCarnet } from './src/modules/messaging/sara-carnet.js';
 import {rutasPaginas} from './src/modules/facturas/paginas-rutas.js';
@@ -3223,22 +3223,20 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     const query = scope ? { ...req.query, local: scope } : req.query;
     const { where, params } = facturasWhere(await facturasQueryCategorias(query));
     const LIMITE = 500;
-    const rows = await dbAll(`SELECT *, ${RECEPCION_SQL} AS recibido_en, ${DIA_RECEPCION_SQL} AS fecha_recepcion, (${RECEPCION_REAL_SQL} IS NOT NULL) AS recepcion_confirmada FROM facturas ${where} ORDER BY ${criterioFechaCompras(query).orden} LIMIT ${LIMITE}`, params);
-    // `drive_thumb` es la miniatura en base64 y NO puede viajar en la lista: son ~8 KB por
-    // factura, y con el tope de 500 serían cuatro megas de respuesta para pintar una tabla.
-    // Cada fila la pide por su lado (`/api/facturas/:id/miniatura`) y el navegador la cachea.
-    //
-    // El estado de pago se calcula AQUÍ y no en el panel: los umbrales («vencida», «esta
-    // semana») viven en un módulo puro con tests, y copiarlos al navegador sería tener dos
-    // verdades que un día dejan de coincidir sin que nadie se entere.
     const hoyMad = instanteMadrid(new Date()).fecha;
-    for (const r of rows) { delete r.drive_thumb; r.estado_pago = estadoPago(r, hoyMad); }
+    // Totales y lista son lecturas independientes, después de actualizar pagos.
+    // La lista no se entrega hasta comprobar también la vigencia de sus distintivos.
+    const filasCarga = dbAll(listadoFacturasSQL({where,orden:criterioFechaCompras(query).orden,limite:LIMITE}), params).then(async rows => {
+      for (const r of rows) { delete r.drive_thumb; r.estado_pago = estadoPago(r, hoyMad); }
+      await cargarDistintivos(rows,dbAll);
+      return rows;
+    });
     // Los totales se calculan sobre el MISMO filtro y SIN el tope: sumar solo las filas que se
     // enseñan daría un total corto en cuanto haya más de 500, y un total corto no se nota —
     // parece que se ha gastado menos—. Es una consulta agregada, no trae filas.
     // Los albaranes NO suman: son la entrega, no el pago. Se cuentan aparte para poder decir
     // cuántos se están dejando fuera — esconderlos sin más sería otra forma de mentir.
-    const t = await dbGet(
+    const totalesCarga = dbGet(
       `SELECT count(*) FILTER (WHERE ${SIN_ALBARANES})::int AS docs,
               COALESCE(SUM(base_imponible) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS base,
               COALESCE(SUM(cuota_iva) FILTER (WHERE ${SIN_ALBARANES}),0)::float AS iva,
@@ -3261,7 +3259,7 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
               COALESCE(SUM(total) FILTER (WHERE ${SIN_ALBARANES} AND COALESCE(pagado,0) = 0 AND COALESCE(pago_automatico,0)=0 AND vencimiento >= ? AND vencimiento <= ?),0)::float AS semana_importe
          FROM facturas ${where}`, // OJO con el orden: los «?» se numeran por su sitio en el SQL, y estos van ANTES del WHERE.
       [hoyISO(), hoyISO(), hoyISO(), hoyMas(7), hoyISO(), hoyMas(7), ...params]);
-    await cargarDistintivos(rows,dbAll);
+    const [rows,t] = await Promise.all([filasCarga,totalesCarga]);
     // La lista incluye albaranes aunque sus importes se excluyan del resumen fiscal.
     // Comparar solo `docs` ocultaba la continuación de listas mixtas de más de 500.
     const documentos = Number(t?.docs || 0) + Number(t?.albaranes || 0);
