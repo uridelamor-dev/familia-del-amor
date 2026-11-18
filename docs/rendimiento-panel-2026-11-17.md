@@ -51,3 +51,19 @@ Pendiente para después de publicar: repetir las tres entradas a Compras con tod
 - Pruebas nuevas verifican presentación inmediata y coherente, espera completa para continuar la revisión, errores de avisos, filtros sucesivos y cancelación de miniaturas.
 
 Validación conjunta actual: 915 pruebas superadas, sin fallos ni saltos, incluidas las pruebas SQL con PostgreSQL embebido. Sin push ni cambios de documentos en producción. La mejora real de navegación queda pendiente de medir tras publicar.
+
+## Comprobación publicada — 18/11/2026
+
+Tras publicar 44f657a, se accedió con Dirección y Todos los establecimientos, periodo Todo. La lista muestra 500 de 535 documentos, con distintivos de revisión vigentes y desactualizados. No se guardaron cambios contables.
+
+Dos entradas repetidas desde Proveedores hasta «Seleccionar todas» visible: 1470 y 1434 ms. Referencia previa: mediana 6244 ms. Reducción orientativa cercana al 77 %, con el coste de automatización incluido, distinta carga del servidor y un censo ligeramente mayor. La primera entrada no se incluye porque su resultado numérico quedó truncado en la captura; no se reconstruye a partir de la duración total de herramienta.
+
+Reapertura del formulario Joric 022026-10/2606074 hasta «Guardar cambios» visible: 339 ms. El original seguía cargando por separado y después apareció el visor; no se dispone de una medición continua fiable del tiempo de descarga/renderizado. Sin errores en el registro de consola disponible. El formulario ya no bloquea por Drive, por lo que no procede atribuir su espera al formulario.
+
+Mejora local posterior, aún sin push: cancelar la descarga pendiente de original al cerrar la ficha y ofrecer «Reintentar vista previa» en el propio formulario si falla. No se añade caché de documentos ni de permisos. Pruebas nuevas: cancelación, respuesta tardía, PDF correcto y reintento. Regresión de Compras/revisión: 918 superadas sin saltos. La suite adicional antigua panel-compras-vista contiene 11 aserciones fallidas tanto en el código publicado como en el modificado (verificadas contra HEAD); no son regresiones de este cambio y queda pendiente actualizar esas expectativas históricas.
+
+## Actualización de las 11 comprobaciones históricas
+
+Revisadas las expectativas contra el comportamiento acordado: resumen compacto sin antiguas tarjetas de pago; base e IVA disponibles cuando faltan datos; fecha de factura/recepción compacta; unidades agregables frente a última compra; bandas por la fecha elegida; visor compatible con PDF; sección «Importes»; recálculo con dependencias inyectables; NIF confirmado en memoria y protección de la edición manual. Se sustituyeron varias aserciones de texto de código por ejecución de los helpers con ejemplos y casos incompletos. Las pruebas asíncronas de proveedor verifican además edición y borrado manual durante la consulta y respuestas fuera de orden.
+
+Validación final conjunta: 997 pruebas superadas, 0 fallos, 0 saltos, incluyendo las 11 anteriormente fallidas, carga de originales y pruebas SQL. Comprobaciones de sintaxis y diff correctas. No se han modificado datos contables.

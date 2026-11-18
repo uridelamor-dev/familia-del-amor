@@ -18,17 +18,32 @@ const CSS_PANEL = cssPanel("base.css") + "\n" + cssPanel("panel.css");
 const css = CSS_PANEL;
 const server = readFileSync(new URL("../server.js", import.meta.url), "utf8");
 
+// Ejecutar los helpers evita acoplar la comprobación a comillas o estilos del código.
+function helper(nombre, siguiente, contexto={}) {
+  const inicio=panel.indexOf('function '+nombre+'(');
+  assert.ok(inicio>=0);
+  const fin=panel.indexOf('function '+siguiente+'(',inicio);
+  assert.ok(fin>inicio);
+  return vm.runInNewContext(panel.slice(inicio,fin).replace(/async\s*$/, '')+';'+nombre,contexto);
+}
+const texto={esc:String,num:String,eur:n=>n+' €'};
+function kpis(t){return helper('facKpisHtml','facRevisarTxt',{...texto,FAC_TOT:t,facFiltrosActivos:()=>[]})();}
+function fechaCelda(tipo,f){return helper('facFechaCelda','facAlternarFecha',{
+ esc:String,FACF:{fecha_tipo:tipo},facFechaPrincipal:x=>tipo==='recepcion'?x.fecha_recepcion:x.fecha,
+ fechaMini:x=>x?new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(x+'T12:00:00Z')):''})(f);}
+
 describe("Compras: las cifras de arriba contestan la pregunta del día", () => {
-  test("qué hay que pagar y cuándo, no cuánto se gastó", () => {
-    // Antes eran cuatro tarjetas —facturas, base, IVA, total— que son cuatro vistas del mismo
-    // número; para saber si algo estaba vencido había que irse a la pestaña de Pagos.
-    assert.match(panel, /stat\("Por pagar"/);
-    assert.match(panel, /stat\("Vence en 7 días"/);
-    assert.match(panel, /Vencido<\/div>/);
+  test("el resumen compacto conserva cifras y no recupera las tarjetas retiradas", () => {
+    const html=kpis({docs:2,total:121,base:100,iva:21});
+    assert.match(html, /2<\/b> facturas/);assert.match(html,/121 €/);
+    assert.doesNotMatch(html,/Por pagar|Vence en 7 días|statsm/);
   });
 
-  test("y la base y el IVA no se pierden: bajan a una línea", () => {
-    assert.match(panel, /base \$\{esc\(eur\(t\.base\)\)\} · IVA \$\{esc\(eur\(t\.iva\)\)\}/);
+  test("base e IVA distinguen un desglose completo de datos disponibles", () => {
+    assert.match(kpis({docs:1,total:121,base:100,iva:21}),/base 100 € · IVA 21 €/);
+    const html=kpis({docs:2,total:121,base:100,iva:21,desgloseIncompleto:1,totalAusente:1});
+    assert.match(html,/base disponible 100 € · IVA disponible 21 €/);
+    assert.match(html,/sin base o IVA completos/);assert.match(html,/sin importe total/);
   });
 
   test("el servidor los calcula con el MISMO filtro que la tabla", () => {
@@ -59,8 +74,10 @@ describe("Compras: la tabla", () => {
     assert.match(panel, /const conLocal = !localActualFE\(\);/);
   });
 
-  test("la fecha se lee («16 ago»), no se descifra («2026-08-16»)", () => {
-    assert.match(panel, /esc\(fechaCorta\(f\.fecha\) \|\| \(f\.fecha \|\| ""\)\.slice\(0, 10\)\)/);
+  test("la celda distingue fecha de factura y recepción y permite invertirlas", () => {
+    const f={fecha:'2026-08-16',fecha_recepcion:'2026-08-18',recepcion_confirmada:true};
+    assert.match(fechaCelda('factura',f),/<span>16 ago<\/span>.*Recibido: 18 ago/);
+    assert.match(fechaCelda('recepcion',f),/<span>18 ago<\/span>.*Factura: 16 ago/);
   });
 
   test("la fila entera abre la ficha, pero la casilla de marcar sigue siendo suya", () => {
@@ -76,8 +93,12 @@ describe("Productos: la tabla se lee de un vistazo", () => {
     assert.match(css, /\.linkbtn\.prod\{[^}]*text-overflow:ellipsis/);
   });
 
-  test("la cantidad lleva su unidad, y solo si es una", () => {
-    assert.match(panel, /g\.unidad \? ` <span class="mut" style="font-size:11px">\$\{esc\(g\.unidad\)\}<\/span>` : ""/);
+  test("la cantidad lleva su unidad y no suma medidas distintas", () => {
+    const cantidad=helper('compCantidadCelda','compPrecioCelda',texto);
+    assert.match(cantidad({cantidad:12,unidad:'kg'}),/12 .*kg/);
+    assert.equal(cantidad({cantidad:12}), '12');
+    assert.match(cantidad({cantidad:null,ultimaLectura:{cantidad:3,unidad:'caja'},veces:2}),/3 caja.*Sin sumar medidas distintas/);
+    assert.match(cantidad({}),/Sin cantidad/);
     assert.match(server, /array_agg\(DISTINCT l\.unidad\) AS unidades/);
   });
 
@@ -126,10 +147,10 @@ describe("todo se entrega también en móvil", () => {
     assert.match(css, /\.tbl td:first-child,\.tbl th:first-child\{max-width:180px\}/);
   });
 
-  test("la fecha pierde el día de la semana, que son 34 px", () => {
-    assert.match(panel, /<span class="solosm">\$\{esc\(fechaMini\(f\.fecha\)/);
-    assert.match(css, /\.solosm\{display:none\}/);
-    assert.match(css, /\.solosm\{display:inline\}/);
+  test("la fecha compacta no incluye día de semana en ninguna anchura", () => {
+    const html=fechaCelda('factura',{fecha:'2026-08-16'});
+    assert.match(html,/<span>16 ago<\/span>/);assert.doesNotMatch(html,/dom|domingo|2026-08-16/);
+    assert.match(fechaCelda('recepcion',{fecha:'2026-08-16',fecha_recepcion:'2026-08-18',recepcion_confirmada:false}),/18 ago · Registro/);
   });
 
   test("y el importe no se parte en dos líneas", () => {
@@ -147,10 +168,13 @@ describe("las listas largas se recorren", () => {
     assert.match(panel, /j\.grupos\.length > 25 \? " alta" : ""/);
   });
 
-  test("y hay bandas de mes, pero solo cuando la lista es larga", () => {
-    // En una lista corta la banda es más ruido que ayuda.
-    assert.match(panel, /function bandasDeMes\(list, fila, columnas, minimo = 30\)/);
-    assert.match(panel, /if \(list\.length < minimo\) return list\.map\(fila\)\.join\(""\)/);
+  test("las bandas respetan el tamaño y la fecha elegida", () => {
+    const bandas=helper('bandasDeMes','facCalidadHtml',{esc:String,cap:s=>s,MES_LARGO:['enero','febrero']});
+    const filas=[{fecha:'2026-01-02',fecha_recepcion:'2026-02-01'},{fecha:'2026-01-03',fecha_recepcion:'2026-02-02'}];
+    assert.equal(bandas(filas,()=>'<fila>',6),'<fila><fila>');
+    assert.match(bandas(filas,()=>'<fila>',6,2),/enero 2026/);
+    const html=bandas(filas,()=>'<fila>',6,2,f=>f.fecha_recepcion);
+    assert.match(html,/febrero 2026/);assert.equal((html.match(/sepmes/g)||[]).length,1);
   });
 });
 
@@ -272,16 +296,17 @@ describe("la ficha de una factura", () => {
     assert.match(css, /\.ficha\{display:grid;grid-template-columns:minmax\(200px,300px\) 1fr/);
   });
 
-  test("y si lo que vuelve no es una imagen, lo dice con palabras", () => {
-    // Pintarlo daría el icono de foto rota, que parece un fallo del panel.
-    assert.match(panel, /startsWith\("image\/"\)/);
+  test("un formato no compatible muestra un aviso en vez de un visor roto", () => {
+    const caja={};
+    helper('facVistaDocumento','facPintarPapel')(caja,'blob:test','text/html');
+    assert.match(caja.textContent,/Vista previa no disponible/);
   });
 
   test("los datos van agrupados: quién, documento y dinero", () => {
     // Con doce casillas iguales, el NIF pesaba lo mismo que el total.
     assert.match(panel, /<span class="fic-gt">Quién<\/span>/);
     assert.match(panel, /<span class="fic-gt">Documento<\/span>/);
-    assert.match(panel, /<span class="fic-gt">Dinero<\/span>/);
+    assert.match(panel, /<span class="fic-gt">Importes<\/span>/);
   });
 
   test("la suma se comprueba mientras se escribe, incluyendo ajustes explícitos", () => {
@@ -410,7 +435,7 @@ describe("un descuadre se puede perseguir y arreglar", () => {
 
   test("y el cuadre se recalcula en el servidor, no en el navegador", () => {
     // Es lo que hace que la etiqueta de «descuadre» desaparezca sola de la lista.
-    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible\)/);
+    assert.match(server, /async function recalcularCuadre\(facturaId, baseImponible, deps = \{dbAll,dbGet,dbRun\}\)/);
     assert.match(server, /const v = await recalcularCuadre\(l\.factura_id, l\.base_imponible\);/);
   });
 });
@@ -481,13 +506,20 @@ describe("corregir el proveedor al revisar una factura", () => {
     assert.match(server, /array_agg\(nif ORDER BY fecha DESC NULLS LAST, id DESC\)\s*\n?\s*FILTER \(WHERE COALESCE\(nif,''\) <> ''\)/);
   });
 
-  test("al elegir uno se rellena su CIF", () => {
-    // Arreglar el nombre y dejar el NIF del proveedor anterior es peor que no tocar nada.
-    assert.match(panel, /if \(!nif\.value\.trim\(\) \|\| teniaOtro\)\s*\{?\s*nif\.value = elegido\.nif;/);
+  test("el NIF elegido procede de la memoria confirmada del proveedor", () => {
+    const nif=helper('facNifProveedorElegido','facSelectorProveedor');
+    assert.equal(nif({alias:{nif:'MEMORIA'},nifs:[{nif:'LECTURA'}]}),'MEMORIA');
+    assert.equal(nif({nifs:[{nif:'A'},{nif:'B'}]}),'');
+    const selector=panel.slice(panel.indexOf('function facSelectorProveedor('),panel.indexOf('function facMarcarVacios('));
+    assert.match(selector,/nif.value=facNifProveedorElegido\(ficha\)/);
   });
 
-  test("pero un NIF escrito a mano no se pisa", () => {
-    assert.match(panel, /const teniaOtro = provs\.some\(\(x\) => x\.nif && x\.nif === nif\.value && x\.proveedor !== elegido\.proveedor\);/);
+  test("el selector protege la edición manual y las respuestas antiguas", () => {
+    const selector=panel.slice(panel.indexOf('function facSelectorProveedor('),panel.indexOf('function facMarcarVacios('));
+    assert.match(selector,/if\(!nifEditado\)/);
+    assert.match(selector,/version!==revision/);
+    // Las carreras de respuesta y la edición/borrado manual se ejecutan en
+    // panel-proveedor-nif-async.test.js, sin depender de la antigua variable teniaOtro.
   });
 
   test("y si la lista no llega, el campo sigue funcionando", () => {

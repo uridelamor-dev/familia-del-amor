@@ -9976,13 +9976,23 @@ function facVistaDocumento(caja,url,mime) {
  const cleanup=new MutationObserver(()=>{if(!caja.isConnected){resize.disconnect();cleanup.disconnect();URL.revokeObjectURL(url);}});cleanup.observe(document.body,{childList:true,subtree:true});
 }
 async function facPintarPapel(caja, id) {
- if(!caja)return;
+ if(!caja?.isConnected)return;
+ const controller=new AbortController();
+ // Cerrar la ficha cancela el original pendiente para no competir con la siguiente.
+ const observer=new MutationObserver(()=>{if(!caja.isConnected){controller.abort();observer.disconnect();}});
+ observer.observe(document.body,{childList:true,subtree:true});
  try{
-  const r=await fetch(`/api/facturas/${encodeURIComponent(id)}/archivo`,{headers:{Authorization:'Bearer '+token()}});
+  const r=await fetch(`/api/facturas/${encodeURIComponent(id)}/archivo`,{headers:{Authorization:'Bearer '+token()},signal:controller.signal});
   if(!r.ok)throw new Error('Original no disponible');
-  const blob=await r.blob();if(!caja.isConnected)return;
+  const blob=await r.blob();if(!caja.isConnected||controller.signal.aborted)return;
   facVistaDocumento(caja,URL.createObjectURL(blob),blob.type.split(';')[0]);
- }catch{if(caja.isConnected)caja.textContent='No se pudo cargar el original. Puedes reabrir la factura o descargarlo.';}
+ }catch{
+  if(caja.isConnected&&!controller.signal.aborted){
+   caja.textContent='No se pudo cargar el original. ';
+   const retry=document.createElement('button');retry.type='button';retry.className='btn sm';retry.textContent='Reintentar vista previa';
+   retry.onclick=()=>{caja.textContent='Cargando original…';facPintarPapel(caja,id);};caja.append(retry);
+  }
+ }finally{observer.disconnect();}
 }
 
 /**
