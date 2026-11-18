@@ -94,6 +94,11 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
     || (bruto != null && neto != null && bruto * neto < 0)
     || descuadreCantidad || descuadreDescuento || (dto != null && (dto < 0 || dto > 100));
 
+  // Cero no equivale a ilegible cuando el propio detalle identifica una entrega
+  // no servida y ambos importes originales son explícitamente cero.
+  const noServida = cantidadFinal === 0 && n(cruda.importe) === 0 && neto === 0
+    && /\b(?:no\s+servid[oa]s?|sin\s+servir|no\s+entregad[oa]s?)\b/i.test(descripcion);
+
   return {
     orden,
     descripcion,
@@ -117,7 +122,7 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
     importe_bruto: bruto != null && neto != null && Math.abs(bruto - neto) > 0.01 ? bruto : null,
     descuento_pct: dto != null && dto > 0 && dto <= 100 ? dto : null,
     // Una línea es dudosa si le falta lo mínimo para servir de algo.
-    dudosa: lecturaDudosa || !descripcion || (neto == null && tipo !== "albaran") || cantidadFinal == null || cantidadFinal === 0 || incoherente,
+    dudosa: lecturaDudosa || !descripcion || (neto == null && tipo !== "albaran") || cantidadFinal == null || (cantidadFinal === 0 && !noServida) || incoherente,
   };
 }
 

@@ -1781,3 +1781,370 @@ Confirmación usuario 16/11/2026: Comercial Amat Lloret agrupa albaranes en fact
 - Original completo1CqU5TUwNVxnx43HeGnNJxAQNTgyBMsu6 leído root y agente. JOSEP MARIA MITJANS SLU, NIFpieESB60131547; corrigeESB7013647→B60131547.22jul2026,SLUB70799135,entregaMuralla21Blanes explícita;vto15ago2026 impreso conservado. EstadoPagadaautomática no cambiado ni verificado contra banco.
 - Una línea8,454KG×14,39,importeimpreso121,66;10%12,17total133,83. Producto typo lleugeramunt→lleugerament. Conservar121,66 aunque multiplicación conprecioredondeadoda121,65306; no descontar15% adicional. Albarán26.018.606,lot280326360. CSV8único ysinesealbarán; agente confirma.
 - Save/reaperturaNIF/cabecera/línea correctos. DriveuniformeFacturaID75 verificado reload; carpeta1kI_KzG_qezpoUqWX39gcxvWZXT1F0g5Q JulioSLUBLanes, ruta previamentecontrastada. Distintivo100 ytoastobservados; prueba/tmp/mitjans-75-revisado.png.215/529=40,64% de registrados mínimo. No auditoría global terminada.
+
+### Cierre 216 — David Escobar #99 y comprobación tras publicar (17/11/2026)
+- Panel publicado accesible, Sara conectada. Vista Todos establecimientos/Todo informa 500 de529 registrados; total actual529. Nueva bandeja unificada y modal común presentes.
+- #99 reabierta: cantidad1,00001 ya visible con nueva precisión. Original193a1NlSJRAQemzrMtA3j1ETt_c-Mkjj8 recotejado visualmente completo en Drive de facturas@la-tapeta.com; datos y detalle coinciden con revisión parcial anterior. Guardar cambios funcionó, cerró modal conservando búsqueda1001763; reapertura confirmó cantidad1,00001 y cabecera37,95+3,80=41,75.
+- Drive nombreuniformeFacturaID99 y ubicación16Yil4IfgIF79Ss2dnwZ4vaNUYYv_79aP confirmados; navegación carpeta y menúRuta acreditan Contabilidad / Mateu Del Amor Salinas /2026/07 · Julio/La Tapa Ibérica - Tordera. Sin mover archivos ya correctamente ubicados.
+- Unicidad cotejada en revisión parcial CSV8; búsqueda actual número muestra una factura. Unidad vacía del original conservada, sin inventar. Distintivo100 y toastRevisióncompletaregistrada observados, prueba /tmp/escobar-99-revisado.png.216/529=40,83%. No afirmar auditoría global terminada ni pruebas integrales de todos los servicios.
+
+### 2026-11-17 · Cierre217 · Joric #534 tras publicación
+- Factura022026-10/2606074 (13/11/2026), Can Mateu, Pilar Ayllón Torres. Original Drive1ClqsMzTZ_wYLAvLVa0ddt8ti-8q2FBdN completo contrastado: dos líneas97,80+52,90=base150,70; IVA10%15,07; RE1,4%2,11; total167,88. Al contado/vto13nov impresos, sin acreditar movimiento bancario.
+- Registrado recargo2,11 por separado, conservados IVA y total. Guardar cierra modal y mantiene búsqueda. Reabierto: recargo persistido y suma correcta. Confirmado desglose150,70/10%/15,07 y guardado; desaparece alerta fiscal.
+- Líneas21,260×4,6000 y11,500×4,6000 cotejadas; unidad no explícita no inventada. CSV9: única coincidencia número/albarán62446.
+- Nombre Drive:2026-11-13 · Factura · JORIC SELECCIO, S.L. · 022026-10-2606074 · Can Mateu - Tordera · ID-534.pdf. Carpeta comprobada por diálogo y breadcrumb:Contabilidad / Pilar Ayllón Torres /2026 /11 · Noviembre /Can Mateu - Tordera (1gA3QjMB51LCYAGkNo08nooz3aIfDjIuZ).
+- Distintivo confirmado17/11/2026 01:02:08. Evidencia /tmp/joric-534-revisado.png. Acumulado217/529=41,02%. CSV9 exportado desde versión publicada confirma529 registros; no incluye estados de revisión y no sustituye comprobación de recepción.
+
+### 2026-11-17 · Cierre218 · Carns Vila #223
+- Original completo1p Drive1-TFSx0GWgs31rU05gLNY-QyrxTtJQS90. Factura A-26021768,14oct2026; Carns Vila B17391384, destinatario Mateu46535781L y La Tapa Ibèrica explícitos. Albarán26167182. Una línea1cj croquetes formatge cabra/ceba×55,39=55,39; IVA10%5,54; total60,93. Comptat y vencimiento14oct impresos, cobrat60,93/pendent0,00; no extracto bancario.
+- Datos y línea correctos, añadida trazabilidad al concepto. Guardado y reabierto. Drive normalizó automáticamente nombre al patrón con Factura tras guardar; confirmado tras recarga.
+- Nombre:2026-10-14 · Factura · CARNS VILA S.L. · A-26021768 · La Tapa Ibérica - Tordera · ID-223.pdf. Carpeta10DIHy7Nm7IBaQ3GhZ9YTm_57tLvmP8UW y breadcrumb:Contabilidad /Mateu Del Amor Salinas /2026 /10 · Octubre /La Tapa Ibérica - Tordera.
+- CSV9 única coincidencia número/albarán. Badge17nov01:04:58. Evidencia/tmp/carns-vila-223-revisado.png. Acumulado218/529=41,21%.
+- Incidencia UX encontrada en producción: auditoría vigente coexistía con aviso genérico OCR (Joric533/534). Preparado fix local calidad.js y pruebas56/56; suprime dudas cubiertas, mantiene errores/descuadres y avisos objetivos. Aún no publicado.
+
+### 2026-11-17 · Cierre219 · Carns Vila #222
+- Original1p1dHcRtcy6gW96hGMWrKSlL9nhrbMkyBeB: A-26021726 13oct2026, B17391384, Pilar46533801V, CAN MATEU PlaçaConcordia7. Albarán26165571 10oct/SO26/123189; croquetes cabra1cj55,39 y calamars1cj84,29: base139,68 IVA10%13,97 total153,65. Comptat/vto13oct/cobrat153,65/pendent0 impresos.
+- Cabecera y líneas correctas; concepto de cotejo guardado y reabierto. Drive sincronizó nombre:2026-10-13 · Factura · CARNS VILA S.L. · A-26021726 · Can Mateu - Tordera · ID-222.pdf. Carpeta13mshhDwauaxvnuhpp6zb4i_S645iuIw3, ruta verificada Contabilidad/Pilar Ayllón Torres/2026/10 · Octubre/Can Mateu - Tordera. CSV9 única coincidencia número/albarán. Badge01:06:41, evidencia/tmp/carns-vila-222-revisado.png. Acumulado219/529=41,40%.
+
+### 2026-11-17 · Cierre220 · Carns Vila #221
+- Original1p1q1jTA5y5ufzXba11Rrq181tujtcL6J89: A-26021429 7oct2026, B17391384, Mateu46535781L/La Tapa Ibèrica explícitos. Albarán26163439/SO26/121153. Croquetes pollastre rostit1cj×53,39=base53,39; IVA10%5,34;total58,73. Comptat/vto7oct/cobrat58,73/pendent0 impresos.
+- Cabecera y línea correctas; concepto de cotejo guardado/reabierto. Nombre Drive sincronizado confirmado:2026-10-07 · Factura · CARNS VILA S.L. · A-26021429 · La Tapa Ibérica - Tordera · ID-221.pdf. Misma carpeta octubre Mateu/LaTapa10DIHy7Nm7IBaQ3GhZ9YTm_57tLvmP8UW, ruta ya verificada en este lote. CSV9 única coincidencia número/albarán. Badge01:08:29, evidencia/tmp/carns-vila-221-revisado.png. Acumulado220/529=41,59%.
+
+### 2026-11-17 · Cierre221 · Carns Vila #198
+- Original1p1G25vd8K-LGjVri3COJKRmFS5aphW_aV7: A-26021376 5oct2026, B17391384, Pilar46533801V/CAN MATEU PlaçaConcordia7. Albarán26161951 3oct/SO26/119990. Gambes1cj109,09+pulledporc1cj63,49=base172,58; IVA10%17,26 total189,84. Comptat/vto5oct/cobrat189,84/pendent0 impresos.
+- Datos y líneas correctos, concepto de cotejo guardado/reabierto. Nombre sincronizado Drive:2026-10-05 · Factura · CARNS VILA S.L. · A-26021376 · Can Mateu - Tordera · ID-198.pdf. Carpeta13mshhDwauaxvnuhpp6zb4i_S645iuIw3, ruta octubre Pilar/CanMateu verificada en el lote. CSV9 única coincidencia número/albarán. Badge01:09:59, evidencia/tmp/carns-vila-198-revisado.png. Acumulado221/529=41,78%.
+
+### 2026-11-17 · Cierre222 · Avícola Sant Jordi #3
+- Original1p1kAhyI44DTrrlZCiTpt0JVmdZBmv1Sji2. Factura00477650 31jul2026. Cabecera ampliada150%: NIF ESA17101882 (no862). Corregido a A17101882. LaTapetaLloret y SLUB70799135 explícitos.
+- 8líneas L GROS ROS artículo33: cantidades30/15/15/15/30/15/15/15, precio2,50, importes75/37,50/37,50/37,50/75/37,50/37,50/37,50. Base375,IVA4%15,total390. Unidad no explícita no inventada. Albaranes10462578/10462674/10462721/10462780/10462819/10462876/10462924/10462985 únicos sin registros adicionales CSV9.
+- Añadido vto15ago2026 impreso en domiciliación, antes vacío; conservado estado pagado previo sin acreditar extracto. Guardado/reabierto confirma NIF y vto.
+- Nombre sincronizado:2026-07-31 · Factura · AVÍCOLA SANT JORDI & JUANOLA, S.A. · 00477650 · Lloret · ID-3.pdf. Carpeta1s42G28KiUsoXrMeYk6rhVqCXWzwmjMAY, breadcrumbContabilidad/Del Amor Uriel SLU/2026/07 · Julio/Lloret. Badge01:11:59, evidencia/tmp/avicola-3-revisado.png. Acumulado222/529=41,97%.
+
+### Cierre 223 — Carns Vila #49 · 17/11/2026 01:16
+- A-26016088, 31/07/2026, Girona, Del Amor Uriel SLU. Original completo 1 página: proveedor B17391384, receptor B70799135 y local explícito La Tapeta de Girona.
+- Tres entregas de croquetas: 1/2/2 cajas × 55,39 = 55,39/110,78/110,78; base 276,95, IVA 10 % 27,70, total 304,65. Vencimiento explícito 15/08/2026, recibo 15 días. No se acredita cargo bancario.
+- CSV (9): una factura A-26016088; albaranes 26103943, 26109095 y 26118997 no registrados separadamente. Detalle leído coincide.
+- Guardado y reapertura correctos. Drive 1X-XSepjkyYRwAme1PDLGOEr22ShCT_A5 renombrado automáticamente: 2026-07-31 · Factura · CARNS VILA S.L. · A-26016088 · GIRONA · ID-49.jpg.
+- Carpeta verificada por ruta: Contabilidad / Del Amor Uriel SLU / 2026 / 07 · Julio / GIRONA (1YW_bv6-6fQXZ_Ai3yNEkYU-ogV4GmM_n).
+- Distintivo manual confirmado 17/11/2026 01:16:49. Evidencia /tmp/carns-vila-49-revisado.png. Censo: 223/529 (42,16 %), quedan 306; no equivale a recepciones pendientes independientes.
+
+### Cierre 224 — Carns Vila #9 · 17/11/2026 01:18
+- A-26016089, 31/07/2026, Lloret, Del Amor Uriel SLU. PDF 1 página, NIF proveedor B17391384/receptor B70799135, local explícito La Tapeta de Lloret.
+- Tres entregas de 2 cj × 55,39 = 110,78 cada una: base 332,34, IVA 10 % 33,23, total 365,57. Vencimiento explícito 15/08/2026, recibo 15 días. Pago automático conservado, sin acreditar cargo bancario.
+- CSV (9): una factura; albaranes 26098897, 26112680 y 26118045 no registrados separadamente. Tres líneas coinciden.
+- Guardado/reapertura correctos. Drive 1IvYw10D5XfXTh1oPuCpLQpSTn9vKA9nQ: 2026-07-31 · Factura · CARNS VILA S.L. · A-26016089 · Lloret · ID-9.pdf.
+- Carpeta 1s42G28KiUsoXrMeYk6rhVqCXWzwmjMAY, ruta previamente verificada para #3 en esta sesión: Contabilidad / Del Amor Uriel SLU / 2026 / 07 · Julio / Lloret.
+- Distintivo confirmado 01:18:21; evidencia /tmp/carns-vila-9-revisado.png. Censo 224/529 (42,34 %), quedan 305.
+
+### Cierre 225 — Carns Vila #182 · 17/11/2026 01:19
+- A-26018564, 31/08/2026, Lloret, Del Amor Uriel SLU. PDF completo 1 página. B17391384/B70799135 correctos, local explícito La Tapeta de Lloret.
+- Cinco entregas de 2 cj × 55,39 = 110,78: base 553,90, IVA 10 % 55,39, total 609,29. Vencimiento explícito 15/09/2026, recibo 15 días. Sin acreditar pago bancario.
+- CSV (9): factura única, albaranes 26123162/26128369/26131497/26136654/26140635 no registrados separadamente. Cinco líneas coinciden.
+- Guardado/reapertura correctos. Drive 1hSrz6D8cz9H7Cf0wmEyCeyD3dq2-pc2Q renombrado a 2026-08-31 · Factura · CARNS VILA S.L. · A-26018564 · Lloret · ID-182.pdf.
+- Carpeta verificada 1byidBJ3UFt1WN_26hlb4oqPeyupA-ZTo: Contabilidad / Del Amor Uriel SLU / 2026 / 08 · Agosto / Lloret.
+- Distintivo confirmado 01:19:51; evidencia /tmp/carns-vila-182-revisado.png. Censo 225/529 (42,53 %), quedan 304.
+
+### Cierre 226 — Lácteos Ampurdán #525 · 17/11/2026 01:24
+- Factura 2200038283, 12/11/2026, Can Mateu/Pilar Ayllón Torres. Original PDF 1 página, A17259508 y receptor46533801V; dirección de entrega Can Mateu explícita. Base68,02 IVA4%2,72 total70,74; contado descarga/vto12nov expresos.
+- El original solo resume albarán600191758 del10nov por68,02, NO contiene productos/cantidades/unidades/precios. Se conservan esos campos vacíos, sin inventarlos; línea renombrada «Albarán 600191758 · 10/11/2026 (resumen sin detalle de productos)». CSV9sin albarán separado y factura única.
+- Primeros intentos con fill no activaron change; escritura normal pressSequentially+Tab sí guardó, mostrado cuadre servidor y verificado al reabrir. No evidencia de fallo de persistencia con escritura normal. No confundir texto visual cambiado con guardado real.
+- Drive1nbVipv9T-0ze6vB373kOfpyshxOIn0T_: nombre2026-11-12 · Factura · Lácteos Ampurdán, S.A.U. · 2200038283 · Can Mateu - Tordera · ID-525.pdf. Carpeta1gA3QjMB51LCYAGkNo08nooz3aIfDjIuZ (ruta verificada previamente #534 esta sesión): Contabilidad/Pilar Ayllón Torres/2026/11 · Noviembre/Can Mateu - Tordera.
+- Distintivo confirmado01:24:18; evidencia/tmp/lacteos-525-revisado.png.226/529=42,72%,303restantes. Revisión documental; no acredita pago bancario ni detalle de albarán no aportado.
+- Tras interrupción navegador: panel pestaña1 y Drive2, navegador2. Acceso válido. CensoUI sigue529. La etiqueta dudosa histórica de línea no equivale a información ausente por error: original es resumen.
+
+### Cierre 227 — Gran Reino #530 · 17/11/2026 01:26
+- Factura2026106662 13nov Lloret/SLU; foto completa releída a resolución completa. NIF X1761143-X, receptorB70799135 SantPere84 correctos. 1bote×2,90 y2moldes×5,95=14,80; IVA incluido demostrado por columnas y resumen impreso base12,231+IVA21%2,569=14,80. Vto13nov por condición usuario confirmado, no cargo bancario.
+- Aplicada nueva opción lineas_iva_incluido; cuadre ahora base+IVA14,80 sin cambiar precios/cantidades. Reapertura confirma persistencia y fila sin descuadre. Concepto actualizado retirando pendiente ya resuelto.
+- CSV9facturaúnica, sin referenciaalbaranes. Drive1UJjvl2FgIHwpABdbMUPdKSF61PsCyIgY: 2026-11-13 · Factura · GRAN REINO · 2026106662 · Lloret · ID-530.jpg; carpeta11GV8o_TXaLy4-sN-pdqkNy4T9UAdq6at verificada por ruta Contabilidad/Del Amor Uriel SLU/2026/11 · Noviembre/Lloret.
+- Distintivo01:26:53, evidencia/tmp/granreino-530-revisado.png.227/529=42,91%,302restantes.
+
+### Cierre 228 — Gran Reino #515 · 17/11/2026 01:28
+- Factura2026105792 11nov Lloret/SLU. Foto completa legible: X1761143-X/B70799135 SantPere84; VARIOS 1×1,80. Base1,488, IVA21%0,312, total1,80; sin otroscargos. Vto11nov por condición pagoalcomprar confirmada, no acredita cargo.
+- Activado IVAincluido según original; desaparece falso descuadre0,31, permanece al reabrir, cantidades/precios sin cambios. Concepto elimina pendiente resuelto. CSV9facturaúnica sin relaciónalbarán.
+- Drive1rsJlH5_Nsqmuk0lvF9AjhVBwA5E5DRyy nombre2026-11-11 · Factura · GRAN REINO · 2026105792 · Lloret · ID-515.jpg. Carpeta11GV8o_TXaLy4-sN-pdqkNy4T9UAdq6at, misma ruta verificada #530: Contabilidad/Del Amor Uriel SLU/2026/11 · Noviembre/Lloret.
+- Distintivo01:28:42; prueba/tmp/granreino-515-revisado.png.228/529=43,10%,301restantes.
+
+### Cierre 229 — Gran Reino #514 · 17/11/2026 01:30
+- Factura2026105684 10nov Lloret/SLU, original completo1página foto releída. X1761143-X/B70799135 SantPere84; LAVAVAJILLA1×2,10; base1,736 IVA21%0,364 total2,10. Vto10nov por condición usuario pagoalcomprar; sin cargo bancario verificado.
+- ActivadoIVAincluido según columnas/resumen original, desaparece falso descuadre0,36 y permanece tras reabrir. Concepto actualizado. CSV9facturaúnica sin albaranes.
+- Drive1ydacjCr8eRQzWdqyZft8-vJw7F5TxhxY nombre2026-11-10 · Factura · GRAN REINO · 2026105684 · Lloret · ID-514.jpg; carpeta11GV8o_TXaLy4-sN-pdqkNy4T9UAdq6at: Contabilidad/Del Amor Uriel SLU/2026/11 · Noviembre/Lloret, ruta ya contrastada #530 esta sesión.
+- Distintivo01:30:25; evidencia/tmp/granreino-514-revisado.png.229/529=43,29%,300restantes. Etiqueta dudosa histórica de lectura se conserva en línea; datos contrastados originales.
+
+### Seguimiento #526 — Lácteos Ampurdán 2200038291 · 17/11/2026
+- Original Drive1lM6MmlTqocFczxFqeW3PRlUFOohWhHtb PDF1p releído: base204,44 IVA4%8,18 recargo0,50%1,02 total213,64; vto03/12/2026 transferencia21d. Resumen albarán60019175710nov sin productos.
+- Registrado recargo1,02 separado del IVA; confirmado desglose y guardado. Reapertura demuestra cuadre y desaparecen avisos fiscales, permanece lectura pendiente/sin detalle. Prueba /tmp/lacteos-526-recargo-confirmado.png.
+- NO cierre100: entrega POTA NEGRA2 CamíRal16Tordera, asignado CanMateu/Pilar. Pregunta pendiente al usuario para confirmar correspondencia. No modificado local ni carpeta. Censo cierres permanece229/529.
+
+### Cierre230 — Botiga de Regal #519 ·17/11/2026
+- Original foto completa: factura2026038796 12nov X2667376C, receptorSLU B70799135; 5rotuladores×3,10=15,50;2vasos×2,70=5,40;bolsa0,05. Base17,314 IVA21%3,636 total20,95. IVAincluido aplicado y persistido al reabrir. Tipo ticket→factura según título y receptor completo. LocalBlanes conservado, vto12nov por usuario pagoalcomprar; no acredita banco. CSV9registroúnico sin albaranes.
+- Drive1SVGUdS71h24Uz92C0KhD-0nmlHSox4pd renombrado automáticamente: 2026-11-12 · Factura · BOTIGA DE REGAL · 2026038796 · BLANES · ID-519.jpg. Carpeta1LzsKV9yheaRaDXNwySAlv_Rktjn3k2Ay ruta visualmente comprobada Contabilidad/DelAmorUrielSLU/2026/11·Noviembre/BLANES. Distintivo100 confirmado; prueba/tmp/botiga-519-revisado.png.230/529=43,48%,299restantes.
+
+### Cierre231 — Botiga de Regal #510 ·17/11/2026
+- Fotooriginalcompleta releída: factura2026038489 10nov X2667376C SLU B70799135; regla1×1,10+cúter1×3,50=4,60 IVAincluido, base3,802 cuota21%0,798. ActivadoIVAincluido, tipo ticket→factura por título/receptor completo, conceptoactualizado. Persistencia verificada alreabrir, cuadre4,60. CSV9única sin albarán. LocalBlanesorigen; vto10nov confirmado usuario pagoalcomprar, no acredita cargo.
+- Drive1WWtLnlCf_vchRHRxdZmEGuPFq5TPgiHe nombreautomático verificado:2026-11-10 · Factura · BOTIGA DE REGAL · 2026038489 · BLANES · ID-510.jpg. Carpeta1LzsKV9yheaRaDXNwySAlv_Rktjn3k2Ay misma rutacontrastada cierre230 Contabilidad/DelAmorUrielSLU/2026/11·Noviembre/BLANES. Distintivo100guardado, prueba/tmp/botiga-510-revisado.png.231/529=43,67%,298restantes.
+
+### Cierre232 — Ofart #270 ·17/11/2026
+- Original completo foto: factura simplificadaA-041818 19oct, B55122840, LaTapetaLloret SLU B70799135 explícitos.8fotocopias×0,15=1,20 bruto; base0,99 IVA21%0,21. RE5,2% cuota0,00: no añadido. ActivadoIVAincluido, persistido y cuadre alreabrir. Vto15nov corregido19oct por CONTADO impreso+selloPAGAT; no prueba bancaria. CSV9único sin albaranes.
+- Drive1NT5oVCH9wwakWOYu1Ln-KOeCTJZ2M9bL nombreverificado2026-10-19 · Factura · Ofart Subministraments d'Oficina, S.L. · A - 041818 · Lloret · ID-270.jpg. Carpeta1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo rutabreadcrumbContabilidad/DelAmorUrielSLU/2026/10·Octubre/Lloret. Distintivo100 confirmado, prueba/tmp/ofart-270-revisado.png.232/529=43,86%,297restantes.
+
+### Confirmación usuario #526 ·17/11/2026
+- Usuario respondeSí: PotaNegra2 CamíRal16 correspondeCanMateu. Conceptoactualizado y persistenciaverificada. Drivecarpeta1gA3QjMB51LCYAGkNo08nooz3aIfDjIuZ y nombrecorrectos, rutaPilar/2026/11·Noviembre/CanMateu. Prueba/tmp/lacteos-526-local-confirmado.png.
+- Noañadido subtotalalbarán como producto. Sigue sin detalle y distintivo100pendiente: la UI pide confirmar productos/cantidades, no aporta opción noaplicable para facturaresumen; no inventar ni afirmar contraste de albarán no disponible. Cierres siguen232/529.
+
+### Cierre233 — Joric #228 ·17/11/2026
+- PDF1p releído:022026-10/2605515 16oct, Pilar46533801V XarcuteriaCamíRal6, Botiga. Fuet11,490×4,6000=52,85; IVA10%5,29 RE1,4%0,74 total58,88. AL COMPTAT vto16octimpreso. Alb10/6167915oct no separadoCSV9, facturaúnica.
+- RegistradoIVA10 antesvacío yRE0,74 separado, aceptadosavisoshistóricosfecha/importes cotejadosoriginal, confirmadodesglose52,85/10/5,29. Reapertura demuestra cuadre yREpersistido, sinavisosfiscales.
+- Drive1fYQ_8iuHUe66e83DFEOJS3MyIuXxp_BE nombre2026-10-16 · Factura · JORIC SELECCIO, S.L. · 022026-10-2605515 · Botiga d'en Mateu - Tordera · ID-228.pdf. Carpeta1dAN47Jvs__DB6DI4ASV7J_OHgXLgKE7W breadcrumbContabilidad/PilarAyllónTorres/2026/10·Octubre/Botiga. Distintivo100confirmado /tmp/joric-228-revisado.png.233/529=44,05%,296restantes.
+
+### Cierre234 — Cerezo #205 ·17/11/2026
+- PDF1p original releído:910517403 07oct, ESB60599461, Pilar46533801V XARCUTERIA POTA NEGRA Botiga. Albarán81047621 06oct no separadoCSV9, facturaúnica. Lomito1CJlogística,7,580kg×57,90=438,88. Corregida línea de1CJ×438,88 a7,58kg×57,90 con mismoimporte, persistidoalreabrir.
+- RE6,14separado, base438,88 IVA10%43,89 total488,91. Confirmadodesglose. Vtoerróneo07oct→06dic2026 impreso, estadoautopagada→Pagoautomático6dic. Efectivoenpapel noimplicapagadaemisión. Avisosfecha/importesresueltostrascotejo.
+- Drive11ltTm_NgoBmjVZNj_OQOjaPoSKdWuxr7 nombre2026-10-07 · Factura · Distribuciones del Jamón Cerezo S.L.U. · 910517403 · Botiga d'en Mateu - Tordera · ID-205.pdf. Carpeta1dAN47Jvs__DB6DI4ASV7J_OHgXLgKE7W misma rutaPilar2026OctBotigaverificadacierre233. Distintivo100confirmado /tmp/cerezo-205-revisado.png.234/529=44,23%,295restantes.
+
+### Cierre235 — Cerezo #230 ·17/11/2026
+- PDF1p original:910517692 09oct, ESB60599461/Pilar46533801V XARCUTERIA POTA NEGRA Botiga. 10jamoneslogística,70,930kg×28,40=2014,41. Línea10UN×201,441 corregida70,93kg×28,40, importeinalterado; concepto conserva10piezas. Alb81048572 09oct no separadoCSV9,facturaúnica.
+- RE28,20 registrado separado IVA10%201,44, total2244,05;desgloseconfirmado. Vtoerróneo09oct→08dic2026original, estadoautopagada→Pagoautomático8dic. Reapertura confirma peso/precio/RE/vto y ausenciaavisosfiscales.
+- Drive1ulN_RqYDyt_V9Q-HZjv0PCpXOS7VV7h5 nombre2026-10-09 · Factura · Distribuciones del Jamón Cerezo S.L.U. · 910517692 · Botiga d'en Mateu - Tordera · ID-230.pdf. Carpeta1dAN47Jvs__DB6DI4ASV7J_OHgXLgKE7W rutaverificadaPilar/2026/10·Octubre/Botiga. Distintivo100guardado /tmp/cerezo-230-revisado.png.235/529=44,42%,294restantes.
+
+### Cierre236 — Joric #211 ·17/11/2026
+- Original PDF1p:022026-10/2605403 09oct; Pilar46533801V XarcuteriaCamíRal6 Botiga. FUET5,700×4,6000=26,22 yESPATLLA151,850×16,9500=2573,86, base2600,08 IVA10%260,01 RE1,4%36,40 total2896,49. Alcomptatvto09oct. Alb10/61481 y10/61482 08oct no separadosCSV9; facturaúnica.
+- Eliminada fila fiscal errónea REtratadocomoIVA1,4%; registradoRE36,40 separado, IVA10 ydesgloseconfirmado. Reapertura confirma cuadre ypersistencia.
+- Drive1B6Jyy-O3em3QQT2V3eGkf0LYW-423KGE nombre2026-10-09 · Factura · JORIC SELECCIO, S.L. · 022026-10-2605403 · Botiga d'en Mateu - Tordera · ID-211.pdf. Mover confirma carpeta1dAN47Jvs__DB6DI4ASV7J_OHgXLgKE7W misma ruta ya contrastada Contabilidad/PilarAyllónTorres/2026/10·Octubre/Botiga. Distintivo100confirmado /tmp/joric-211-revisado.png.236/529=44,61%,293restantes.
+
+### Cierre237 — Comercial Amat #507 ·17/11/2026
+- Foto original completa M26/050298 09nov, entregaLaCooperativaMuralla28Blanes, receptorSLUB70799135. ProveedorAmat→COMERCIAL AMAT SL yNIFB17097593desde ficha. Número punto→barra segúnoriginal.
+- Corregidos precios/cantidades:3U×8,90=26,70;2K×11,91=23,82;7U×2,47=17,29 (antes1U);8U×6,92=55,36 (antes1U). Original distingue cajaC ycantidad; cuatroproductos persistidos sin dudosas.
+- IVA ficticio6,7% sustituido desglosebase67,81al4%cuota2,71+base55,36al10%cuota5,54;total131,42sinmodificar. Vto15dic mantenido por facturación mensual15siguiente confirmada; noimpreso. CSV9único nootrareferencia.
+- Drive1l135hkwuquNWRrCsOm4L0rwri_9hm7xR nombreautorenombrado verificado2026-11-09 · Albarán · COMERCIAL AMAT SL · M26-050298 · BLANES · ID-507.jpg. Moverconfirma1LzsKV9yheaRaDXNwySAlv_Rktjn3k2Ay rutaSLU2026NovBLANES previamentecontrastada. Badge100 /tmp/amat-507-revisado.png.237/529=44,80%,292restantes.
+
+### Seguimiento #509 Can Bloi31580 ·17/11/2026
+- Originalfoto1ON359DMAYQBTekowpIYlxbjtaCOhdaoS leído:10nov LaCooperativaBlanes,SLUB70799135;20unidades(2cajas)PastísCanBloi,10unidadessegundonombreambiguo, anotaciónentreparéntesis;precio1,60sin total/IVA. TreslíneasOCR falsas (MASTERDN4002cajas,PLORINKEL20×0,0825=1,65,HERRSAS13). No borradas ni inventadas cantidades/precios nuevos. Conceptoguardado identificaexcepción. Preguntausuario nombresegundoproducto yaplicacióndel1,60. No100;cierres237/529.
+
+### Seguimiento #295 TTT S1.22966 ·17/11/2026
+- Fotooriginal1w1V6Lr-wrtfEYyCa_V6svPZejbllEu2x leído completo:21oct,DavidTeruelHolgado39373661F,entregaLaCooperativaMuralla28Blanes/SLUB70799135.15,590kg×11,50,importe179,29;IVA17,93,total197,21 impresos (difieren0,01). Precio derivado11,500321→11,50guardado.
+- ConfirmarIVA rechazado por validarIva exigeigualdadexactacéntimos; nofabricado ajuste ni cambiado total. Reabierto para guardarconcepto sinconfirmaciónfiscal. Pendiente100porbloqueo. Vto05novcoherente15díasusuario. Drive aúnnombreantiguosinTipo:2026-10-21 · GRUPO CARNICO T.T.T. · S1.22966 · BLANES · ID-295.jpg;carpetapendientecomprobar. Cierres237/529.
+
+### Seguimiento #287 TTT2026/482 ·17/11/2026
+- OriginalPDFescaneado1p 1E3uUdDqMX90mOGWjJmuXlQAwF2cNik9j leídovisualmente cabecera/detalle/pie.16octGironaSantFrancesc7,SLUB70799135,39373661F.4líneas7,576×11,50=87,12;7×7,98=55,86;5,837×6,98=40,74;4,02×15,50=62,31. Suma246,03frentebaseimpresa246,04;IVA24,60,total270,64. Preciosderivadoscorregidos11,50y6,98,importesconservados.
+- FechaPago16/10impresa contradice15días31/10actual. Preguntausuario pendiente. Conceptoguardado identificaexcepción. No100. DriveaúnnombreantiguosinTipo,carpetapendiente. Cierres237/529.
+
+
+### 17/11/2026 — cierre 238: Joprimsa #532
+- Albarán 2026/46724 de 13/11, Lloret. Original 1M-DhwU95NA3YmjbK36lHfLi1-wcyszZP leído entero: CIF B56652845; receptor Del Amor Uriel SLU B70799135; entrega Sant Pere 84 Lloret. 6 CA × 17,9200 = 107,52, IVA 10% 10,75, total 118,27. Corregida descripción G/UND a G/2UND; guardado y persistencia comprobados. Concepto explica vencimiento de facturación mensual al 15 siguiente (criterio de facturas anteriores), no impreso en albarán.
+- CSV9: una referencia 46724, sin duplicado ni factura resumen de noviembre. Drive nombre 2026-11-13 · Albarán · ELABORATS JOPRIMSA, S.L. · 2026-46724 · Lloret · ID-532.jpg, carpeta 11GV8o_TXaLy4-sN-pdqkNy4T9UAdq6at contrastada con ruta ya verificada Contabilidad / Del Amor Uriel SLU / 2026 / 11 · Noviembre / Lloret.
+- Distintivo Revisado al 100 % y toast Revisión completa registrada observados. Prueba /tmp/joprimsa-532-revisado.png. Total cerrado 238/529 (44,99%), 291 restantes.
+- Confirmación del usuario Si sobre Lácteos 2200038291: se mantiene Can Mateu; #526 sigue pendiente del soporte para resumen sin productos, no se suma como cerrado.
+
+### 17/11/2026 — continuación, censo 531 y cierre239
+- Panel actualizado tras iniciar sesión: 531 registrados (dos nuevos), no529.
+- #543 Joprimsa2026/47159 de17nov Blanes, original1XythFyzchC2J4YPqa9Juyh5jkuva2kEA leído completo: B56652845,SLUB70799135,Muralla21;4CA×17.92=71.68,IVA7.17,total78.85. Añadido número omitido, corregido G/UND→G/2UND;guardado confirmado,Drive renombrado ID543 y carpeta1LzsKV9yheaRaDXNwySAlv_Rktjn3k2Ay NovSLUBlanesverificada. Pendiente confirmación de condición mensual15siguiente solicitada al usuario; no100.
+- #486 Joric022026-10/2605948: original1ZdopPBV1tfw50kk5r8nVidUsB_Y-aKf9 una página, texto completo releído;Pilar/XarcuteriaCamíRal6;alb10/62274del5nov;7.760×4.60=35.70 y12.370×4.60=56.90. Base92.60IVA9.26RE1.30total103.16,vto6nov. AñadidoRE1.30 separado yconfirmado desglose,guardado/reabierto;líneasprecioscorrectos. Drive nombreuniformeFacturaID486ycarpeta1xeD1eCwEmpyp4aK6IVnpB6LDk7Q8xjhE=Pilar2026NovBotigaverificados. Distintivo100observado;prueba/tmp/joric-486-revisado.png. Total239/531=45.01%,292pendientes.
+
+### 17/11/2026 — cierres240–242
+- #430 Joric022026-10/2605760: original1OjyRUK73fQsRm1boKULEI028gs7U84gM releído una página. Pilar/XarcuteriaCamíRal6;albaranes10/62096de29oct y10/62130de30oct no separados enCSV9. Fuet12.47×4.60=57.36,llonganissa6.82×11.95=81.50;138.86+13.89+RE1.94=154.69. REañadido,IVAconfirmado,save/reapertura conRE1.94;vto30octoriginal. DriveFacturaID430OctubrePilarBotiga1dAN47Jvs__DB6DI4ASV7J_OHgXLgKE7Wverificado. Badge100observado,/tmp/joric-430-revisado.png.240cerrados.
+- #336Transgourmet260023178078095: original1jMh_zVD6AOjCGgihEJypfeGFJMCtguek fotoentera releída,A17371758,SLUB70799135GironaSantFrancesc7,13oct;1×6.63netoIVA.66total7.29,albarán000490002sinseparadoCSV. Vto15nov→20octimpreso guardado/reabierto. NombrelíneaPEBŘE/DQLC→PEBRE VERM. QUALITY DOLÇ MOST.800G;guardado. DriveFacturaID33613octGIRONAcarpeta1YP996qBbDOQWEmIRgIF-sJn_ZGHHi_a7verificado. Badge100observado,/tmp/transgourmet-336-revisado.png.241cerrados.
+- Usuario confirma Joprimsa factura mensual/pago15siguiente. #5432026/47159: correccionespreviasreabiertas,únicoresultadoactual,original/Drivecompletosverificadosesta sesión. Distintivo100observado,/tmp/joprimsa-543-revisado.png. Total242/531=45.57%,289restantes. La confirmaciónresuelvetambiénplazo#484/#472/#456pero aúnnocerrados.
+
+### 17/11/2026 — cierres 243–245: Joprimsa
+- #484 2026/45524 del 6nov Lloret: original1BgqPA9MtoCuBwV1EvsBBafpYltpXZaYd releído completo, B56652845/SLUB70799135, entrega SantPere84. 5CA patata2000G/2UND×17.92=89.60, IVA8.96,total98.56. Líneas correctas; vto15dic confirmado por usuario. Drive Albarán ID484 y carpeta11GV8o_TXaLy4-sN-pdqkNy4T9UAdq6at NovSLULloret comprobados. Distintivo100 observado, /tmp/joprimsa-484-revisado.png. Cierre243.
+- #472 2026/45198 del4nov Lloret: original1A9nFz1iKYCRcAvzuJi9AgEHX36DJmok2 releído entero, misma identidad y entrega;3CA×17.92=53.76,IVA5.38,total59.14. Concepto actualizado elimina duda del plazo, conserva origen de confirmación;save/reapertura comprobados. Drive Albarán ID472 misma carpetaNovLloret verificada. Distintivo100 observado, /tmp/joprimsa-472-revisado.png. Cierre244.
+- #456 2026/44785 del2nov Blanes: original1UTPnWn1gmWqoVI4ZNn76Z2kK4LvG6Vj3 releído entero, B56652845/SLUB70799135, entregaMuralla21. 7CA×17.92=125.44,IVA12.54,total137.98; formato2000G/2UND ya corregido y recontrastado. Vto15dic confirmado usuario;concepto actualizado y reapertura verificada. Drive 2026-11-02 · Albarán · ELABORATS JOPRIMSA. S.L. · 2026-44785 · BLANES · ID-456.jpg, carpeta1LzsKV9yheaRaDXNwySAlv_Rktjn3k2Ay NovSLUBlanes comprobada. Referencia única. Distintivo100 observado /tmp/joprimsa-456-revisado.png. Total245/531=46.14%,286pendientes.
+
+### 17/11/2026 — cierres246–247: Grau
+- #175 factura332633 17sepBlanes, PDF1y9vfBMrAqdkgpbLEQAQw55NlNRLHg4k7 una página completa releída: SLUB70799135,albarán558861.24QueNoFalteVerdejo×2.95=70.80,12MarquésVizhoja×3.90=46.80;117.60+21%24.70=142.30,vto15octimpreso. Completadas unidadesbotella, save/reopen confirma2líneas. PuntoVerde.36incluido,noañadido. DriveFacturaID175 SeptSLUBlanes1G0mNX_hK0EDwT0-pF1jj2i0q4mEmMoCLverificado. Distintivo100observado /tmp/grau-175-revisado.png.246cerrados.
+- #66 factura314944 6julGirona,foto1MgPMv5oJzvNajgjIKK13rXwjJ7WDyA_-entera releída,NIFA17127630/SLUB70799135,ServirGirona,alb5328242jul.36Alpinista×2.35=84.60+24QueNoFalte×2.95=70.80;base155.40IVA32.63total188.03,vto15agoimpreso. Unidadesbotella completadas ysave/reopenverificados. PuntoVerde.90incluido,noduplicado. DriveFacturaID66JulioSLUGirona1YW_bv6-6fQXZ_Ai3yNEkYU-ogV4GmM_nverificado. Badge100 /tmp/grau-66-revisado.png. Total247/531=46.52%,284restantes. Pagoautomático preexistente noequivale a comprobación bancaria.
+
+### 17/11/2026 — cierres248–250
+- #185Grau33476430sepLloret: PDF1BWSexflsi1jIet32XDuSLVG9Hut4vjLt1p releído completo,SLUB70799135,alb56195329sep. Vto15oct→15novimpreso. Normalizadas líneas3cajas×20.70→18botellas×3.45 y6cajas×17.70→36botellas×2.95, importes62.10/106.20conservados;base168.30IVA35.34total203.64. PuntoVerde.81incluido. Save/reopenfecha/líneasconfirmados. DriveFacturaID185SeptSLULloret1eEWCWnBl6WlcXud91XAr557lGeQ4MZEAverificado. Distintivo100 /tmp/grau-185-revisado.png.248.
+- #70MRM1-2026-315952julGirona:foto1dSVJDdjova7JAeIaXplJMyEI0l_ZiORH releídaentera,A80280845/SLUB70799135,entregaSantFrancesc7. Alb1-2026-39298,24U×3.110=74.64IVA7.46total82.10,vto15agoimpreso ya correcto. Unidadvacía→U;2cajas/4.8kglogísticos,nofacturadosporpeso. SCRAP.110incluido,noduplicado. Save/reopenlínea comprobada. DriveFacturaID70JulSLUGirona1YW_bv6-6fQXZ_Ai3yNEkYU-ogV4GmM_nverificado.100/tmp/mrm-70-revisado.png.249.
+- #171LindamerVE26/1787530sepBlanes:PDF1WcgJK_TYRUJM8n3wy-__CM4haRn9jBkl1p texto original completo releído (no resumenGemini). B17016718/SLUB70799135,Blanesexpreso. 4líneas2PQ×4.14dto15%=7.04,2PQ×6.90dto15%=11.73,2líneas1CJ×52.50dto34%=34.65cadauna;netos3.519/5.865/34.65correctos. Base88.07IVA18.49total106.56. Concepto decía15novpero campo seguía15oct: corregido15novimpreso,save/reopenverificado. AlbVE26/28104+29508sinseparadosCSV9. DriveFacturaID171SeptSLUBlanes1G0mNX_hK0EDwT0-pF1jj2i0q4mEmMoCLverificado.100/tmp/lindamer-171-revisado.png. Total250/531=47.08%,281pendientes.
+
+### 17/11/2026 — cierre251 y censo actualizado
+- #46 LindamerVE26/13514 31julGirona: foto1LHSXRnW5_RXpwc95hzqzHdWnHkpCfDJy íntegra releída. SLUB70799135Gironaexpreso, NIFB17016718 mismoemisor comprobadofactura171. Diezlíneas18.60/18.48/18.60/30.80/2.50/34.13/2.50/34.65/21.28/-9=172.54,IVA36.23,total208.77. Nombrespapelcorregidos/eliminadoprefijoalbarán;devolución-4GF×2.25conservada. Vto15ago→15sepimpreso (concepto ya decíasep,campo no). Save/reopenfecha y10líneasverificados. DriveFacturaID46JulSLUGirona1YW_bv6-6fQXZ_Ai3yNEkYU-ogV4GmM_nverificado.100/tmp/lindamer-46-revisado.png. Total251/531=47.27%,280pendientes.
+- CSV10descargadoUI17nov12:11,531filas. Agentecomparaciónreadonly:497idénticas+32corregidas+2altas respectoCSV9. AltasJoprimsa543ya100 yPeixRos sinnumero09julBlanesbase81IVA0total81conceptosalmón;pendientereleeroriginal, nodeducirduplicado con26CPRAVE-0914914nov89.10. CincoúltimoscierresGrau/MRM/Lindamer únicos tambiénCSV10,sinduplicadosnuevos.
+
+### 17/11/2026 — cierre252: nueva entrada Peix Ros #542
+- Original14EuNTymnbq2DiytVOE63MkkXIJZtQwht foto1p completa leída: albarán26CPRAVE-09395816/11/2026,pedido26CPRCVE-09681716/11,SLUB70799135CooperativaMuralla28Blanes,NIFB17494808. Fecha09/07/2026era CONGELACIÓN del salmón, caducidad09/07/2028, no emisión. Captura original:6kg×13.50=81,IVA8.10,total89.10.
+- Corregidos numero vacío→26CPRAVE-093958, fecha09jul→16nov,IVA0→10/cuota8.10,total81→89.10, incluido desglose fiscal que seguía0. Vto15ago→15dic por condición mensual15siguiente confirmada. Línealectura6kg13.5/81ya correcta. Save/reopen todosdatosconfirmados, sinavisos. No duplicado con0914914nov: referencias/fechasdistintas; CSV10ylistadoPeixRoscontrastados.
+- Drive autorrenombra2026-11-16 · Albarán · COMERC DE PEIX ROS S.L.U. · 26CPRAVE-093958 · BLANES · ID-542.jpg yreubica carpetaNovSLUBlanes1LzsKV9yheaRaDXNwySAlv_Rktjn3k2Ay, ambos verificados despuésrecarga.100observado /tmp/peixros-542-revisado.png. Total252/531=47.46%,279restantes. Agenteimplementa protección local evidenciafecha/total, todavía sinpublicar.
+
+### 2026-11-17 — cierre 253: Grau #335, factura 336878
+Original completo 15AJLoJWVG-lf7rPQKDX-CrJdTl_LGs1N contrastado: 14/10/2026, Girona, Del Amor Uriel SLU B70799135, emisor A17127630. Albarán 565008 del 13/10. Siete líneas, 132 botellas, base 410,70 + IVA21 86,25 = 496,95. Vencimiento impreso 15/11. Corregidos nombres inventados FREIXENET→MON PERDUT NEGRE y JUVE Y CAMPS→MARREC ROSAT, errata Codorniu y unidades botella; importes conservados. Punto Verde1,71 ya incluido. Guardado/reapertura verificados. CSV10 único número y sin albarán separado. Drive nombre normalizado ID335 y carpeta octubre SLU Girona 1YP996qBbDOQWEmIRgIF-sJn_ZGHHi_a7 comprobados. Distintivo100 visible; prueba /tmp/grau-335-revisado.png. Total253/531 (47,65%),278pendientes. Pagada automática no acredita banco.
+
+### 2026-11-17 — cierre 254: Santiago #65, factura 24177
+Original completo 1DW_DutimTwpsTgB8EX3OtYOVqA8fTTYY: 07/07/2026, Tapeta Girona, SLU B70799135, emisor B55166003. Diez líneas contrastadas, base60,69+IVA4 2,43=63,12. Precio plátanos corregido1,653333→1,65 literal; importe2,48 redondeado preservado. Columna original «Unidades», sin kg; registrado U sin inferir peso. Vencimiento15/08 por condición usuario Girona15mes siguiente, campo y concepto guardados/reabiertos. CSV10 única número/fecha+importe/NIF+importe. Drive nombreID65 y carpeta julioSLUGirona1YW_bv6-6fQXZ_Ai3yNEkYU-ogV4GmM_n comprobados. Distintivo100 visible, prueba/tmp/santiago-65-revisado.png. Total254/531 (47,83%),277pendientes.
+
+### 2026-11-17 — cierre 255: Santiago #71, factura 23312
+Original completo13Egz52U2LU_MUM4XuSdxkDmLvfnBYeiS:02/07/2026,Girona,SLUB70799135,emisorB55166003. Doce líneas coinciden literalmente:13,13/4,35/5,14/6,79/3,18/2,25/7,74/7/1,31/1,62/0,96/1,60,base55,07+IVA4 2,20=57,27. Añadido U según columna Unidades sin inventar kg; conceptos y vencimiento15/08 confirmado usuario documentados. Guardado/reabierto cabecera y12líneas. CSV10sin duplicados número/NIF+importe/fecha+importe. Drive nombreID71/carpeta julioSLUGirona1YW_bv6-6fQXZ_Ai3yNEkYU-ogV4GmM_n verificados. Distintivo100visible; prueba/tmp/santiago-71-revisado.png. Total255/531(48,02%),276pendientes.
+
+### 2026-11-17 — cierre 256: Grau #215, factura 335792
+PDF completo1p1ia8aDTUfGdXK4y3sMj6h_i8ZkgpCJEXZ recontrastado:06/10/2026,Lloret,SLUB70799135,albarán56358206/10. Cuatro productos12botellas3,45/12×2,90/12×3,90/6×3,75:145,50+21%30,56=176,06. Vencimiento15/11impreso. PuntoVerde0,45incluido. Datos/líneas ya corregidos previamente persistían correctamente; ningún ajuste adicional. CSV10número/totalúnicos ynoalbarán563582separado. Drive nombreID215/carpetaOctSLULloret1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo verificados. Distintivo100visible; prueba/tmp/grau-215-revisado.png. Total256/531(48,21%),275pendientes.
+
+### 2026-11-17 — cierre 257: Gran Reino #240, 2026096291
+Original completo1-_q9N_gYnvm5geLPF_myinfZjUsTL7-V:17/10/2026,LloretSantPere84,SLUB70799135,emisorX1761143X. DecoraciónHalloween1U×1,20PVP; base0,992+21%0,208=1,20. Restaurado precio/importe línea0,992→1,20yactivadoIVAincluido; agregadoU. Vto15/11→17/10segúnusuariopagoalcomprar. Save/reopenverificóflagIVAincluido,cuadrecon1,20yfecha. CSV10númeroyNIF+importeúnicos. Drive nombreID240/octSLULloret1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo verificados.100visible/prueba/tmp/granreino-240-revisado.png.Total257/531(48,40%),274pendientes.
+
+### 2026-11-17 — cierre 258: Gran Reino #239, 2026096369
+Original1GzCKCkqI5AUfdhYSECvj-Zz0OXYrYpsD completo:17/10/2026,LloretSantPere84,SLUB70799135,emisorX1761143X normalizado. Tirita1U1,20yguantesdededo1U0,90IVAincluido. Restauradosprecios/importes0,992/0,744→1,20/0,90yflagIVAincluido; base1,736/cuota0,364/total2,10 impresosconservados. ConceptoBebidasfalso→materialreal. Vto15/11→17/10pagoalcomprarconfirmado. Reapertura confirmódatosylíneas. CSV10mismototal2,10en10noveslavavajillas2026105684,distinto; númeroactualúnico. DriveID239/carpetaOctSLULloret1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo verificados.100visible/prueba/tmp/granreino-239-revisado.png.Total258/531(48,59%),273pendientes.
+
+### 2026-11-17 — cierre 259: Botiga Regal #427,2026036981
+Original1fdeKkbNjfH2RaBXQAIzvYL0qR5XhNbGv releído completo:30/10/2026,WEIWEIHUX2667376C,SLUB70799135,fiscalTordera. Usuario confirmaexpresamenteBlanes en respuesta deeste turno. ProductoCUBOCALABAZA18C1unidadPVP2IVAincluido; restauradosprecio1,652893→2/importe1,65→2yactivadoflagIVAincluido,nombrelimpiosin21%. Base1,653+cuota0,347=2impresosconservados. Vto15/11→30/10porpagoalcomprarconfirmado. Reaperturaverificófecha/flag/líneaycuadre. CSV10único númeroyNIF+importe. DriveID427yOctSLUBlanes14Qcz_SyM8s9nU5k39xvCflXlkyogeg6V comprobados. Distintivo100visible/prueba/tmp/botiga-427-revisado.png.Total259/531(48,78%),272pendientes.
+
+### 2026-11-17 — cierre 260: Amat #387,M26/048446
+Original1LjnFqi0csr3eGQjzXjpqEaj_BJTekEsr completo:23/10/2026,albaránLloretSantPere84,SLUB70799135,emisorB17097593. DoslíneasBrie1U8,14@4%+Demetra2U13,70=27,40@10%,base35,54/cuota3,07/total38,61. LimpiadosnombresOCRconlotespegados; unidades/importesconservados. QuitadoIVAgeneral10erróneo,desglose8,14+0,33y27,40+2,74conservado. Añadidovto15/11mensual15siguienteconfirmadousuario. Save/reopenconfirmócabecera/desglose/nombres. CSV10númeroyNIF+importeúnicos. DriveID387/carpetaOctSLULloret1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo comprobados.100visible/prueba/tmp/amat-387-revisado.png.Total260/531(48,96%),271pendientes.
+
+Siguiente: Cerezo#172910516640,original1LN6ecQvW06tsBdWIIXucu9XyOPemsEGu,6líneas386,30,vto15novimpreso. DespuésAmat168,444,Cerezo170. Amat485requiereenlacealbarán318. Agentepriorizarsinmutaciones; agenterevisarbloqueosterminómejorasfecha/total129pruebas,localnopublicado. No gitpushrealizadoenestasesión.
+
+### 18/11/2026 — continuación: Cerezo #172 (cierre 261)
+- Censo visible actual: 535 documentos registrados. Acumulado de cierres manuales: 261/535 (48,79 %), pendiente reconciliar censo completo y nuevas entradas.
+- #172, Distribuciones del Jamón Cerezo S.L.U., ESB60599461, factura 910516640 del 30/09/2026, Blanes, 386,30 €. Original Drive 1LN6ecQvW06tsBdWIIXucu9XyOPemsEGu, leído completo (una página).
+- Corregido vencimiento 15/10 → 15/11/2026 según giro impreso. Base368,93; 325,47 al4% cuota13,02 y43,46 al10% cuota4,35; total386,30.
+- Corregidas seis líneas: queso6,460kg×16,11=104,07; aceite tres líneas de3U×24,60=73,80 cada una; bisbe blanco2,665kg×8,20=21,85; negro2,635kg×8,20=21,61. Importes originales preservados. Reabierto modal y verificados los seis valores persistidos.
+- Búsquedas individuales 81041682,81043094,81045625 devolvieron únicamente esta factura mensual (sin albaranes separados en resultados). Número de factura único en búsqueda.
+- Drive verificado: 2026-09-30 · Factura · Distribuciones del Jamón Cerezo S.L.U. · 910516640 · BLANES · ID-172.pdf, Contabilidad / Del Amor Uriel SLU /2026 /09 · Septiembre /BLANES (ruta completa desplegada en selector; no se movió archivo).
+- Distintivo Revisado al100% registrado y observado 18/11/2026 21:44:25. Estado pagada automática no acredita banco.
+- Incidencia de operación: fill+Tab de automatización no disparó guardado de líneas; entrada nativa teclado sí. No atribuir fallo a servidor: verificar persistencia tras reapertura y usar teclado nativo.
+
+### 18/11/2026 — Comercial Amat #168 (cierre 262)
+- Factura M26/007921,30/09/2026,535,97€, proveedor B17097593, cliente Del Amor UrielSLU B70799135; entrega expresa La Cooperativa C/Muralla28 Blanes. Original Drive1cOcgct7U5KWY-x3ep7q0pvB7S9w9YNYY: dos páginas leídas completas (texto del PDF, no resumen Gemini).
+- Las13líneas coinciden en descripción, cantidad, unidad, precio e importe. Base511,30;440,96al4% cuota17,64;70,34al10% cuota7,03; total535,97. Vencimiento15/10/2026 impreso, ya correcto.
+- Búsquedas separadas041170,042586,043961,045312: sin documentos independientes; factura única al buscar7921. No duplicados encontrados por esas referencias.
+- Nombre comprobado 2026-09-30 · Factura · COMERCIAL AMAT SL · M26-007921 · BLANES · ID-168.pdf. Carpeta actual BLANES,ID1G0mNX_hK0EDwT0-pF1jj2i0q4mEmMoCL, misma ruta completa verificada en cierre261: Contabilidad/Del Amor Uriel SLU/2026/09 · Septiembre/BLANES. No requería mover ni cambiar datos.
+- Distintivo revisado100% registrado y observado. Acumulado262/535=48,97% (273restantes sobre censo visible).
+
+### 18/11/2026 — Cerezo #170 (cierre 263)
+- Factura910516641,30/09/2026,Lloret,1207,05€. Original1_Igddj5un3YbxuTXr6cUiMxfGJIWF44v: dos páginas completas, emisorESB60599461 y clienteB70799135/Bar La Tapeta de Lloret. Vencimiento15/10/2026 impreso correcto.
+- Base1157,59;1105,14al4% cuota44,21;52,45al10% cuota5,25. Corregidas12líneas que tenían envases/piezas y precios vacíos: cinco quesos PeñaNieto6,14/12,75/9,71/5,99/12,27kg×16,11; cuatro aceites3U×24,60; llonganissa3,76kg×13,95; DonIsmael2,38kg×15,60; Valdeón1,3kg×13,76. Todos importes originales preservados. Reabierto y verificados12valores persistidos.
+- Cinco búsquedas81041042,81042102,81044032,81044661,81046229 devuelven solo esta factura mensual. Lista completa del proveedor sin otro registro de esta factura.
+- Archivo2026-09-30 · Factura · Distribuciones del Jamón Cerezo S.L.U. · 910516641 · Lloret · ID-170.pdf en Contabilidad/Del Amor Uriel SLU/2026/09 · Septiembre/Lloret, ruta desplegada, parent1eEWCWnBl6WlcXud91XAr557lGeQ4MZEA.
+- Distintivo revisado100% registrado y observado. Acumulado263/535=49,16%.
+- Mejora detectada para extracción: conservar separadamente envases/piezas y kilos/unidades facturadas; nunca tomar columna CANTIDAD para precio/kg cuando existe KILOS/UNID. Se repite en dos facturas Cerezo, aunque total e IVA ya cuadraban.
+
+### 18/11/2026 — Amat #444 (cierre 264)
+- Releídas dos páginas completas original13gw24Na1kyebasPEvP3GNkMjPxrEDhFn. FacturaM26/00888731/10/2026,entrega expresa LaTapetaGirona/AvSantFrancesc7,clienteB70799135,emisorB17097593. Las16líneas corregidas anteriormente persisten exactamente; base642,37,IVA27,34,total669,71;614,97al4%24,60 y27,40al10%2,74. Vto15/11impreso correcto.
+- Referencias046043 y048739 sin resultados;047936 solo coincidencia parcial con factura00479367 de Avícola, sin albarán Amat independiente. Número008887único.
+- Nombre2026-10-31 · Factura · COMERCIAL AMAT SL · M26-008887 · GIRONA · ID-444.pdf y rutaContabilidad/Del Amor Uriel SLU/2026/10 · Octubre/GIRONA verificados en Drive;parent1YP996qBbDOQWEmIRgIF-sJn_ZGHHi_a7.
+- Distintivo revisado100% registrado y observado. Acumulado264/535=49,35%. Sin alterar pagos.
+
+### 18/11/2026 — avance Amat #485 y albarán #318 (todavía sin cierre)
+- #485 M26/008888: releído PDF completo y verificadas8líneas actuales;total272,00,base259,17,IVA12,83,vto15/11,todo correcto.
+- #318 M26/047318: fotografía original abierta y contrastada con primera entrega de factura#485. Se añadieron mediante modal las4líneas ausentes: mix3U×8,90=26,70;provolone5,910kg×9,72=57,45;cabra3kg×11,91=35,73;salsa1U×13,70=13,70. Panel confirma4líneas,sumabase133,58. Guardado general confirmado. Falta reapertura final,vence/Drive ydistintivo.
+- Conciliaciones: vinculado expresamente albarán#318 a factura#485 tras verificar número,fecha,local,4productos e importes. Confirmación mostró vinculación parcial139,75de272,00; persistencia verificada en pestañaVinculaciónparcial: diferencia132,25€. Esa diferencia corresponde a segunda entregaM26/048852del27/10impresa en factura (base125,59+IVA6,66). Falta buscar original separado; no inventar ni crear albarán inexistente ni afirmar conciliacióncompleta. No borrar originales.
+
+### 18/11/2026 — cierre 265, albarán Amat #318
+- Cuatro líneas añadidas persistidas tras reapertura; desaparece descuadre. Fecha de pago15/11/2026 añadida según factura mensual#485 que incluye este albarán y condiciones confirmadas por usuario. Reabierto yfecha verificada; no marcado pagado.
+- Drive: nombre2026-10-16 · Albarán · COMERCIAL AMAT SL · M26-047318 · BLANES · ID-318.jpg, ruta completa desplegadaContabilidad/Del Amor Uriel SLU/2026/10 · Octubre/BLANES,parent14Qcz_SyM8s9nU5k39xvCflXlkyogeg6V.
+- Búsqueda047318única; distintivo100% confirmado yobservado junto aVinculadoafactura. Acumulado265/535=49,53%.
+- Factura#485 permanece sin cierre hasta documentar segunda entrega: búsqueda048852sinresultados; no crear niinventar original. Relación parcial estructurada correcta. MejoraUI: albaránvinculado sigue mostrando vencida aunque factura aparecepagadaautomática; conviene representar pago a través de factura, no como deuda separada.
+
+### 18/11/2026 — Cerezo #268 pendiente por validación de cantidad cero
+- Original foto1pIXtja9P3_6hZ8-rq-nMAHN99iLU3aoI ampliada y recorrida completa. 81050785,20/10/2026,entregaBarLaTapetaLloret/SantPere84;emisorESB60599461,clienteB70799135. Facturaciónmensual,giro15díasfechafactura. Base73,80,4%2,95,total76,75.
+- Original contiene quesoQPEÑANIETOGRANRVAOVEJACRUDA,PENDIENTEDESERVIR,cantidad0,0kg,precio16,11/kg,sinimporte;aceiteCAÑUELO5L.VIRGENEXTRA1caja=3UN×24,60=73,80. No borrar ni convertir línea no servida en entrega ficticia.
+- Nombre aceite corregido (de CANUEIO SL a CAÑUELO5L.). Intentos de corregir descripción/precio de línea cero rechazados con mensajeUI: La cantidad no puede ser cero; usa una cantidad negativa si es una devolución. Se restaura valor anterior; no forzar cantidadniimporte. Sin distintivo100%;pendiente corregir validación para permitir editar descripción/precio conservando ceros de artículo no servido.
+- Vtoactual15/11plausiblepor mensual15días, pendiente confirmación exacta si facturaoctubre no disponible. Sin cambio de pagos.
+
+### 18/11/2026 — Cerezo #267 (cierre 266)
+- Foto1rL58yB40COcPfjNr8iXmRiVWDsl1Ck4a ampliada y recorrida cabecera,producto,pie.81051170,20/10/2026,Lloret/SantPere84,emisorESB60599461,clienteB70799135.
+- Corregida línea QVIRIATOOVEJACRUDAGRANRESERVA:3UN×40,93 derivado→7,622kg×16,11 original,importe122,79preservado. Nombre y concepto corregidos;reabierto ytodosvalorespersistidos.
+- Base122,79,4%4,91,total127,70. Papel:facturaciónmensual,giro15díasfechafactura;vto15/11 conservado,consistente con facturamensualLloretseptiembre(30/09→15/10)ya verificada. No afirmar fecha impresa15/11 ni banco pagado.
+- Númeroúnico enbúsqueda ylistaCerezosin factura mensualoctubreLloret registrada. No enlace inventado.
+- Drive2026-10-20 · Albarán · Distribuciones del Jamón Cerezo S.L.U. · 81051170 · Lloret · ID-267.jpg;ruta completa desplegadaContabilidad/Del Amor Uriel SLU/2026/10 · Octubre/Lloret,parent1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo.
+- Distintivo100%registrado yobservado. Acumulado266/535=49,72%.
+
+### 18/11/2026 — Cerezo #284 pendiente vencimiento
+- Albarán81051168,20/10/2026,Blanes,originalfoto1I-oC4qvq_s_-pqY2vw_BwsLENayooIN5leídacompleta ampliada. EmisorESB60599461 y clienteB70799135/LaTapetaBlanesMuralla21. Aviso antiguoNIFESB6059461resuelto al comprobar quecampoactualB60599461coincide con original(sinprefijoES).
+- Corregida línea3UN/preciovacío→7,812kg×16,11=125,85;nombreQVIRIATOOVEJACRUDAGRANRESERVA. Base125,85+4%5,03=130,88impreso. Concepto con evidencia y duda. Guardado general exitoso;falta reabrirverificarlínea yDrive.
+- Original indica facturaciónmensual/giro30díasfechafactura,mientras facturaBlanesseptiembrevence15/11. Preguntaasyncpendienteusuario: día15segundomes o30díasfechaFactura. No cambiarvto15/11actual hasta aclarar;sin100%. Se continúa con otros.
+
+### 18/11/2026 — Aclaración expresa de Dirección: Cerezo
+Dirección confirma: «cerezo se paga siempre el ultimo dia del mes siguiente, no el 15». Aplicar último día natural del mes siguiente a Cerezo, todos los locales. Sustituye las inferencias previas por el día 15 o por los 30 días impresos. Pendiente repasar también #172, #170, #267, #268 y #284 y cualquier otro Cerezo ya auditado; conservar evidencia de discrepancia con fechas impresas. No confundir vencimiento confirmado con pago bancario acreditado.
+
+### Cierre 267 — 18/11/2026 — Cerezo #353, albarán 81051402, Girona
+Original JPG 1hPo7_ec3nu2kTcXjV52oikguip3PCm5x leído completo ampliado: fecha 21/10/2026, entrega Avda. Sant Francesc 7 Girona, Del Amor Uriel SLU B70799135; proveedor ESB60599461. Corregidos NIF ESB6059461 → B60599461 y línea aceite mal leída: ACEITE CAÑUELO 5L. VIRGEN EXTRA, 3 cajas = 9 UN × 24,60 = 221,40 (antes 3 CJ / 73,80). Cuota general y desglose 8,88 → 8,86, 4 %, total 230,26. Reabierto y verificado persistencia de línea, importes y NIF. Vencimiento 30/11/2026 según aclaración expresa de Dirección de hoy (último día mes siguiente). Búsqueda 81051402: único albarán. Nombre Drive normalizado añadiendo Albarán: 2026-10-21 · Albarán · Distribuciones del Jamón Cerezo S.L.U. · 81051402 · GIRONA · ID-353.jpg; carpeta actual ID 1YP996qBbDOQWEmIRgIF-sJn_ZGHHi_a7, ya verificada Contabilidad / Del Amor Uriel SLU / 2026 / 10 · Octubre / GIRONA. Distintivo Revisado al 100 % observado después de confirmar. Total cerrado 267/535 (49,91 %), sujeto a nuevas entradas y repaso de vencimientos Cerezo anteriores.
+
+### Cierre 268 — 18/11/2026 — Cerezo #284, albarán 81051168, Blanes
+Resuelta la consulta de vencimiento: 30/11/2026 por confirmación expresa de Dirección, último día del mes siguiente para Cerezo. Concepto deja trazabilidad de diferencia frente a giro a 30 días impreso. Reabierto y verificada fecha 30/11. Línea previamente corregida persistida: Q VIRIATO OVEJA CRUDA GRAN RESERVA, 7,812 kg × 16,11 = 125,85; original 3 piezas. IVA 4 % 5,03, total130,88. NIF B60599461 correcto, aviso erróneo anterior aceptado tras lectura original. Original leído completo esta sesión: 1I-oC4qvq_s_-pqY2vw_BwsLENayooIN5,20/10/2026,entregaMuralla21Blanes. Drive nombre 2026-10-20 · Albarán · Distribuciones del Jamón Cerezo S.L.U. · 81051168 · BLANES · ID-284.jpg, padre actual14Qcz_SyM8s9nU5k39xvCflXlkyogeg6V=Contabilidad/DelAmorUrielSLU/2026/10·Octubre/BLANES. Único resultado albuscar81051168. Distintivo100% observado. Total268/535=50,09%,sincontarnuevasentradas.
+
+### 18/11/2026 — Repaso de vencimientos Cerezo tras confirmación de Dirección
+- #268 albarán81050785 actualizado a30/11/2026, visible en listado; permanece pendiente por línea cantidad0 que formulario no permite corregir. Concepto documenta bloqueo y criterio de pago.
+- #267 albarán81051170 actualizado a30/11/2026, reabierto y fecha verificada; distintivo100% restablecido con evidencias originales comprobadas en esta sesión, observado en listado.
+- #172 factura910516640 actualizado a31/10/2026 (originalimprime15/11). Concepto conserva fecha impresa y nueva confirmación. Fecha persistida y distintivo100% comprobados.
+- #170 factura910516641 actualizado a31/10/2026 (originalimprime15/10). Concepto conserva fecha impresa y nueva confirmación. Fecha persistida; revalidación100% enviada. Pendiente verificar distintivo tras respuesta.
+- Restan repasar Cerezo Botiga facturas910517692 y910517403: listado todavía8/12 y6/12. No contar como cierres nuevos; son revisiones ya auditadas afectadas por aclaración.
+
+### 18/11/2026 — Cerezo vencimientos: repaso terminado
+#170 distintivo100% confirmado. #230 y #205 Botiga actualizados a30/11/2026 por condición expresa de Dirección; se conserva enconcepto referencia a08/12 y06/12impresos. Releídos PDFs1p completos y líneas kg/precios persistidas; IVA/REsin cambios. Drive nombres correctos y padre1dAN47Jvs__DB6DI4ASV7J_OHgXLgKE7Wverificado (Pilar/2026/10Octubre/Botiga). Ambos distintivos100% restablecidos y observados. Listado Cerezo:8documentos, los6deoctubrevencen30nov, los2septiembre31oct. Siete100%, #268siguependienteporvalidacióncantidad0. Esto no aumenta totalcierres268/535. Condición documentada en cada concepto y registroauditoría; aún no se ha cambiado ficha/memoria general del proveedor.
+
+### 18/11/2026 — Nueva entrada Jove Viñes #545, pendiente relación
+Original PDF1p1l0kmfTXEytGqdYXwTP3NrhpV_HqoiTh0 leído completo. RE20260245 09/11/2026; JOVEVIÑESB25028515;receptorMateoDelAmorSalinas46535781L/BARLATAPAIBERICACamíRal6Tordera. Base-566,33;IVA4%-22,65;total-588,98; líneaABONOPORDIFERENCIADEPRECIO cantidad-1,precio566,325,importe-566,33, todo correcto sin modificaciones. Vto09/12impreso,30díasfechaFactura. Recibido18nov, lectura nueva correcta. Rectifica0120265742de29oct y refierealbarán01-20267448de09nov. Búsqueda0120265742solo devuelve esteabono;20267448sinresultados. Faltafacturarectificada para contrastar relación;no100%porahora. Drive nombreuniformeID545,ruta completa desplegadaContabilidad/MateuDelAmorSalinas/2026/11·Noviembre/LaTapaIbérica-Tordera,parent1c2BIiBOjaFHTMmzQxwmPfj12eLGrkuZE. No alterar importes ni crear/enlazar registroinventado.
+
+### Cierre269 — Castellmenatge #527 —18/11/2026
+PDF1p1FCoq_tRxbSWIzPt5dPiytER3aaG_pk-E releído completo:#1-11437del13nov,emisorB64982150,receptorMateo46535781L;localLaTapa conservadoorigen,noinferirdomicilioPalafollscomoentrega. Treslíneas:11cuencos×1,98=21,78;espumadera1×2,98;CacaoQ10 1×0,98. Precios e importes CON IVAoriginales incorporados y activada modalidadIVAincluido. Base21,27+21%4,47=25,74;efectivo25,74impreso,vto13novconservado. Primer guardado importe cuencos no persistió(18);recorregido21,78 yreabierto para confirmar las3líneas ycuadre25,74. Distinta#1-11436porproductos/importe,ya contrastada anterior revisión. Drive nombre2026-11-13 · Factura · CASTELLMENATGE S.L · #1-11437 · La Tapa Ibérica - Tordera · ID-527.pdf,parent1c2BIiBOjaFHTMmzQxwmPfj12eLGrkuZE,rutacompletaactualverificadaen#545Contabilidad/MateuDelAmorSalinas/2026/11·Noviembre/LaTapaIbérica-Tordera. Distintivo100%observado. Total269/535=50,28%,266restantes.
+Mejora detectada: investigar guardados rápidos consecutivos de líneas tras cambiarIVAincluido; unimporte no persistió a laprimera. Reapertura impide cierreincorrecto. Etiquetasdudosa siguen aunque datos contrastados,necesitanrevisióndeUXsinborrarlatrazabilidad.
+
+### Cierre270 — Castellmenatge #528 —18/11/2026
+OriginalPDF1p1Fa3hWWpAKBw7MbgaiZs47WPHker0eyUO releído completo:factura#1-11436del13nov,B64982150/receptorMateo46535781L;localLaTapa conservadoorigen. Cuatrojarrones1unidadcadauno16,98/18,98/9,98/22,98 brutos coincidenexactamente. Activada modalidadIVAincluido, sinmodificarlíneasniimportes; desaparecefalsodescuadre11,96. Base56,96+IVA21%11,96=68,92;Efectiu68,92impreso,vto13nov. Reabierto:checkboxpersistido,4líneasiguales,cuadrebruto68,92. Originalclaramentedistintode#1-11437yaauditado. Drive nombre2026-11-13 · Factura · CASTELLMENATGE S.L · #1-11436 · La Tapa Ibérica - Tordera · ID-528.pdf,parent1c2BIiBOjaFHTMmzQxwmPfj12eLGrkuZE,rutaMateu/2026/11Noviembre/LaTapa comprobadaestasesión. Distintivo100% observado.270/535=50,47%,265restantes.
+
+Lista de mejoras consolidada a petición del usuario: docs/mejoras-entrada-documentos-2026-11-18.md. Distingue casos, propuestas, estado real y pruebasnecesarias; no confundircorreccionesmanualesconprevenciónimplantada.
+
+### Cierre271 — Castellmenatge #506 —18/11/2026
+OriginalPDF1p1HmSHXUPak4Bv0SrE4eOrOAS795SHxkw6 leído completo:#1-11065de09nov,B64982150/receptorMateo46535781L;LaTapa conservadoorigen. JarrónVerde1×29,98,lámparaMelly1×69,98,bombillaLED1×7,98; precios e importesbrutos originales. Base89,21+IVA21%18,73=107,94;efectivo107,94impreso,vto09nov. ActivadoIVAincluido sin modificarprecios/cantidades/importes;reapertura demuestra3líneaspersistidas ycuadre107,94,no descuadre. Búsqueda#1-11065única,sinreferenciaalbaranes. Drive nombre2026-11-09 · Factura · CASTELLMENATGE S.L · #1-11065 · La Tapa Ibérica - Tordera · ID-506.pdf,parent1c2BIiBOjaFHTMmzQxwmPfj12eLGrkuZE misma rutaMateu/2026/11Noviembre/LaTapa ya contrastadaestasesión. Distintivo100% observado.271/535=50,65%,264restantes.
+
+### Cierre272 — IDAX #220 —18/11/2026
+PDF1p1w7bIt3c-HvaWmQO18Cp7zSmCfpZ62uvC releído completo:A6973del13oct,B55046205,receptorMateo46535781L,LA TAPA IBERICA CamíRal6Tordera explícitos. Faltabaúnicolínea: añadidaTD2Ttostador2pisos cuarzo temporizador370×200mm,1U,costeNETO225,importe225. Tarifa264,71y15%descuento original conservadosenconcepto;neto225impreso,noinventado. IVA21%47,25total272,25;COMPTAT13octimpreso;sinverificarbanco. Reabierto y línea1U225persistida. BúsquedaA6973única,sinreferenciasalbarán. Drive nombre2026-10-13 · Factura · IDAX EQUIPAMENTS PER A L' HOSTALERIA S.L. · A6973 · La Tapa Ibérica - Tordera · ID-220.pdf,rutacompletadesplegadaContabilidad/MateuDelAmorSalinas/2026/10·Octubre/LaTapaIbérica-Tordera,parent10DIHy7Nm7IBaQ3GhZ9YTm_57tLvmP8UW.100% observado.272/535=50,84%,263restantes.
+
+### Cierre273 — Agrària #512 —18/11/2026
+PDF1p1FYgXG-8hklpuic1SM_ifSLbdbSpkPbss leído completo:factura266546de10nov,ticket28195,mismo día. EmisorF60433745,receptorMateu46535781L,CamíRal6Tordera/LaTapa. LíneaPASTANAGA*a doll*0,51×1,538=importeimpreso0,79;unidadnoexpresa,noinventada. Base0,79+4%0,03=0,82,COMPTAT/vto10nov. Todosdatosactualescoinciden,no modificaciones salvoconfirmación100. Búsqueda28195soloestafactura,266546única. Drive nombre2026-11-10 · Factura · AGRÀRIA LA BAIXA TORDERA, S.C.C.L. · 266546 · La Tapa Ibérica - Tordera · ID-512.pdf,parent1c2BIiBOjaFHTMmzQxwmPfj12eLGrkuZE misma rutaMateu/2026/11Noviembre/LaTapa contrastada. Distintivo100% observado.273/535=51,03%,262restantes.
+
+### 18/11/2026 — TPV Solutions #452 pendiente vencimiento
+PDF1p13fNLuF9OlNsCdJ2bJ95u3ZFQwQb2Iv-J releído:2601637de02nov,proveedorB55089411/receptorMateu46535781L,CamíRal6LaTapa. Doslíneas1×42y1×25persistidas,base67+21%14,07=81,07,correcto. Original noindica vencimiento ni forma de pago legible; cuentas bancarias no prueban plazo. Consultaasyncenviadausuario sobre díaemisión/otroplazo; noalterarpago ni100hastarespuesta. Drive nombreuniformeID452visible,carpeta verificada anteriormenteNovLaTapa;no nuevacorrección.
+
+### Cierre274 — Botiga de Regal #468 —18/11/2026
+Originalfoto1oClsrLJDqnoGkLdiXYBYi0h9qX8SBaeE ampliada completa:factura2026037799de04nov,X2667376C,receptorSLUB70799135;Blanesconservadoorigen,fiscalTorderanoentrega. Doscarpetas×4,50=9bruto. ActivadoIVAincluido yrestauradospreciounitario4,50/importe9 desde netoderivado3,719008/7,44. Bases originales7,438+IVA21%1,562=9 conservadas. Vto15nov→04nov segúnusuariopagoalcomprar. Reapertura confirmalínea2unidad×4,5=9,checkboxIVAincluido,cuadre yfecha4nov. Númeroúnico,sinreferenciasalbaranes. Drive nombre2026-11-04 · Factura · BOTIGA DE REGAL · 2026037799 · BLANES · ID-468.jpg,parent1LzsKV9yheaRaDXNwySAlv_Rktjn3k2Ay rutaSLU/2026/11Noviembre/BLANES ya contrastada. Distintivo100% observado.274/535=51,21%,261restantes.
+
+### 18/11/2026 — Confirmación TPV Solutions
+Usuario confirma facturaÁgora/TPVSolutions se paga el día15delmessiguiente. Aplicar a #4522601637de02nov:15/12/2026. Aún pendiente guardar/verificar al momento de esta anotación.
+
+### Cierre275 — TPV Solutions #452 —18/11/2026
+Trasconfirmaciónusuario, vencimiento02nov→15/12/2026 (día15messiguiente). Concepto documenta procedencia,noimpreso. Reabierto fecha15dicpersistida,estadoPagoautomático15dic,noafirmarpagobancario. Original completo y2líneas42+25 ya contrastadosestasesión,base67+IVA21%14,07=81,07,NIFB55089411/Mateu46535781L,LaTapaCamíRal6. Númeroúnico,sinreferenciaalbaranes. Drive nombre2026-11-02 · Factura · TPV SOLUTIONS CORP SL · 2601637 · La Tapa Ibérica - Tordera · ID-452.pdf,parent1c2BIiBOjaFHTMmzQxwmPfj12eLGrkuZE, rutaMateu/2026/11Noviembre/LaTapa verificada. Distintivo100%observado.275/535=51,40%,260restantes. CondiciónTPVregistradaenconcepto/log,noactualizadafichageneralproveedor.
+
+### 18/11/2026 — Hinojosa #547 A/4223 parcial, entrada nueva
+PDF 1AvCIvcsDhK4RUjX1zItKCiFyNuoqRKoh,1p leído completo. Emisor B58589441,receptor Pilar46533801V, fiscal CamíRal, reservaMateu. 31/10/2026,albA/04077del23/10. Cinco líneas kg103×22.9=2358.70;107×18.9=2022.30;101.8×16=1628.80;3.06×26=79.56;9×10.5=94.50, todas persistidas correctas. Base6183.86+IVA618.39+RE86.57=6888.82. Vto erróneo31oct→29ene2027 según pagaré90díasFF impreso. Concepto documentado; toast y fila Pago automático29ene confirman guardado. Drive nombre uniformeID547, carpetaactualCanMateu parent13mshhDwauaxvnuhpp6zb4i_S645iuIw3, ruta completa pendiente. Pendiente relaciónalbarán/localdefinitivo,NO100. Censo actual535,275cerrados(sin nuevo cierre).
+
+### 18/11/2026 — Hinojosa #546 A/4224 parcial
+Original1zPvNmlipzoH7hhwikLCevr0swMBjOZhm1pcompleto:31oct,Pilar46533801V,GrupoMontnegre,Concordia5,ReservaMateu;AlbA/04234. Una línea100piezas=520kg×15.3=7956,IVA795.60total8751.60,sinRE,todo correcto enpanel. Vto29ene2027correcto90díasFF. Conceptodocumentado. Preguntausuario conjunta#547/#546:CanMateu,Botigaoreparto; NO100. #547búsqueda04077solo factura propia,noalbaránindependiente;carpetaDrive completaPilar/2026/10Octubre/CanMateu,confirmadaporbreadcrumb.
+
+### Cierre276 — Joan Margó #465 1.26.09754 —18/11/2026
+Original PDF13RYRP8VDltw9dnlA_aKEsrrXP4F4PCBK1p releído completo. NIF77739006H,receptorPilar46533801V,destinoCamíRal16Botiga. Base38.54IVA10%3.85RE1.4%0.54total42.93. RegistradoRE0.54 en campo separado, vto04nov→05novimpreso, confirmado desglose38.54/10/3.85. Dos líneas cantidades/precios correctos, añadidas unidadeskg (2×9.70=19.40;1.65×11.60=19.14), reapertura verificó persistencia,sinavisos. Númeroúnico; búsqueda12620delalbaránsolo encuentra factura propia. Drive nombreuniformeID465 y rutaContabilidad/PilarAyllónTorres/2026/11Noviembre/Botiga,parent1xeD1eCwEmpyp4aK6IVnpB6LDk7Q8xjhE verificados. Badge100%observado.276/535=51.59%,259restantes.
+
+Confirmaciónusuario18/11: ambasHinojosa#547A4223y#546A4224sondeBotiga,corregirlocalyDrive.
+
+### Cierres277-278 — Hinojosa #547 y #546 —18/11/2026
+Usuario confirma ambas comprasBotiga. Corregidos localesCanMateu→Botigaenpanel,conceptosconprocedencia. #547A4223vto29ene2027corregidoesta sesión;#546A4224ya29ene2027correcto. Originales completosylíneas contrastados arriba;RE86.57solo#547,sinREenoriginal#546. Búsquedas04077/04234 solo hallan facturas propias,noalbaranesindependientes. Ambos números únicos. Reaperturas para confirmar revisión muestran datosguardados. Drive actualizóautomáticamente nombreylocal; verificado nombreuniformeID547yID546yparent1dAN47Jvs__DB6DI4ASV7J_OHgXLgKE7W rutaContabilidad/PilarAyllónTorres/2026/10Octubre/Botiga. Ambosbadges100%observados.278/535=51.96%,257restantes.
+
+### Cierre279 — Consum #397 ref277797 —18/11/2026
+Original1QpUnWIND5JnjSVdfgJO536SvyenjCOPzfoto completa ampliada:23oct13:02,Lloret,F46078986,2recambios×5.59bruto=11.18,base9.24IVA21%1.94. Neto4.62×2=9.24conservado,unidadud añadida yreabierta verificada. Vto15nov→23oct segúnpagoimpresotarjeta11.18cambio0. MarcadaPagadaporacciónpanelbasadaenticket,noafirmaciónconciliaciónbancaria. Referenciaúnica277797distintaticketpastas277858mismocódigocaja. Drive nombreuniformeID397yparentOctLloret1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo verificados. Badge100%+Pagadaobservados.279/535=52.15%,256restantes.
+
+### Cierre280 — Consum #234 ref080725 —18/11/2026
+Foto1sX07zmaF9RWIqiO7mfB2ovr4jssqmUx7 completaampliada:15oct17:40,ConsumF46078986,Lloret,1pastaempanada1.45bruto=1.32base+IVA10%0.13. Costeneto1.32conservado,unidadudañadidaverificadareapertura. Vto15nov→15oct,pagotarjeta1.45cambio0impreso,acciónMarcarpagada confirmadafilaPagada(noafirmaciónconciliación). Referencia080725única,listadoConsumseparadocódigocaja04/000007. Drive nombreuniformeID234ycarpetaOctLloretparent1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo verificados. Badge100%observado.280/535=52.34%,255restantes.
+
+### Cierre281 — Consum #396 ref277858 —18/11/2026
+Foto1AOTEm8QUaL5QwOeQi9l8QeZtE_nM0rcycompletaampliada23oct14:35,9pastas1.45=13.05ybolsa0.15,total13.20. Desgloseimpreso11.88@10cuota1.17(redondeounitario) y0.12@21cuota0.03,base12IVA1.20,netosproductos1.32/0.12qty9/1udcorrectos. ConfirmadodesgloseyavisoNIFobsoleto(F46078986ya corregido). Vto15nov→23oct,MarcarpagadaporTarjeta13.20cambio0impresos,noafirmaciónconciliación. Reabiertosinavisos,Pagada. Distintode277797verificadooriginales,listadoúnico. DriveID396nombreuniformeyOctLloretparent1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo. Badge100%observado.281/535=52.52%,254restantes.
+
+### Cierre282 — Consum #280 ref275980 —18/11/2026
+Originalfoto1R-EMM0YrwHyKfTkkIeS67a4K1oYNiPKc ampliada,parte superior ypie leídos:20oct09:20,F46078986,Lloret,3hojaldres+6pastas1.45bruto ybolsa0.15. Base12 IVA1.20total13.20,desglose11.88/10/1.17y0.12/21/0.03impreso. Netoslineas3.96/7.92/0.12qty3/6/1correctos,añadidoudyseverificóreapertura,descuadreobsoletodesapareció. Vto15nov→20oct;pagotarjeta13.20cambio0impreso,Marcarpagadaverificado. No conciliación bancaria. Distinto277858porfecha/referencia. DriveID280nombreuniformeOctLloretparent1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo. Badge100%observado.282/535=52.71%,253restantes.
+
+### Cierre283 — Consum #281 ref275733 —18/11/2026
+Foto1ivUpszW0r5SQMG177ka00NFTuOfQyRFd completaampliada19oct16:16,F46078986,Lloret;4miniburger1bruto ybolsa0.15. Base3.84+0.12=3.96,IVA4%0.16+21%0.03=0.19,total4.15. NombrescorregidosMINIBURGERDULCESOL/BOSSACOMPRARECICL,unidadesud;cantidad4/1netos0.96/0.12conservados,reaperturaverificada. Vto15nov→19oct,pagotarjeta4.15cambio0impreso,Marcarpagadafilaobservada,noafirmarconciliación. DriveID281nombreuniformeOctLloretparent1ACTkQaXTemPh33n4S5cOMVvIUD8l-oeo. Badge100%observado.283/535=52.90%,252restantes.
+
+### Cierre284 — Consum #462 ref282956 —18/11/2026
+Foto1G69-x4N6fZ95SCf2I5_ovH2scF8oeCDQ completaampliada:03nov,F46078986,Lloret,8pastas1.45bruto=11.60ybolsa0.15. Base10.56@10cuota1.04impresaredondeounitarioy0.12@21cuota0.03,totalbase10.68IVA1.07total11.75. Añadidasud a2líneas,qty8/1preciosnetos1.32/0.12persistidosreapertura. Vto15dic→03nov,pagotarjeta11.75cambio0impreso,Marcarpagadaobservado,noafirmaciónconciliación. Referenciaúnica,listadoConsumcontrastado. DriveID462nombreuniformeNovLloretparent11GV8o_TXaLy4-sN-pdqkNy4T9UAdq6at. Badge100%observado.284/535=53.08%,251restantes.
+
+### 18/11 — continuación tras priorizar avisos: cierre 285
+
+- Botiga de Regal #418, factura 2026036686 del 28/10/2026, original Drive `1KviyZmEdNMyDmPSJPOYyrhq4tl4xjYvh`. Imagen completa contrastada ampliada: NIF X2667376-C, receptor Del Amor Uriel SLU B70799135; dirección fiscal Tordera no cambia asignación Blanes.
+- Tres productos: GANCHO 75MM 4PCS 1×1=1; CUCHARITA DE CAFE 3×3,50=10,50; RELOJ REDONDO GRI 1×5,80=5,80. Son precios con IVA incluido, total 17,30. Papel imprime base14,298 e IVA21%3,002: conservados sin cambiar precisión ni importes.
+- Corregido modo de líneas a IVA incluido, vencimiento 15/11→28/10 según condición de Botiga de Regal confirmada por usuario (pago al comprar). No se afirma conciliación bancaria; permanece estado automático de pago.
+- Reabierta tras guardar: sin aviso de descuadre, fecha persistida. Búsqueda número devuelve un único registro.
+- Drive verificado nombre `2026-10-28 · Factura · BOTIGA DE REGAL · 2026036686 · BLANES · ID-418.jpg`, carpeta actual `14Qcz_SyM8s9nU5k39xvCflXlkyogeg6V`, ya contrastada Contabilidad/Del Amor Uriel SLU/2026/10 · Octubre/BLANES. Sin mover ni renombrar innecesariamente.
+- Confirmación completa guardada y distintivo ✓ Revisado al100% observado. Evidencia `/tmp/revision-botiga-418.jpg`.
+- Cierre acumulado285/535 (53,27%), quedan250 según último censo535 observado. Las mejoras de código siguen en local, no publicadas.

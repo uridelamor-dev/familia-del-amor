@@ -95,6 +95,7 @@ export function comoDocumento(fila = {}) {
     base_imponible: fila.base_imponible,
     porcentaje_iva: fila.porcentaje_iva,
     cuota_iva: fila.cuota_iva,
+    iva_desglose: typeof fila.iva_desglose === "string" ? (() => { try { return JSON.parse(fila.iva_desglose); } catch { return null; } })() : fila.iva_desglose,
     total: fila.total,
     recargo_equivalencia: fila.recargo_equivalencia,
     retencion: fila.retencion,

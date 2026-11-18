@@ -1,3 +1,4 @@
+import {actualizarAvisosTrasCorreccion} from './src/modules/facturas/avisos-vigentes.js';
 import {validarCargosBase,leerCargosBase} from './src/modules/facturas/cargos-base.js';
 import {conciliarDocumentos} from './src/modules/facturas/conciliar-decision.js';
 import {nifsConfirmados} from './src/modules/facturas/identidad-confirmada.js';
@@ -3349,6 +3350,9 @@ app.patch("/api/facturas/:id", requireAuth(["direccion", "contabilidad"]), async
       // la persona ha cambiado el NIF; cambiar solo el nombre no confirma el CIF leído.
       if(req.body.nif!==undefined && String(req.body.nif??'').replace(/[\s.\-/]/g,'').toUpperCase()!==String(antes.nif??'').replace(/[\s.\-/]/g,'').toUpperCase())
         await recordarProveedorRevision((sql,p)=>client.query(sql,p),{...antes,...req.body},req.user.username||req.user.nombre);
+      const datosActuales=(await client.query('SELECT * FROM facturas WHERE id=$1',[req.params.id])).rows[0];
+      const avisosVigentes=actualizarAvisosTrasCorreccion(antes,datosActuales);
+      if(avisosVigentes!==antes.revisar)await run('UPDATE facturas SET revisar=? WHERE id=?',[avisosVigentes,datosActuales.id]);
       if(req.body.confirmar_avisos===true){
         const actual=(await client.query('SELECT * FROM facturas WHERE id=$1',[req.params.id])).rows[0];
         let avisos=[];try{avisos=JSON.parse(antes.revisar||'[]');}catch{}
@@ -3409,8 +3413,8 @@ app.post("/api/facturas/:id/fecha", requireAuth(["direccion", "contabilidad"]), 
     await dbRun(`UPDATE facturas SET fecha = ?, vencimiento = ?, vencimiento_origen = ?, sheet_synced = 0 WHERE id = ?`,
       [fecha, venc.vencimiento, venc.origen, f.id]);
     await ficAuditar('facturas',f.id,'fecha_corregida',req.user.nombre||req.user.username,{local:f.local,detalle:{antes:f.fecha,despues:fecha}});
-    // El aviso de la fecha deja de tener sentido en cuanto alguien la decide a mano.
-    await dbRun(`UPDATE facturas SET revisar = NULL WHERE id = ? AND revisar LIKE '%mal leído%'`, [f.id]).catch(() => {});
+    // Conservar las dudas de lectura: corregir una fecha no confirma NIF, IVA ni otros campos.
+    // Los avisos de evidencia se confirman expresamente en la revisión unificada.
 
     res.json({
       ok: true, fecha, vencimiento: venc.vencimiento,

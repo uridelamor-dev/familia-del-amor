@@ -1,3 +1,5 @@
+import {actualizarAvisosTrasCorreccion} from '../src/modules/facturas/avisos-vigentes.js';
+import {cuadraTotal} from '../src/modules/facturas/coherencia.js';
 import {validarCargosBase,leerCargosBase} from '../src/modules/facturas/cargos-base.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +20,8 @@ async function guardar(body,{acceso=true,factura={},detalle}={}){
   if(sql.startsWith('SELECT importe'))return {rows:lineas};
   if(sql.startsWith('UPDATE facturas SET')){
    writes++;
-   if(sql.includes('lineas_estado=?')){f.lineas_estado=p[0];f.lineas_aviso=p[1];}
+   if(sql.includes('revisar=?')){f.revisar=p[0];}
+   else if(sql.includes('lineas_estado=?')){f.lineas_estado=p[0];f.lineas_aviso=p[1];}
    else {
     const fields=[...sql.matchAll(/([a-z_]+) = \?/g)].map(m=>m[1]);
     fields.forEach((k,i)=>{f[k]=p[i];});
@@ -28,7 +31,7 @@ async function guardar(body,{acceso=true,factura={},detalle}={}){
   return {rows:[]};
  }};
  vm.runInNewContext(ruta,{app:{patch(_p,_a,h){handler=h;}},requireAuth:()=>()=>{},dbGet:async()=>({...f}),
-  validarCargosBase,leerCargosBase,isoConOffset:()=>'2026-11-16T12:00:00Z',vencimientoManualValido:()=>true,puedeAccederLocal:()=>acceso,ajustesFiscales:()=>0,
+  actualizarAvisosTrasCorreccion,validarCargosBase,leerCargosBase,isoConOffset:()=>'2026-11-16T12:00:00Z',vencimientoManualValido:()=>true,puedeAccederLocal:()=>acceso,ajustesFiscales:()=>0,
   pool:{connect:async()=>client},toPositional:x=>x,validarSuma,mensajeValidacion,huellaRevision,validarIva,porcentajeDeIvaValidado,
   recordarProveedorRevision:async()=>{aprendizajes++;},ficAuditar:async()=>{},reubicarEnDrive:async()=>{},
   resincronizarSheetsFactura:async()=>{},getDriveAccessToken:()=>{},dbAll:async()=>[],dbRun:async()=>{},console});
@@ -124,4 +127,13 @@ test('DDI: PATCH cargos integra S.L. sin tocar productos ni total, y rechaza edi
  assert.equal(invalido.status,400);assert.equal(invalido.writes,0);
  const ajeno=await guardar({cargos_base:cargos,cargos_base_antes:[]},{factura,detalle,acceso:false});
  assert.equal(ajeno.status,403);assert.equal(ajeno.writes,0);
+});
+
+
+test('PATCH persiste la retirada selectiva del descuadre sin confirmar otras dudas',async()=>{
+ const factura={base_imponible:100,cuota_iva:21,total:150};
+ factura.revisar=JSON.stringify([cuadraTotal(factura).texto,'Fecha ambigua']);
+ const r=await guardar({total:121},{factura});
+ assert.equal(r.status,200);
+ assert.deepEqual(JSON.parse(r.f.revisar),['Fecha ambigua']);
 });
