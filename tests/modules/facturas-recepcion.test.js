@@ -47,3 +47,22 @@ test('revisión sin explicación conserva autor y antes/después',async()=>{
  await cola.aprobar(19,{...antes,proveedor:'Mera'},{autor:'Contabilidad',confirmado:true,aceptarAvisos:true});
  assert.equal(guardado.aprobacion.antes.proveedor,'Delsa');assert.equal(guardado.aprobacion.despues.proveedor,'Mera');assert.equal(guardado.aprobacion.autor,'Contabilidad');assert.match(guardado.aprobacion.motivo,/Corrección/);
 });
+
+test('una corrección cotejada retira la duda OCR del valor anterior y valida la fecha nueva', async () => {
+ const {crearRecepcion}=await import('../../src/modules/facturas/recepcion.js');
+ const datos={proveedor:'Mera',tipo:'albaran',fecha:'2026-11-04',numero_factura:'A/123',campos_dudosos:['fecha','numero_factura']};
+ const fila={id:19,hash:'hash',estado:'revision',original:Buffer.from('original'),resultado:{datos}};
+ let guardado;
+ const cola=crearRecepcion({
+  db:{get:async()=>fila,run:async(_sql,[resultado])=>{guardado=JSON.parse(resultado);}},
+  lock:async(_hash,fn)=>fn(),
+  procesar:async()=>{}
+ });
+ const opciones={autor:'Contabilidad',confirmado:true,aceptarAvisos:true};
+ await assert.rejects(cola.aprobar(19,{fecha:'2026-11-04'},opciones),/lectura señala dudas/);
+ await assert.rejects(cola.aprobar(19,{fecha:'2026-02-30'},opciones),/fecha de emisión válida/);
+ await cola.aprobar(19,{fecha:'2026-11-03'},opciones);
+ assert.deepEqual(guardado.datos.campos_dudosos,['numero_factura']);
+ assert.deepEqual(guardado.aprobacion.antes.campos_dudosos,['fecha','numero_factura']);
+ assert.equal(guardado.aprobacion.despues.fecha,'2026-11-03');
+});

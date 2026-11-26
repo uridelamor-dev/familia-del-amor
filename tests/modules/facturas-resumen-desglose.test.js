@@ -12,9 +12,9 @@ test('la revisión distingue desglose incompleto, diferencias y documentos coher
 });
 test('el resumen suma la cobertura entre locales y no oculta datos incompletos',()=>{
  const source=readFileSync(new URL('../../public/panel/app.js',import.meta.url),'utf8');
- const ctx=vm.createContext({FAC_TOT:null,facFiltrosActivos:()=>[],num:String,eur:v=>v+' €',esc:String});
+ const ctx=vm.createContext({FAC_TOT:null,FACF:{tipo:''},facFiltrosActivos:()=>[],num:String,eur2:v=>Number(v).toFixed(2)+' €',esc:String});
  vm.runInContext(source.slice(source.indexOf('function facSumaTotales('),source.indexOf('/** Los avisos de coherencia')),ctx);
- ctx.FAC_TOT=ctx.facSumaTotales({partes:[{docs:2,total:200,base:100,iva:21,desglose_incompleto:1},{docs:1,total:121,base:100,iva:21,total_ausente:1,desglose_diferente:1}]});
+ ctx.FAC_TOT=ctx.facSumaTotales({partes:[{docs:2,total:200,albaranes:1,albaranes_importe:79.42,base:100,iva:21,desglose_incompleto:1},{docs:1,total:121,base:100,iva:21,total_ausente:1,desglose_diferente:1}]});
  assert.equal(ctx.FAC_TOT.docs,3);assert.equal(ctx.FAC_TOT.total,321);
- const html=ctx.facKpisHtml();assert.ok(html.includes('base disponible'));assert.ok(html.includes('total disponible'));assert.ok(html.includes('sin base o IVA completos'));assert.ok(!html.includes('fchips'));
+ const html=ctx.facKpisHtml();assert.ok(html.includes('base disponible'));assert.match(html,/321\.00 €.*[\s\S]*1 albarán aparte · importe indicado 79\.42 €/);assert.ok(html.includes('total disponible'));assert.ok(html.includes('sin base o IVA completos'));assert.ok(!html.includes('fchips'));
 });

@@ -21,13 +21,23 @@
 .club-banner-link{width:100%;display:flex;align-items:stretch;border:0;padding:0;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left}
 .club-banner-window{flex:1;min-width:0;overflow:hidden;mask-image:linear-gradient(to right,transparent,#000 20px,#000 calc(100% - 20px),transparent)}
 .club-banner-track{display:flex;width:max-content;animation:club-banner-scroll 44s linear infinite}
-.club-banner-copy{display:flex;align-items:center;justify-content:center;gap:20px;flex-shrink:0;min-width:calc(100vw - 175px);box-sizing:border-box;padding:13px 28px;white-space:nowrap;font-size:14px;line-height:20px;letter-spacing:.015em}
+.club-banner-copy{display:flex;align-items:center;justify-content:center;gap:20px;flex-shrink:0;min-width:100vw;box-sizing:border-box;padding:13px 28px;white-space:nowrap;font-size:14px;line-height:20px;letter-spacing:.015em}
 .club-banner-copy strong{font-weight:600}.club-banner-copy>span:first-child{color:#efd49f}
-.club-banner-cta{display:flex;align-items:center;justify-content:center;gap:12px;flex:0 0 auto;padding:0 24px;border-left:1px solid #fff5e633;font-size:13px;font-weight:600;white-space:nowrap}
-.club-banner-cta>span{font-size:18px}.club-banner-link:hover .club-banner-cta{text-decoration:underline;text-underline-offset:4px}
 .club-banner button:focus-visible{outline:2px solid #efd49f;outline-offset:-4px}
 @keyframes club-banner-scroll{to{transform:translateX(-50%)}}
-@media(max-width:650px){.club-banner-copy{font-size:13px;padding:11px 20px;gap:16px}.club-banner-cta{font-size:12px;padding:0 14px;gap:8px}}
+@media(max-width:650px){.club-banner-copy{font-size:13px;padding:11px 20px;gap:16px}}
+.club-banner-oferta{background:#17140f;color:#fff6e3}
+.club-banner-oferta .club-banner-track{animation-duration:31s}
+.club-banner-oferta .club-banner-copy{font-size:clamp(15px,2vw,22px);line-height:1.25;font-weight:700}
+.club-banner-oferta .club-banner-copy strong{color:#ffd36f;font-weight:900;letter-spacing:.08em}
+.club-banner-oferta .club-banner-link:focus-visible .club-banner-track,
+.club-banner-oferta .club-banner-link:hover .club-banner-track{animation-play-state:paused}
+@media(prefers-reduced-motion:reduce){
+  .club-banner-oferta .club-banner-window{mask-image:none}
+  .club-banner-oferta .club-banner-track{animation:none;width:100%}
+  .club-banner-oferta .club-banner-copy{min-width:0;width:100%;white-space:normal;flex-wrap:wrap;gap:4px 12px;text-align:center}
+  .club-banner-oferta .club-banner-copy:nth-child(2){display:none}
+}
 .top.club-header-away{transform:translateY(-100%);visibility:hidden;pointer-events:none}
 
 /* Mismo terracota que el banner; limitado al Club público. */

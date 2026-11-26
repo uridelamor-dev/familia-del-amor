@@ -7,9 +7,9 @@ const start=source.indexOf('async function facRevisionRecepcion(id)');
 const fn=source.slice(start,source.indexOf('async function facReintentarRecepcion',start));
 async function abrir({fallo=false}={}) {
  const elements=new Map();let html='',cerrados=0;const writes=[],errors=[];
- const get=s=>{if(!elements.has(s))elements.set(s,{style:{},classList:{add(){}},value:'',checked:false,textContent:'',insertAdjacentHTML(){}});return elements.get(s);};
+ const get=s=>{if(!elements.has(s))elements.set(s,{style:{},classList:{add(){}},value:'',checked:false,textContent:'',append(){},insertAdjacentHTML(){}});return elements.get(s);};
  const ov={isConnected:true,querySelector:get,insertAdjacentHTML(){}};
- const ctx=vm.createContext({apiRaw:async()=>({data:{resultado:{datos:{tipo:'factura',proveedor:'Cerezo',fecha:'2026-10-07',vencimiento:'2026-10-07'},segunda:{vencimiento:'2026-12-06'},avisos:[{texto:'Las dos lecturas no coinciden en vencimiento.'}]}}}),
+ const ctx=vm.createContext({document:{createElement:()=>({})},apiRaw:async()=>({data:{resultado:{datos:{tipo:'factura',proveedor:'Cerezo',fecha:'2026-10-07',vencimiento:'2026-10-07'},segunda:{vencimiento:'2026-12-06'},avisos:[{texto:'Las dos lecturas no coinciden en vencimiento.'}]}}}),
   modal:(_title,markup)=>{html=markup;for(const m of markup.matchAll(/<input id="([^"]+)"[^>]*value="([^"]*)"/g))get('#'+m[1]).value=m[2];get('#revTipo').value='factura';return ov;},
   esc:v=>String(v),facPrepararModalRevision(){},fetch:async()=>({ok:false}),token:()=>'',facSelectorProveedor(){},facLineasRecepcion:()=>()=>null,
   apiSend:async(...args)=>{writes.push(args);if(fallo)throw Error('Comprueba el vencimiento');},toast:m=>errors.push(m),facTerminarRevision:async()=>cerrados++});

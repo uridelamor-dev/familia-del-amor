@@ -240,6 +240,15 @@ h1, h2, h3 {
   color: #fff;
 }
 
+.hero.public-cover {
+  box-sizing: border-box;
+  min-block-size: clamp(21rem, calc(17rem + 12vw), 28rem);
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
 .hero h1 {
   font-family: "Playfair Display", Georgia, serif;
   font-size: clamp(3rem, 7vw, 5.5rem);

@@ -130,8 +130,9 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       const formatoConfirmado=validarFormato(formato);
       const datos=datosRevision(f.resultado?.datos,cambios);
       const avisos=await validarRevision(datos);
-      if(avisos.some(a=>["fecha","proveedor","tipo"].includes(a.campo))) throw new Error("Completa proveedor, tipo y fecha válidos antes de registrar");
-      if(avisos.length && aceptarAvisos!==true) throw new Error("Quedan avisos. Corrígelos o confirma expresamente la excepción");
+      const bloqueos=avisos.filter(a=>["fecha","proveedor","tipo"].includes(a.campo));
+      if(bloqueos.length) throw new Error([...new Set(bloqueos.map(a=>a.texto))].join(" "));
+      if(avisos.length && aceptarAvisos!==true) throw new Error("Corrige estos avisos o confirma expresamente la excepción. "+[...new Set(avisos.map(a=>a.texto))].join(" "));
       if(formatoConfirmado && (avisos.length || !datos.nif_proveedor))throw new Error('Resuelve todos los avisos y confirma el NIF antes de recordar un formato.');
       if(falsoAviso && Object.keys(cambios).some(k=>JSON.stringify(datos[k]??null)!==JSON.stringify(f.resultado?.datos?.[k]??null)))throw new Error('Si has corregido datos no se puede marcar la lectura original como falso aviso.');
       const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,formato:formatoConfirmado,falsoAviso:falsoAviso===true,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};

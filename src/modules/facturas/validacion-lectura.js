@@ -115,6 +115,13 @@ export function datosRevision(original,cambios) {
     });
   }
   if(d.nif_proveedor) d.nif_proveedor=normNif(d.nif_proveedor);
+  // La duda OCR pertenece al valor leído. Los controles sobre el valor nuevo se ejecutan después.
+  if(Array.isArray(d.campos_dudosos)) {
+    d.campos_dudosos=d.campos_dudosos.filter(campo=>
+      !CAMPOS_REVISION.includes(campo) || !Object.hasOwn(cambios,campo)
+      || (d[campo]??null)===(campo==='nif_proveedor' ? normNif(original?.[campo])||null : original?.[campo]??null));
+  }
+
   // Un cambio de base/IVA invalida el desglose anterior: no mantener datos fiscales contradictorios.
   if(['base_imponible','cuota_iva','porcentaje_iva'].some(k=>d[k]!==original?.[k])) d.iva_desglose=[];
   completarIva(d);

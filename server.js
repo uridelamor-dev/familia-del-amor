@@ -3798,14 +3798,29 @@ app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]),
     const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
     const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa,tipo:req.query.tipo},{tipo:"resultado->'datos'->>'tipo'",local:"local",empresa:"COALESCE(resultado->'datos'->>'empresa',resultado->'datos'->>'empresa_detectada')"});
     const filtro=ambito.sql; const params=ambito.params;
+    const enEspera="(estado='revision' AND resultado->'esperaConfirmacion' IS NOT NULL)";
+    const verEspera=req.query.espera==='1';
+    const filtroCola=verEspera ? enEspera : `NOT ${enEspera}`;
     const filas = await dbAll(`SELECT id,canal,local,nombre,mime,resultado,estado,intentos,error,creado,original IS NOT NULL AS tiene_original,(SELECT p.id FROM facturas_paginas p WHERE p.estado='revision' AND facturas_recepciones.id IN (p.primera,p.segunda) ORDER BY p.id DESC LIMIT 1) AS paginas_id FROM facturas_recepciones
-      WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
-    const conteo = await dbGet(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE estado IN ('error','revision','paginas')) AS errores FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro}`,params);
-    const propuestas=await dbAll(`SELECT p.id,p.estado,p.pruebas->>'motivo' AS motivo FROM facturas_paginas p
+      WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro} AND ${filtroCola} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
+    const conteo = await dbGet(`SELECT COUNT(*) FILTER (WHERE ${filtroCola}) AS total, COUNT(*) FILTER (WHERE ${filtroCola} AND estado IN ('error','revision','paginas')) AS errores, COUNT(*) FILTER (WHERE ${enEspera}) AS en_espera FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro}`,params);
+    const propuestas=verEspera ? [] : await dbAll(`SELECT p.id,p.estado,p.pruebas->>'motivo' AS motivo FROM facturas_paginas p
       WHERE (p.estado='revision' OR (p.estado='unidas' AND p.creado>NOW()-INTERVAL '7 days'))
       AND EXISTS(SELECT 1 FROM facturas_recepciones WHERE id IN (p.primera,p.segunda) ${filtro}) ORDER BY (p.estado='revision') DESC,p.id DESC LIMIT 50`,params);
-    res.json({ok:true,propuestas,data:filas.slice(0,50).map(({resultado,mime,...f})=>({...f,revision:clasificarRevision({...f,resultado}),nombre:nombreRecepcion({...f,mime,resultado})})),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
+    res.json({ok:true,propuestas,enEspera:Number(conteo.en_espera),data:filas.slice(0,50).map(({resultado,mime,...f})=>({...f,proveedor:resultado?.datos?.proveedor,revision:clasificarRevision({...f,resultado}),nombre:nombreRecepcion({...f,mime,resultado})})),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
   } catch(e) { next(e); }
+});
+app.post("/api/facturas/recepciones/:id/espera", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const f=await dbGet("SELECT local FROM facturas_recepciones WHERE id=?", [req.params.id]);
+    if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+    if(typeof req.body?.espera!=='boolean') return res.status(400).json({ok:false,error:'Indica si el documento espera confirmación.'});
+    const marca=JSON.stringify({autor:String(req.user.id || req.user.username || req.user.rol),fecha:new Date().toISOString()});
+    const actualizado=await dbRun(`UPDATE facturas_recepciones SET resultado=CASE WHEN ? THEN jsonb_set(resultado,'{esperaConfirmacion}',?::jsonb) ELSE resultado-'esperaConfirmacion' END,actualizado=NOW()
+      WHERE id=? AND estado='revision' AND resultado IS NOT NULL RETURNING id`,[req.body.espera,marca,req.params.id]);
+    if(!actualizado?.id) return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión.'});
+    res.json({ok:true});
+  }catch(e){next(e);}
 });
 app.get("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {

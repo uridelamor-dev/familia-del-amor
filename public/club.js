@@ -34,10 +34,22 @@
     }
   }
   if (banner) {
-    const message = 'Forma parte del Club de La Tapeta. Regístrate y disfruta de nuestras promociones.';
+    const inicioOferta = Date.parse('2026-11-26T00:00:00+01:00');
+    const finOferta = Date.parse('2026-11-30T00:00:00+01:00');
+    const actualizarBanner = () => {
+      const ahora = Date.now();
+      const oferta = ahora >= inicioOferta && ahora < finOferta;
+      const titulo = oferta ? 'BLACK FRIDAY' : 'Forma parte del Club de La Tapeta';
+      const detalle = oferta ? '10 % de descuento en todos nuestros productos' : 'Regístrate y disfruta de nuestras promociones.';
+      const registro = oferta ? 'Regístrate gratis' : '';
+      banner.classList.toggle('club-banner-oferta', oferta);
+      launch.setAttribute('aria-label', `${titulo}. ${detalle}${registro ? '. ' + registro + '.' : ''}`);
+      launch.innerHTML = `<span class="club-banner-window" aria-hidden="true"><span class="club-banner-track">${[0, 1].map(() => `<span class="club-banner-copy"><span>✦</span><strong>${titulo}</strong><span>·</span><span>${detalle}</span>${registro ? `<span>·</span><span>${registro}</span>` : ''}</span>`).join('')}</span></span>`;
+      const proximoCambio = ahora < inicioOferta ? inicioOferta : oferta ? finOferta : null;
+      if (proximoCambio !== null) setTimeout(actualizarBanner, Math.min(proximoCambio - ahora, 2147483647));
+    };
     launch.className = 'club-banner-link';
-    launch.setAttribute('aria-label', message + ' Únete al Club');
-    launch.innerHTML = `<span class="club-banner-window" aria-hidden="true"><span class="club-banner-track">${[0, 1].map(() => `<span class="club-banner-copy"><span>✦</span><strong>Forma parte del Club de La Tapeta</strong><span>·</span><span>Regístrate y disfruta de nuestras promociones.</span></span>`).join('')}</span></span><span class="club-banner-cta" aria-hidden="true">Únete al Club <span>↗</span></span>`;
+    actualizarBanner();
     banner.append(launch);
     const header = document.querySelector('header.top, header.lot-header');
     if (header) {
