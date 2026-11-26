@@ -10756,7 +10756,7 @@ async function facRevisionRecepcion(id) {
     const reservar=document.createElement('button');
     reservar.type='button';reservar.className='btn';
     reservar.textContent=espera?'Devolver a la cola activa':'Dejar en espera de confirmación';
-    ov.querySelector('#revForm .toolbar').append(reservar);
+    ov.querySelector('.fac-review-footer')?.append(reservar);
     reservar.onclick=async()=>{
       reservar.disabled=true;
       try {
