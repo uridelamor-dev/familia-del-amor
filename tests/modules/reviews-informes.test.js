@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {ENTREGAS,DESTINO_INFORMES,mesMadrid,seleccionar,validarTemas,analizarTemas,mensajesInforme,crearInformes} from '../../src/modules/reviews/informes.js';
+import {entregasInformes,ENTREGAS,DESTINO_INFORMES,mesMadrid,seleccionar,validarTemas,analizarTemas,mensajesInforme,crearInformes} from '../../src/modules/reviews/informes.js';
 const review=(id,date,star='FIVE')=>({reviewId:id,createTime:date,starRating:star,comment:'Buen servicio'});
 test('mes por Madrid, cambio de mes UTC, deduplicación y media ponderada',()=>{
  assert.equal(mesMadrid('2026-09-30T22:30:00Z'),'2026-10');
@@ -50,7 +50,7 @@ test('envío incierto o interrumpido nunca se repite automáticamente',async()=>
 test('lectura fallida no se convierte en cero reseñas ni se envía, reintento diferido',async()=>{
  const h=harness({collectFail:true});await h.service.tick();assert.equal(h.sent.length,0);assert.ok(JSON.parse(h.stored.get(ENTREGAS[0].id)).retryAt);
 });
-test('noviembre se entrega una sola vez y no hay recurrencia posterior',async()=>{
+test('conserva la entrega histórica de octubre sin repetirla',async()=>{
  const h=harness({date:'2026-11-01T09:00:00Z'});h.stored.set(ENTREGAS[0].id,JSON.stringify({estado:'enviada'}));
  await h.service.tick();await h.service.tick();await h.service.tick();assert.equal(h.sent.length,2);assert.equal(ENTREGAS.length,2);
 });
@@ -105,4 +105,33 @@ test('formato breve: solo general para locales sin reseñas, enlace único y com
  assert.match(messages[1],/2 menciones/);
  assert.match(messages[1],/1\. Revisar las esperas y el orden de atención/);
  assert.equal(messages.join('').match(/https:\/\//g).length,1);
+});
+
+
+test('recurrencia mensual sin piloto, diciembre y cambio de año',()=>{
+ const jobs=entregasInformes(new Date('2027-01-01T10:00Z'));
+ assert.deepEqual(jobs.slice(0,2),ENTREGAS);
+ assert.deepEqual(jobs.slice(2).map(j=>j.mes),['2026-11','2026-12','2027-01']);
+ assert.ok(jobs.slice(2).every(j=>j.mensual&&!j.prueba));
+ assert.equal(new Set(jobs.map(j=>j.id)).size,jobs.length);
+});
+test('día 1 a las 11 Madrid, recupera y no repite el histórico ni el mes enviado',async()=>{
+ const h=harness({date:'2026-12-01T09:59:00Z'});
+ for(const j of ENTREGAS)h.stored.set(j.id,JSON.stringify({estado:'enviada'}));
+ await h.service.tick();assert.equal(h.sent.length,0);
+ const opts={...h.opts,now:()=>new Date('2026-12-01T10:00Z')};
+ await crearInformes(opts).tick();assert.equal(h.sent.length,1);
+ assert.match(h.sent[0][1],/noviembre de 2026/);assert.doesNotMatch(h.sent[0][1],/PRUEBA/);
+ const recovered={...opts,now:()=>new Date('2026-12-03T10:00Z')};
+ await crearInformes(recovered).tick();await crearInformes(recovered).tick();
+ assert.equal(h.sent.length,2);assert.equal(JSON.parse(h.stored.get('resenas_informe_2026_11_v1')).estado,'enviada');
+ assert.equal(h.stored.has('resenas_informe_2026_12_v1'),false);
+});
+test('recurrencia respeta las 11 Madrid en verano y nunca repite una entrega incierta',async()=>{
+ const h=harness({date:'2027-06-01T08:59Z'});
+ for(const j of entregasInformes(new Date('2027-05-01T10:00Z')).filter(j=>j.mes<'2027-05'))h.stored.set(j.id,JSON.stringify({estado:'enviada'}));
+ await h.service.tick();assert.equal(h.sent.length,0);
+ await crearInformes({...h.opts,now:()=>new Date('2027-06-01T09:00Z')}).tick();assert.equal(h.sent.length,1);
+ h.stored.set('resenas_informe_2027_05_v1',JSON.stringify({estado:'incierta'}));
+ await crearInformes({...h.opts,now:()=>new Date('2027-06-02T09:00Z')}).tick();assert.equal(h.sent.length,1);
 });

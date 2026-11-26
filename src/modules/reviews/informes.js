@@ -1,9 +1,21 @@
-// Piloto autorizado: septiembre al publicar y octubre el 1/11. Sin recurrencia posterior.
+// Entregas históricas: conservar IDs y marcas para no repetir los envíos del piloto.
 export const DESTINO_INFORMES = '622149946';
 export const ENTREGAS = [
   { id: 'resenas_informe_2026_09_v1', mes: '2026-09', prueba: true, desde: '2026-10-14T00:00:00Z' },
   { id: 'resenas_informe_2026_10_v1', mes: '2026-10', prueba: false, desde: '2026-11-01T09:00:00Z' }
 ];
+// Recurrencia permanente desde noviembre de 2026 (primera entrega: 1/12).
+// Incluye el mes en curso para mostrar el próximo informe programado en el panel.
+export function entregasInformes(ahora=new Date()) {
+  const actual=mesMadrid(ahora), jobs=[...ENTREGAS];
+  for(let mes='2026-11';mes<=actual;){
+    const [y,m]=mes.split('-').map(Number);
+    const siguiente=new Date(Date.UTC(y,m,1)).toISOString().slice(0,7);
+    jobs.push({id:`resenas_informe_${mes.replace('-','_')}_v1`,mes,prueba:false,mensual:true,desde:siguiente+'-01T00:00:00Z'});
+    mes=siguiente;
+  }
+  return jobs;
+}
 // No guardar cuerpos de errores de proveedores: pueden contener datos o credenciales.
 export function motivoInforme(error) {
   const message=String(error?.message || '');
@@ -98,7 +110,7 @@ export function crearInformes({pool,enabled=false,conectado,recopilar,analizar,e
   let busy=false;
   const read=async(c,id)=>{const r=await c.query('SELECT value FROM config WHERE key=$1',[id]);return r.rows[0]?JSON.parse(r.rows[0].value):{estado:'pendiente'};};
   const save=(c,id,data)=>c.query('INSERT INTO config(key,value,updated_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=EXCLUDED.updated_at',[id,JSON.stringify(data)]);
-  async function status(){return Promise.all(ENTREGAS.map(async job=>({...job,destino:DESTINO_INFORMES,...await read(pool,job.id)})));}
+  async function status(){return Promise.all(entregasInformes(now()).map(async job=>({...job,destino:DESTINO_INFORMES,...await read(pool,job.id)})));}
   async function tick(){
     if(!enabled || busy || !conectado()) return;
     const hour=Number(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Madrid',hour:'2-digit',hourCycle:'h23'}).format(now()));
@@ -108,7 +120,8 @@ export function crearInformes({pool,enabled=false,conectado,recopilar,analizar,e
       c=await pool.connect();
       held=(await c.query('SELECT pg_try_advisory_lock(73992014) AS locked')).rows[0].locked;
       if(!held)return;
-      for(const job of ENTREGAS){
+      for(const job of entregasInformes(now())){
+        if(job.mensual && (mesMadrid(now())<=job.mes || hour<11))continue;
         if(now()<new Date(job.desde))continue;
         let state=await read(c,job.id);
         if(['enviada','incierta'].includes(state.estado))continue;
