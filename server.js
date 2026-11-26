@@ -234,7 +234,7 @@ import { urlMaestro as fidUrlMaestro, normalizarMaestro as fidNormalizarMaestro,
          codigoConexion as fidCodigoConexion, validarMaestro as fidValidarMaestro }
   from "./src/modules/fidelizacion/catalogo.js";
 import { TIPOS as FID_PROMO_TIPOS, ESTADOS as FID_PROMO_ESTADOS, pendienteDeActivacion as fidPromoPreparada,
-         elegible as fidPromoElegible, rewardDePromo as fidRewardDePromo,
+         elegible as fidPromoElegible, rewardDePromo as fidRewardDePromo, rewardsDePromo as fidRewardsDePromo,
          localesPromo as fidLocalesPromo, promoEnLocal as fidPromoEnLocal,
          puedePublicar as fidPuedePublicar, simularPromo as fidSimularPromo,
          enMadrid as fidEnMadrid, leerLista as fidLeerLista, EXPLICACION as FID_PROMO_EXPLICA,
@@ -22645,8 +22645,8 @@ app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
 
       // ── 1 y 2 · LAS PROMOCIONES VIVAS DE ESTE LOCAL ──────────────────────────────────────
       //
-      // MÁXIMO UN REWARD, porque no hay evidencia de que Ágora sepa enseñarle varios al camarero
-      // y porque nuestro propio cierre rechaza una factura con dos premios aplicados.
+      // UNA campaña: puede incluir dos ofertas nativas por producto. Nunca se mezcla
+      // con otra campaña ni con un descuento global; el cierre verifica ambos códigos.
       //
       // Se reúnen TODAS las elegibles y elige `fidElegirPromo`, que ordena por nivel (primero la
       // que alguien se ganó, después la general), luego prioridad, luego la que antes caduca y por
@@ -22678,7 +22678,10 @@ app.get("/api/fidelizacion/agora/:token/member/:memberId", async (req, res) => {
           if (el.ok) elegibles.push(p);
         }
         promoElegida = fidElegirPromo(elegibles);
-        if (promoElegida) rewards = [fidRewardDePromo(promoElegida)].filter(Boolean);
+        if (promoElegida) {
+          const ofertas = fidRewardsDePromo(promoElegida);
+          rewards = ofertas.length ? ofertas : null;
+        }
       }
 
       // ── 3 · EL DESCUENTO POR PUNTOS, SOLO SI NO HAY PROMOCIÓN ────────────────────────────
@@ -24234,6 +24237,7 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
       texto_cliente: String(b.texto_cliente || "").trim().slice(0, 400),
       texto_camarero: String(b.texto_camarero || "").trim().slice(0, 120),
       codigo_agora: codigoAgora,
+      codigo_agora_adicional: String(b.codigo_agora_adicional || "").trim() || null,
       codigo_comprobado_en: b.codigo_comprobado ? isoConOffset(Date.now()) : null,
       valor: b.valor === undefined || b.valor === null || b.valor === "" ? null : Number(b.valor),
       coste_puntos: Math.max(0, parseInt(b.coste_puntos) || 0),
@@ -24269,6 +24273,12 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
       }
     }
 
+    if (promo.codigo_agora_adicional && (promo.tipo !== "oferta_agora"
+        || !fidCodigoAgora(promo.codigo_agora_adicional).ok
+        || promo.codigo_agora_adicional === promo.codigo_agora
+        || promo.coste_puntos !== 0 || promo.acumulable)) {
+      return res.status(400).json({ ok: false, error: "La segunda oferta necesita un código distinto, tipo Oferta de Ágora, sin coste en puntos y sin acumular otras campañas." });
+    }
     const check = fidPuedePublicar(promo, { grupos, catalogo });
     // Los grupos tienen versiones por local: validar cada ámbito antes de publicar.
     for (const l of locales.slice(1)) {
@@ -24324,15 +24334,15 @@ app.post("/api/fidelizacion/promos", requireAuth(PROMOS_ROLES), async (req, res)
         `INSERT INTO fid_promos (clave, version, local, locales, nombre, texto_cliente, texto_camarero, tipo,
            codigo_agora, codigo_comprobado_en, codigo_comprobado_por, valor, coste_puntos, compra_minima,
            grupos, dias, hora_desde, hora_hasta, desde, hasta, limite_cuenta, limite_total, acumulable,
-           prioridad, estado, gracia_minutos, reward_id, campana, requiere_derecho, creado_en, creado_por)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
+           prioridad, estado, gracia_minutos, reward_id, campana, requiere_derecho, creado_en, creado_por, codigo_agora_adicional)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id, version`,
         [clave, Number(ult?.v || 0) + 1, local, JSON.stringify(locales), promo.nombre, promo.texto_cliente, promo.texto_camarero,
          promo.tipo, promo.codigo_agora, promo.codigo_comprobado_en,
          promo.codigo_comprobado_en ? req.user.username : null, promo.valor, promo.coste_puntos,
          promo.compra_minima, promo.grupos, promo.dias, promo.hora_desde, promo.hora_hasta,
          promo.desde, promo.hasta, promo.limite_cuenta, promo.limite_total, promo.acumulable,
          promo.prioridad, estado, promo.gracia_minutos, rewardId, promo.campana,
-         promo.requiere_derecho, ahora, req.user.username]);
+         promo.requiere_derecho, ahora, req.user.username, promo.codigo_agora_adicional]);
       if (!creada) throw new Error("la promoción no se ha insertado");
       return creada;
     });

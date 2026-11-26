@@ -14136,6 +14136,10 @@ async function fidgPromoNueva(desdeId) {
       <div id="pmValorWrap">${fgCampo("pmValor", "Importe del descuento (€)", base?.valor ?? "", { type: "number", step: "0.01", min: "0" })}</div>
       <div id="pmAgora" class="${FIDG_TIPO_CODIGO.includes(tipo) ? "" : "hidden"}">
         ${fgCampo("pmCodigo", "Código que has creado en Ágora", base?.codigo_agora || "", { placeholder: "Por ejemplo: coqu", autocapitalize: "off", autocorrect: "off", spellcheck: "false" })}
+        <div id="pmSegundoWrap">
+          ${fgCampo("pmCodigoAdicional", "Segunda oferta por producto (opcional)", base?.codigo_agora_adicional || "", { placeholder: "Código de la otra oferta" })}
+          <p class="mut">Para combinar, por ejemplo, tarjetas al 20 % y otros productos al 10 %. Configura listas de productos separadas en Ágora y el mismo calendario. Ambas ofertas se envían con el carnet; no se añade un descuento general. Comprueba en caja la selección de ambos premios antes de activarlo.</p>
+        </div>
         <div id="pmCodigoErr" class="hidden" role="status" style="color:var(--danger)"></div>
         <details class="promo-help"><summary>¿Dónde lo preparo en Ágora?</summary>
           <ol><li>Entra en Administración → Promociones en el Ágora de cada local.</li><li>Elige los productos y el precio o regalo. Para una coca a 9 €, usa un pack de una unidad a precio fijo.</li><li>Selecciona «Sólo clientes y tickets seleccionados» y asigna un código.</li><li>Copia aquí ese código exactamente igual, incluidas las mayúsculas.</li></ol>
@@ -14217,6 +14221,7 @@ async function fidgPromoNueva(desdeId) {
   const pinta = () => {
     const t = fgVal('pmTipo'), lleva = FIDG_TIPO_CODIGO.includes(t);
     ov.querySelector('#pmAgora').classList.toggle('hidden', !lleva);
+    ov.querySelector('#pmSegundoWrap').classList.toggle('hidden', t !== 'oferta_agora');
     ov.querySelector('#pmVerificacionAgora').classList.toggle('hidden', !lleva);
     ov.querySelector('#pmValorWrap').classList.toggle('hidden', lleva);
     ov.querySelector('label[for="pmValor"]').textContent = t === 'descuento_pct' ? 'Porcentaje de descuento (%)' : 'Importe del descuento (€)';
@@ -14290,7 +14295,7 @@ function fidgPromoRevision(c) {
   const dias = fidgPromoDias(c.dias);
   const filas = [
     ["Promoción", c.nombre || "Falta el nombre"],
-    ["Beneficio", FIDG_TIPO_CODIGO.includes(c.tipo) ? `Oferta de Ágora · ${c.codigo_agora || "falta el código"}` : `${FIDG_TIPO_TXT[c.tipo] || c.tipo} · ${c.valor ? `${c.valor}${c.tipo === "descuento_pct" ? " %" : " €"}` : "falta el importe"}`],
+    ["Beneficio", FIDG_TIPO_CODIGO.includes(c.tipo) ? `Oferta de Ágora · ${c.codigo_agora || "falta el código"}${c.codigo_agora_adicional ? " + " + c.codigo_agora_adicional : ""}` : `${FIDG_TIPO_TXT[c.tipo] || c.tipo} · ${c.valor ? `${c.valor}${c.tipo === "descuento_pct" ? " %" : " €"}` : "falta el importe"}`],
     ["Locales", c.locales.length ? c.locales.join(", ") : "Falta seleccionar los locales"],
     ["Días", dias.length && dias.length < 7 ? dias.map(d => ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"][d]).join(", ") : "Todos los días"],
     ["Fechas", `${c.desde || "Sin fecha de inicio"} → ${c.hasta || "Sin fecha de fin"}`],
@@ -14321,6 +14326,7 @@ function fidgPromoCuerpo() {
     valor: fgVal("pmValor"), coste_puntos: fgVal("pmCoste"), compra_minima: fgVal("pmMinimo"),
     // El código solo viaja si el tipo lo usa: mandarlo en los demás es lo que el servidor rechaza.
     codigo_agora: FIDG_TIPO_CODIGO.includes(fgVal("pmTipo")) ? fgVal("pmCodigo") : "",
+    codigo_agora_adicional: fgVal("pmTipo") === "oferta_agora" ? fgVal("pmCodigoAdicional") : "",
     codigo_comprobado: fgChk("pmComprobado"), requiere_derecho: fgChk("pmDerecho"),
     desde: fgVal("pmDesde"), hasta: fgVal("pmHasta"), hora_desde: fgVal("pmHoraD"), hora_hasta: fgVal("pmHoraH"),
     dias: [...document.querySelectorAll('input[name="pmDia"]:checked')].map(el => Number(el.value)),

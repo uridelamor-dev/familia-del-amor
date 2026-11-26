@@ -1,3 +1,5 @@
+import { rewardsCoincidenConPromo } from "./promos.js";
+
 // El programa de puntos. PURO: sin BD, sin Express, sin red, sin reloj propio.
 //
 // AQUÍ VIVE TODO EL DINERO. Lo que se decide en este fichero es cuántos puntos gana un cliente,
@@ -377,7 +379,8 @@ export function evaluarFactura({ json, extracto, regla, reglaReward = null, prom
   const aplicados = rewardsAplicados(json);
 
   // ── Rechazos: solo lo que el camarero puede arreglar en la barra ───────────────────────────
-  if (aplicados.length > 1) {
+  const promoReconocida = rewardsCoincidenConPromo(promoReward, aplicados);
+  if (aplicados.length > 1 && !promoReconocida) {
     return { ...base, accion: "rechazar", motivo: "varios_rewards",
       razon: "Solo se puede aplicar un descuento de fidelización por factura." };
   }
@@ -416,8 +419,7 @@ export function evaluarFactura({ json, extracto, regla, reglaReward = null, prom
   // Un premio de promoción NO consume puntos ni exige regla vigente: la casa regala un producto,
   // no canjea saldo. Pero la VISITA y el consumo se siguen apuntando, así que se cae al camino
   // normal de «sin reward» en vez de devolver aquí mismo.
-  const esDePromo = aplicados.length === 1 && !!promoReward
-    && String(aplicados[0]?.Id || "") === String(promoReward.reward_id || "");
+  const esDePromo = promoReconocida;
 
   // ── El reward, si viene ─────────────────────────────────────────────────────────────────────
   let consumo = null;

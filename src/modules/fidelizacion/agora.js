@@ -25,7 +25,7 @@
 import { esLocalCanonico } from "../facturas/local-canonico.js";
 import { evaluarFactura, planConsumo, planCaducidad, claveMov, caducaEn, rewardsAplicados,
          rewardVigente, importePagado } from "./puntos.js";
-import { elegible as promoElegible, promoEnLocal, rewardDePromo, EXPLICACION as PROMO_EXPLICA } from "./promos.js";
+import { elegible as promoElegible, promoEnLocal, idPromoDeReward, rewardsCoincidenConPromo, EXPLICACION as PROMO_EXPLICA } from "./promos.js";
 
 /**
  * La factura NO se puede cerrar y hay que decírselo a Ágora.
@@ -673,8 +673,8 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
   //   `fidp:`  promoción o campaña, con su propia versión y su propio libro de usos.
   let reglaReward = null, promoReward = null;
   const aplicados = rewardsAplicados(json);
-  if (aplicados.length === 1 && aplicados[0] && aplicados[0].Id) {
-    const rid = String(aplicados[0].Id);
+  if (aplicados.length >= 1 && aplicados[0] && aplicados[0].Id) {
+    const rid = idPromoDeReward(aplicados[0].Id);
     if (rid.startsWith("fidp:")) {
       promoReward = await x.get(`SELECT * FROM fid_promos WHERE reward_id = ?`, [rid]);
     } else {
@@ -694,6 +694,10 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
   // cierra la factura, otra caja puede haberse llevado el último premio o el cliente puede haberlo
   // usado ya. Si ya no cuadra se RECHAZA: aceptar sin poder atribuir el consumo regala el premio.
   if (promoReward) {
+    if (!rewardsCoincidenConPromo(promoReward, aplicados)) {
+      throw new FacturaRechazada("promo_rewards_incompatibles",
+        "Los premios no corresponden a la misma campaña. Vuelve a leer el carnet.");
+    }
     // SU PROPIO INTERRUPTOR, no el del programa de puntos. `programa.promociones` llega desde el
     // servidor ya pasado por la puerta de promociones; si no llega, se supone apagado.
     if (!programa?.promociones?.promociones_consumir) {

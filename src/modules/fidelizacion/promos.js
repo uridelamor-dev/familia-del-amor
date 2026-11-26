@@ -294,6 +294,39 @@ export function rewardDePromo(promo) {
   return r;
 }
 
+/** Una campaña puede ofrecer dos ofertas nativas por producto, nunca dos descuentos globales.
+ * Ágora calcula los precios y no aplica dos ofertas al mismo producto. Los códigos y
+ * sus productos deben comprobarse en cada TPV antes de publicar, igual que una oferta simple.
+ */
+export function rewardsDePromo(promo) {
+  const primero = rewardDePromo(promo);
+  if (!primero) return [];
+  if (!promo.codigo_agora_adicional) return [primero];
+  const segundo = normalizarCodigoAgora(promo.codigo_agora_adicional);
+  if (promo.tipo !== "oferta_agora" || !segundo.ok || segundo.codigo === primero.Code
+      || Number(promo.coste_puntos || 0) !== 0 || promo.acumulable) return [];
+  return [primero, { ...primero, Id: primero.Id + ":2", Code: segundo.codigo,
+    Name: (primero.Name + " · " + segundo.codigo).slice(0, 120) }];
+}
+
+/** Solo el sufijo exacto emitido por nosotros se resuelve a la versión padre. */
+export function idPromoDeReward(id) {
+  const valor = String(id || "");
+  return /^fidp:[A-Za-z0-9_-]+:2$/.test(valor) ? valor.slice(0, -2) : valor;
+}
+
+/** Reconoce solo los miembros de UNA campaña versionada. No permite sumar puntos,
+ * porcentajes globales, códigos cambiados ni repetir una misma oferta en el comprobante.
+ */
+export function rewardsCoincidenConPromo(promo, aplicados) {
+  if (!promo || !aplicados?.length) return false;
+  const esperados = rewardsDePromo(promo);
+  if (!esperados.length || aplicados.length > esperados.length) return false;
+  if (new Set(aplicados.map(r => r.Id)).size !== aplicados.length) return false;
+  return aplicados.every(r => esperados.some(e => e.Id === r.Id && e.Type === r.Type
+    && (e.Type !== "Offer" || e.Code === r.Code)));
+}
+
 /**
  * ¿SE PUEDE PUBLICAR? Lo que falta, en frases que dicen qué hacer.
  *
@@ -306,6 +339,14 @@ export function rewardDePromo(promo) {
 export function puedePublicar(promo, { grupos = {}, catalogo = null } = {}) {
   const falta = [];
   const t = TIPOS[promo?.tipo];
+  if (promo?.codigo_agora_adicional) {
+    const adicional = normalizarCodigoAgora(promo.codigo_agora_adicional);
+    if (promo.tipo !== "oferta_agora" || !adicional.ok
+        || adicional.codigo === normalizarCodigoAgora(promo.codigo_agora).codigo)
+      falta.push("La segunda oferta requiere dos códigos distintos y válidos de ofertas de Ágora.");
+    if (Number(promo.coste_puntos || 0) !== 0 || promo.acumulable)
+      falta.push("Las ofertas por producto no pueden consumir puntos ni acumularse con otras campañas.");
+  }
   if (!t) falta.push("El tipo de promoción no es válido.");
   if (!String(promo?.nombre || "").trim()) falta.push("Falta el nombre interno.");
   if (!String(promo?.texto_camarero || "").trim()) falta.push("Falta el texto que verá el camarero.");

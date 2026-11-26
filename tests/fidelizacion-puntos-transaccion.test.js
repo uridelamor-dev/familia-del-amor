@@ -48,8 +48,8 @@ const doc = (globalId, amount, { tokens = ["TOK-A"], reward = null } = {}) => ({
 const programa = (extra = {}) => ({ regla: REGLA, interruptores: TODO, hash, idemV: "fid:v1", ...extra });
 
 /** Una base de mentira que aplica los índices únicos de verdad y guarda las columnas de puntos. */
-function bd({ carnes = [], movimientos = [], reglas = [REGLA] } = {}) {
-  const t = { fid_facturas: [], fid_movimientos: movimientos.map((m) => ({ ...m })),
+function bd({ carnes = [], movimientos = [], reglas = [REGLA], promos = [] } = {}) {
+  const t = { fid_promo_usos: [], fid_facturas: [], fid_movimientos: movimientos.map((m) => ({ ...m })),
               pro_qr: carnes.map((c) => ({ ...c })), fid_reglas: reglas.map((r) => ({ ...r })) };
   let seq = { fid_facturas: 0, fid_movimientos: movimientos.reduce((a, m) => Math.max(a, m.id || 0), 0) };
   const cerrojos = [];
@@ -58,6 +58,8 @@ function bd({ carnes = [], movimientos = [], reglas = [REGLA] } = {}) {
     get: async (q, p = []) => {
       if (/FROM fid_facturas WHERE clave_factura/.test(q)) return t.fid_facturas.find((f) => f.clave_factura === p[0]) || null;
       if (/FROM pro_qr WHERE token/.test(q)) return t.pro_qr.find((c) => c.token === p[0]) || null;
+      if (/FROM fid_promos WHERE reward_id/.test(q)) return promos.find(r => r.reward_id === p[0]) || null;
+      if (/FROM fid_promo_usos/.test(q)) return { n: t.fid_promo_usos.filter(r => r.clave === p[0] && (p.length < 2 || r.qr_id === p[1])).length };
       // La versión EXACTA del Reward, buscada por su identificador inmutable.
       if (/FROM fid_reglas WHERE reward_id/.test(q)) return t.fid_reglas.find((r) => r.reward_id === p[0]) || null;
       throw new Error("consulta no reconocida: " + q);
@@ -72,6 +74,11 @@ function bd({ carnes = [], movimientos = [], reglas = [REGLA] } = {}) {
     run: async (q, p = []) => {
       const n = q.replace(/\s+/g, " ").trim();
       if (n.startsWith("SELECT pg_advisory_xact_lock")) { cerrojos.push(p); return undefined; }
+      if (n.startsWith("INSERT INTO fid_promo_usos")) {
+        assert.match(n, /ON CONFLICT \(clave_idem\) DO NOTHING/);
+        if (!t.fid_promo_usos.some(r => r.clave_idem === p[5])) t.fid_promo_usos.push({ clave: p[1], qr_id: p[2], clave_idem: p[5], reward_id: p[6] });
+        return;
+      }
       if (n.startsWith("INSERT INTO fid_facturas")) {
         if (t.fid_facturas.some((f) => f.clave_factura === p[4])) return undefined;
         const fila = { id: ++seq.fid_facturas, local: p[1], global_id: p[2], clave_factura: p[4],
@@ -463,5 +470,45 @@ describe("el cableado en server.js", () => {
     assert.match(server, /programa: \{ regla: reglaHoy, interruptores: sw, promociones: swPromo,\s*\n?\s*hash: fidHash, json, idemV: FID_IDEM_V \}/);
     // Los interruptores de promociones viajan igual, y también resueltos FUERA.
     assert.match(server, /swPromo = await fidPromoInterruptores\(\)/);
+  });
+});
+
+
+describe("dos ofertas de una sola campaña por producto", () => {
+  const promo = { id: 9, version: 1, clave: "black-friday", tipo: "oferta_agora",
+    codigo_agora: "BFR1", codigo_agora_adicional: "BFR2", reward_id: "fidp:bf_v1",
+    nombre: "BF", estado: "publicada", local: LLORET, desde: "2026-01-01", hasta: "2026-12-31",
+    limite_cuenta: 0, limite_total: 0, coste_puntos: 0, acumulable: false };
+  const offers = [{ Id: promo.reward_id, Type: "Offer", Code: "BFR1" },
+    { Id: promo.reward_id + ":2", Type: "Offer", Code: "BFR2" }];
+  const factura = rs => { const j = doc("G-BF", 40.65); j.InvoiceItems[0].Lines[0].LoyaltyProgram.Rewards = rs; return j; };
+  const opciones = { programa: { promociones: { promociones_consumir: true } } };
+  test("reconoce ambos códigos y registra un uso, también tras reenviar la factura", async () => {
+    const { x, t } = bd({ carnes: [carnet(11, "TOK-A")], promos: [promo] });
+    const j = factura(offers);
+    const r = await guardar(x, j, opciones);
+    assert.equal(r.puntos.accion, "aceptar");
+    assert.equal(t.fid_promo_usos.length, 1);
+    await guardar(x, j, opciones);
+    assert.equal(t.fid_promo_usos.length, 1);
+  });
+  test("un ticket solo de tarjetas resuelve el segundo código a su versión", async () => {
+    const { x, t } = bd({ carnes: [carnet(11, "TOK-A")], promos: [promo] });
+    await guardar(x, factura([offers[1]]), opciones);
+    assert.equal(t.fid_promo_usos[0].reward_id, promo.reward_id);
+  });
+  test("rechaza mezcla con porcentaje global antes de registrar el uso", async () => {
+    const { x, t } = bd({ carnes: [carnet(11, "TOK-A")], promos: [promo] });
+    await assert.rejects(guardar(x, factura([...offers, { Id: "fidp:viejo", Type: "DiscountRate", Value: 10 }]), opciones),
+      e => e instanceof FacturaRechazada && e.motivo === "promo_rewards_incompatibles");
+    assert.equal(t.fid_promo_usos.length, 0);
+  });
+  test("conserva el freno de consumo apagado y el ámbito del local", async () => {
+    for (const [fila, opt, motivo] of [[promo, { programa: { promociones: {} } }, "promo_consumir_apagado"],
+      [{ ...promo, local: TORDERA }, opciones, "promo_de_otro_local"]]) {
+      const { x, t } = bd({ carnes: [carnet(11, "TOK-A")], promos: [fila] });
+      await assert.rejects(guardar(x, factura(offers), opt), e => e.motivo === motivo);
+      assert.equal(t.fid_promo_usos.length, 0);
+    }
   });
 });
