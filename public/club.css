@@ -32,6 +32,11 @@
 .club-banner-oferta .club-banner-copy{width:100%;min-width:0;white-space:normal;flex-wrap:wrap;gap:4px 14px;text-align:center;font-size:clamp(15px,2vw,22px);line-height:1.25;font-weight:700}
 .club-banner-oferta .club-banner-copy:nth-child(2){display:none}
 .club-banner-oferta .club-banner-copy strong{color:#ffd36f;font-weight:900;letter-spacing:.08em}
+@media(max-width:650px){
+  .club-banner-oferta .club-banner-copy{padding:5px 8px;gap:2px 10px;font-size:12px;line-height:15px}
+  .club-banner-oferta .club-banner-separador{display:none}
+  .club-banner-oferta .club-banner-detalle{order:1;flex-basis:100%}
+}
 @keyframes club-banner-oferta{
   0%{transform:translateX(105%);animation-timing-function:ease-out}
   18.75%,81.25%{transform:translateX(0)}
