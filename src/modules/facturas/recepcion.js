@@ -1,3 +1,4 @@
+import {validarFormato} from './memoria-formato.js';
 import { crearRecuperacionValidacion } from './recuperar-validacion.js';
 import { nombreArchivo } from './archivo-drive.js';
 import { datosRevision, controlesLectura } from './validacion-lectura.js';
@@ -119,18 +120,21 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       for (const f of filas) { try { await ejecutar(f.id); } catch(e) { if (!e.recibido && !e.isDuplicate) console.error('[Recepción] no se pudo recuperar el documento', f.id); } }
     } finally { trabajando = false; }
   }
-  async function aprobar(id,cambios,{autor,motivo,confirmado,aceptarAvisos}={}) {
+  async function aprobar(id,cambios,{autor,motivo,confirmado,aceptarAvisos,formato,falsoAviso=false}={}) {
     const inicial=await db.get('SELECT hash FROM facturas_recepciones WHERE id=?',[id]);
     if(!inicial) throw new Error('Documento no encontrado');
     return lock(inicial.hash,async()=>{
       const f=await db.get('SELECT * FROM facturas_recepciones WHERE id=?',[id]);
       if(f.estado!=='revision' || !f.original) throw new Error('Este documento ya no está pendiente de revisión');
       if(confirmado!==true) throw new Error('Confirma que has comprobado el original');
+      const formatoConfirmado=validarFormato(formato);
       const datos=datosRevision(f.resultado?.datos,cambios);
       const avisos=await validarRevision(datos);
       if(avisos.some(a=>["fecha","proveedor","tipo"].includes(a.campo))) throw new Error("Completa proveedor, tipo y fecha válidos antes de registrar");
       if(avisos.length && aceptarAvisos!==true) throw new Error("Quedan avisos. Corrígelos o confirma expresamente la excepción");
-      const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};
+      if(formatoConfirmado && (avisos.length || !datos.nif_proveedor))throw new Error('Resuelve todos los avisos y confirma el NIF antes de recordar un formato.');
+      if(falsoAviso && Object.keys(cambios).some(k=>JSON.stringify(datos[k]??null)!==JSON.stringify(f.resultado?.datos?.[k]??null)))throw new Error('Si has corregido datos no se puede marcar la lectura original como falso aviso.');
+      const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,formato:formatoConfirmado,falsoAviso:falsoAviso===true,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};
       await db.run("UPDATE facturas_recepciones SET estado='pendiente',resultado=?::jsonb,nombre=?,intentos=0,proximo=NOW(),error=NULL,actualizado=NOW() WHERE id=? AND estado='revision'",[JSON.stringify(resultado),nombreRecepcion({...f,resultado}),id]);
       return {ok:true};
     });

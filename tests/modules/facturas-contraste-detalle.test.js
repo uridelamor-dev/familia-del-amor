@@ -28,7 +28,7 @@ test('albarán sin precios puede contrastarse sin inventarlos',()=>{
 });
 test('dos lecturas coherentes conservan evidencia y estado automático separado',async()=>{
  const d=await leerDocumentoVerificado(Buffer.from('fixture'),'image/jpeg',{leer:leer([documento,documento])});
- assert.equal(d._contraste.version,4);assert.equal(d._contraste.estado,'lectura_validada');
+ assert.equal(d._contraste.version,5);assert.equal(d._contraste.estado,'lectura_validada');
  assert.equal(d._revisionHumana,undefined);assert.deepEqual(d.lineas,[linea]);
 });
 test('una tercera cabecera sin productos no borra discrepancias de detalle',async()=>{

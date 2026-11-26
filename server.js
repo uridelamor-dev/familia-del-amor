@@ -1,3 +1,5 @@
+import {CALIDAD_LECTURA_SCHEMA,registrarCalidadLectura} from './src/modules/facturas/calidad-lectura.js';
+import {clasificarRevision} from './src/modules/facturas/motivos-revision.js';
 import { DIRECCIONES_RESERVA } from './src/modules/reservas/direcciones.js';
 import { horasDisponibles, horarioConfirmado, LOCALES_RESERVA } from './src/modules/reservas/disponibilidad.js';
 import {actualizarAvisosTrasCorreccion} from './src/modules/facturas/avisos-vigentes.js';
@@ -2303,6 +2305,7 @@ async function initDB() {
     }
 
     await client.query(RECEPCION_SCHEMA);
+    await client.query(CALIDAD_LECTURA_SCHEMA);
     await client.query(PAGINAS_SCHEMA);
     await client.query(TANDAS_SCHEMA);
     await client.query(TANDAS_RESULTADO_SCHEMA);
@@ -3788,6 +3791,8 @@ app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direcc
 });
 rutasPaginas(app,{auth:requireAuth(["direccion","contabilidad"]),db:{get:dbGet,all:dbAll,run:dbRun},puedeAccederLocal,
  conBloqueo:fn=>recepcionFacturas.conBloqueo(fn),paginas:paginasFacturas});
+registrarCalidadLectura(app,{auth:requireAuth(["direccion","contabilidad"]),db:{get:dbGet,all:dbAll},transaccion:transaccionPaginas,
+ ambito:(req,columnas)=>filtroRevision({locales:localesScope(req),empresa:req.query.empresa,tipo:req.query.tipo},columnas),puedeAcceder:puedeAccederLocal});
 app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
     const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
@@ -3799,7 +3804,7 @@ app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]),
     const propuestas=await dbAll(`SELECT p.id,p.estado,p.pruebas->>'motivo' AS motivo FROM facturas_paginas p
       WHERE (p.estado='revision' OR (p.estado='unidas' AND p.creado>NOW()-INTERVAL '7 days'))
       AND EXISTS(SELECT 1 FROM facturas_recepciones WHERE id IN (p.primera,p.segunda) ${filtro}) ORDER BY (p.estado='revision') DESC,p.id DESC LIMIT 50`,params);
-    res.json({ok:true,propuestas,data:filas.slice(0,50).map(({resultado,mime,...f})=>({...f,nombre:nombreRecepcion({...f,mime,resultado})})),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
+    res.json({ok:true,propuestas,data:filas.slice(0,50).map(({resultado,mime,...f})=>({...f,revision:clasificarRevision({...f,resultado}),nombre:nombreRecepcion({...f,mime,resultado})})),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
   } catch(e) { next(e); }
 });
 app.get("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
@@ -3832,7 +3837,7 @@ app.post("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "co
   try {
     const f=await dbGet('SELECT local FROM facturas_recepciones WHERE id=?',[req.params.id]);
     if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
-    await recepcionFacturas.aprobar(req.params.id,req.body.datos || {},{autor:String(req.user?.id || req.user?.username || req.user?.nombre || req.user?.rol || 'usuario'),motivo:req.body.motivo,confirmado:req.body.confirmado,aceptarAvisos:req.body.aceptarAvisos});
+    await recepcionFacturas.aprobar(req.params.id,req.body.datos || {},{autor:String(req.user?.id || req.user?.username || req.user?.nombre || req.user?.rol || 'usuario'),motivo:req.body.motivo,confirmado:req.body.confirmado,aceptarAvisos:req.body.aceptarAvisos,formato:req.body.formato,falsoAviso:req.body.falsoAviso});
     res.json({ok:true});
   } catch(e) {res.status(400).json({ok:false,error:e.recibido ? 'Hay otra lectura en curso. Vuelve a confirmar en un momento.' : e.message});}
 });

@@ -49,3 +49,13 @@ test('el extractor exige origen de fecha y total también para la segunda lectur
  assert.match(prompt,/Congelación 09-07-2026 y Caducidad 09-07-2028/);
  assert.match(prompt,/Total 89,10/);assert.match(prompt,/evidencia_total/);assert.match(prompt,/evidencia_fecha/);
 });
+test('recepciones 977/978: línea Total factura del cuadro fiscal no es un producto',()=>{
+ for(const ubicacion of ['Recuadro de Impuestos, línea «Total factura»','Recuadro de Impuestos, línea final','Cuadro de totales, línea Total factura']) {
+  assert.deepEqual(avisosEvidenciaCabecera({...doc,evidencia_total:{...doc.evidencia_total,etiqueta:'Total factura',ubicacion}}),[]);
+ }
+ for(const ubicacion of ['Línea 1','Línea de producto','Cuadro de totales del producto','Línea de artículo en resumen fiscal']) {
+  assert.ok(avisosEvidenciaCabecera({...doc,evidencia_total:{...doc.evidencia_total,ubicacion}}).some(a=>a.campo==='total'));
+ }
+ for(const etiqueta of ['Subtotal','Base imponible','Neto'])assert.ok(avisosEvidenciaCabecera({...doc,evidencia_total:{...doc.evidencia_total,etiqueta,ubicacion:'Recuadro de Impuestos, línea final'}}).length);
+ assert.ok(avisosEvidenciaCabecera({...doc,total:88,evidencia_total:{...doc.evidencia_total,ubicacion:'Recuadro de Impuestos, línea final'}}).length);
+});

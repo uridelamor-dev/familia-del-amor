@@ -284,6 +284,6 @@ describe("facturas.js manda la capa junto al documento", () => {
   test("y la capa de texto se GUARDA, no solo se manda", () => {
     // Es la única prueba determinista de qué año hay escrito en el papel. Tirarla dejaba la
     // comprobación de la fecha sin nada contra lo que contrastar.
-    assert.match(cuerpo, /pistas = pistasDeFecha\(capa\.texto\)/);
+    assert.match(cuerpo, /pistasFechaOriginal = pistasDeFecha\(capa\.texto\)/);
   });
 });

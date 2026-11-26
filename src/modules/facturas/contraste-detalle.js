@@ -1,3 +1,4 @@
+import {unidadComparable} from './precio-referencia.js';
 import {normalizarLinea} from './lineas.js';
 // Contraste del original en dos lecturas independientes. No corrige por mayoría
 // ni utiliza una suma correcta como prueba de que los productos son correctos.
@@ -23,7 +24,10 @@ export function compararDetalle(a,b) {
       && nl.importe!=null && nr.importe!=null && Math.abs(nl.importe-nr.importe)<=0.011
       && ((nl.importe_bruto==null && nr.importe_bruto==null)
         || (nl.importe_bruto!=null && nr.importe_bruto!=null && Math.abs(nl.importe_bruto-nr.importe_bruto)<=0.011));
-    for(const k of ['descripcion','unidad']) if(texto(l[k])!==texto(r[k])) campos.push(k);
+    if(texto(l.descripcion)!==texto(r.descripcion))campos.push('descripcion');
+    const unidad=v=>unidadComparable(v)||texto(v);
+    if(unidad(l.unidad)!==unidad(r.unidad))campos.push('unidad');
+    if(texto(l.formato_literal)!==texto(r.formato_literal))campos.push('formato del envase');
     for(const k of ['cantidad','precio_unitario','importe','importe_neto','descuento_pct']) {
       if(importesEquivalentes && ['importe','importe_neto'].includes(k))continue;
       const u=numero(l[k]),v=numero(r[k]);
@@ -40,6 +44,7 @@ export function compararDetalle(a,b) {
 export function comprobarCobertura(d) {
   if(!d._exigirCobertura)return [];
   const c=d.cobertura;
+  if(d._paginasOriginal && c?.paginas_leidas!==d._paginasOriginal)return [{campo:'imagen',texto:'La lectura no coincide con el número real de páginas del archivo. Comprueba el original completo.'}];
   if(!c || c.documento_completo!==true || !Number.isInteger(c.paginas_leidas) || c.paginas_leidas<1)
     return [{campo:'imagen',texto:'No se ha podido confirmar que el documento esté completo y todas sus páginas sean legibles.'}];
   if(c.detalle==='sin_detalle' && String(c.motivo_sin_detalle||'').trim() && !(d.lineas||[]).length)return [];

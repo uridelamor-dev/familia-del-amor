@@ -95,6 +95,25 @@ export function datosRevision(original,cambios) {
       d[campo]=v===null ? null : v.trim().slice(0,300);
     }
   }
+  if(Object.hasOwn(cambios,'lineas')) {
+    if(!Array.isArray(cambios.lineas)||cambios.lineas.length>500)throw new Error('Detalle de productos no válido');
+    d.lineas=cambios.lineas.map((l,i)=>{
+      if(!l||typeof l!=='object')throw new Error('Línea no válida');
+      const out={};
+      for(const k of ['descripcion','unidad','formato_literal']){
+        if(l[k]!=null&&typeof l[k]!=='string')throw new Error('Texto de línea no válido');
+        out[k]=l[k]==null?null:l[k].trim().slice(0,300);
+      }
+      for(const k of ['cantidad','precio_unitario','importe','importe_neto','descuento_pct']){
+        if(l[k]!=null&&(typeof l[k]!=='number'||!Number.isFinite(l[k])))throw new Error('Importe o cantidad de línea no válido');
+        out[k]=l[k]??null;
+      }
+      // Una fila reenviada sin cambios no borra las dudas de la extracción.
+      const previa=original?.lineas?.[i];
+      if(previa && Object.keys(out).every(k=>(out[k]??null)===(previa[k]??null)))return {...previa,...out};
+      return {...out,lectura_dudosa:false,dudosa:false};
+    });
+  }
   if(d.nif_proveedor) d.nif_proveedor=normNif(d.nif_proveedor);
   // Un cambio de base/IVA invalida el desglose anterior: no mantener datos fiscales contradictorios.
   if(['base_imponible','cuota_iva','porcentaje_iva'].some(k=>d[k]!==original?.[k])) d.iva_desglose=[];

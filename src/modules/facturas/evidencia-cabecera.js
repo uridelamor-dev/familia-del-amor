@@ -30,10 +30,15 @@ export function avisosEvidenciaCabecera(d={}) {
  // Un albarán realmente sin valorar no necesita inventar un total ni evidencia monetaria.
  if(d.total==null||d.total==='')return avisos;
  const t=d.evidencia_total, literal=importeLiteral(t?.importe_texto);
+ const ubicacion=limpio(t?.ubicacion);
+ // Una fila del cuadro fiscal no es una línea de producto. Se exige contexto
+ // explícito del resumen; la palabra «línea» aislada sigue siendo insuficiente.
+ const cuadroFiscal=/(?:cuadro|recuadro|resumen)/.test(ubicacion) && /(?:totales|impuestos|fiscal|total factura|total documento)/.test(ubicacion);
+ const lineaProducto=/producto|articulo/.test(ubicacion) || (/linea/.test(ubicacion) && !cuadroFiscal);
  const abonoExplicito=/^(abono|nota de credito|credit note)$/.test(limpio(d.titulo_documento).trim()) || d._evidenciaAbono?.abono===true;
  const importeContrastado=literal>0 && Number(d.total)<0 && abonoExplicito ? -literal : literal;
  if(!t||!texto(t.etiqueta)||!texto(t.ubicacion)||literal==null)add('total','Falta el importe literal y la ubicación del total del documento; no sirve el neto de una línea.');
- else if(/subtotal|base|neto/.test(limpio(t.etiqueta)) || !/total|a pagar|a cobrar|importe final|liquido/.test(limpio(t.etiqueta)) || /linea|producto/.test(limpio(t.ubicacion)))add('total','El importe procede de una base, subtotal o línea; comprueba el cuadro de totales del documento.');
+ else if(/subtotal|base|neto/.test(limpio(t.etiqueta)) || !/total|a pagar|a cobrar|importe final|liquido/.test(limpio(t.etiqueta)) || lineaProducto)add('total','El importe procede de una base, subtotal o línea; comprueba el cuadro de totales del documento.');
  else if(!Number.isFinite(Number(d.total)) || Math.abs(importeContrastado-Number(d.total))>0.000001)add('total','El total leído no coincide con el importe literal del cuadro de totales.');
  return avisos;
 }

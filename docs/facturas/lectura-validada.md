@@ -58,3 +58,9 @@ Coste: no se añade una llamada al caso normal (siguen siendo dos), pero la segu
 ### 26/11/2026 — falsos avisos de recepción
 
 La versión 4 normaliza el prefijo fiscal español ES y los importes ya netos corroborados por cantidad/tarifa/descuento. Un adjunto decorativo explícito puede tener tipo vacío; se conserva su original. El repaso acotado de 73 recepciones antiguas vuelve a leer el original, nunca aprueba desde la extracción vieja. Detalle, alcance y límites en `../verificaciones/2026-11-26-falsos-pendientes.md`.
+
+### 26/11/2026 — lectura dirigida y calidad (versión 5)
+
+Implementadas seis mejoras: total fiscal sin falso aviso por la palabra línea; unidades/envases con evidencia literal; ampliaciones de apoyo solo en la tercera lectura; memoria de formatos confirmados; agrupación accionable de pendientes; métricas y controles de una muestra de registros automáticos. La revisión de recepciones permite corregir líneas conservando auditoría. El recuperador acotado mantiene los mismos 73 IDs, dos por ciclo y un intento por versión.
+
+Preparado localmente, no publicado. Pruebas y límites: `../verificaciones/2026-11-26-mejoras-lectura-v5.md`. No equivale a revisión humana al 100 % ni a garantía de archivo correcto en Drive.

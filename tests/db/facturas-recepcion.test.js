@@ -93,3 +93,27 @@ test('recupera solo el lote afectado, de dos en dos y una sola vez, sin aprobar 
  const reinicio=crearRecuperacionValidacion({db,lock:async(_h,fn)=>fn()});
  assert.equal(await reinicio(),0);assert.equal(llamadas,1);
 }));
+test('nueva mejora reevalúa una sola vez casos del lote que seguían pendientes con versión 4',async t=>preparar(t,async db=>{
+ const {crearRecuperacionValidacion,VERSION_RECUPERACION,VERSION_MEJORA_LECTURA}=await import('../../src/modules/facturas/recuperar-validacion.js');
+ const resultado={datos:{total:137.23},contraste:{version:4},revalidacion:{version:VERSION_RECUPERACION},avisos:[{campo:'total',texto:'Línea total factura'}]};
+ await db.run(`INSERT INTO facturas_recepciones(id,clave,hash,canal,nombre,mime,original,estado,resultado)VALUES(977,'977','977','Email','f.pdf','application/pdf',?,'revision',?::jsonb)`,[archivo.buffer,JSON.stringify(resultado)]);
+ const recuperar=crearRecuperacionValidacion({db,lock:async(_h,fn)=>fn()});assert.equal(await recuperar(),1);
+ let f=await db.get('SELECT * FROM facturas_recepciones WHERE id=977');assert.equal(f.resultado.revalidacion.version,VERSION_MEJORA_LECTURA);assert.deepEqual(f.resultado.revalidacion.anterior,resultado);
+ await db.run("UPDATE facturas_recepciones SET estado='revision' WHERE id=977");assert.equal(await crearRecuperacionValidacion({db,lock:async(_h,fn)=>fn()})(),0);
+}));
+
+test('formato confirmado y falso aviso persisten; rechaza aprendizaje con dudas y falsos avisos corregidos',async t=>preparar(t,async db=>{
+ const datos={tipo:'factura',proveedor:'Proveedor prueba',nif_proveedor:'B60599461',fecha:'2026-11-25',numero_factura:'A1',base_imponible:100,cuota_iva:21,total:121};
+ await db.run(`INSERT INTO facturas_recepciones(clave,hash,canal,local,nombre,mime,original,estado,resultado) VALUES('memoria','memoria','Email','Blanes','f.pdf','application/pdf',?,'revision',?::jsonb)`,[archivo.buffer,JSON.stringify({datos})]);
+ const f=await db.get('SELECT id FROM facturas_recepciones');let avisos=[];
+ const r=crearRecepcion({db,lock:async(_h,fn)=>fn(),procesar:async()=>({datos}),validarRevision:async()=>avisos});
+ const opts={autor:'contabilidad',confirmado:true,formato:{importes:'neto',unidades:'envases'},falsoAviso:true};
+ await assert.rejects(r.aprobar(f.id,{total:122},opts),/falso aviso/);
+ avisos=[{campo:'lineas',texto:'Cantidad dudosa'}];
+ await assert.rejects(r.aprobar(f.id,{}, {...opts,aceptarAvisos:true}),/Resuelve todos/);
+ assert.equal((await db.get('SELECT estado FROM facturas_recepciones')).estado,'revision');
+ avisos=[];await r.aprobar(f.id,{},opts);await r.reintentar();
+ const guardado=await db.get('SELECT * FROM facturas_recepciones');
+ assert.equal(guardado.estado,'registrado');assert.equal(guardado.resultado.revisionPrevia.aprobacion.formato.importes,'neto');
+ assert.equal(guardado.resultado.revisionPrevia.aprobacion.autor,'contabilidad');assert.equal(guardado.resultado.revisionPrevia.aprobacion.falsoAviso,true);
+}));

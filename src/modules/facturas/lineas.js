@@ -85,7 +85,7 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
   let factor = null;
   if (cantidad && precioBruto && bruto != null && Math.abs(cantidad * precioBruto - bruto) > 0.02) {
     const f = bruto / precioBruto / cantidad;
-    const contenido = /\b(\d+)\s*(?:uds?\.?|unidades|units)\b/i.exec(descripcion);
+    const contenido = /\b(\d+)\s*(?:uds?\.?|unidades|units)\b/i.exec(`${descripcion} ${String(cruda.formato_literal||'')}`);
     const envase = /^(?:packs?|cajas?|bultos?|paquetes?)$/i.test(String(cruda.unidad || "").trim());
     if (envase && contenido && Number(contenido[1]) === Math.round(f) && f >= 2 && Math.abs(f - Math.round(f)) < 0.01) {
       factor = Math.round(f);
