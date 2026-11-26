@@ -39,41 +39,47 @@
 </style><style>
 /* Directorio de locales en portada. */
 .places-preview{
-  max-width:1040px;
+  max-width:1100px;
   margin-inline:auto;
-  padding:clamp(38px,7vw,92px) clamp(20px,5vw,48px);
+  padding:clamp(40px,7vw,90px) clamp(18px,5vw,52px);
   scroll-margin-top:110px;
 }
-.places-heading{margin-bottom:clamp(28px,5vw,54px)}
-.places-heading h2{margin:0;color:#382a24;font-size:clamp(32px,5vw,54px);font-weight:500;letter-spacing:-.045em}
-.places-heading p{margin:10px 0 0;color:#71665e;font-size:15px}
-.place-town{padding:24px 0 34px;border-top:1px solid #d8cbbd}
-.place-town:last-child{border-bottom:1px solid #d8cbbd}
-.place-town h3{margin:0 0 18px;color:#854b31;font:600 11px/1.4 Inter,Arial,sans-serif;letter-spacing:.16em;text-transform:uppercase}
-.places-grid{display:grid;gap:22px}
-.place-card{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:center;gap:clamp(20px,6vw,76px)}
-.place-photo{display:block;min-width:0;aspect-ratio:16/9;overflow:hidden;border-radius:12px;background:#e9e1d6;grid-column:1;grid-row:1}
+.places-heading{margin-bottom:clamp(26px,5vw,50px);text-align:center}
+.places-heading h2{margin:0;color:#382a24;font-size:clamp(36px,5.8vw,62px);font-weight:400;letter-spacing:-.045em}
+.places-heading p{margin:9px 0 0;color:#71665e;font:italic 400 15px/1.55 Lora,Georgia,serif}
+.places-grid{display:grid;gap:clamp(12px,2.4vw,24px)}
+.place-card{
+  display:grid;
+  grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);
+  align-items:center;
+  gap:clamp(15px,5vw,66px);
+  padding:clamp(8px,1.4vw,15px);
+  border:1px solid #e4d8cb;
+  border-radius:16px;
+  background:#fffaf3;
+}
+.place-card--reverse{grid-template-columns:minmax(0,1fr) minmax(0,1.3fr)}
+.place-photo{display:block;min-width:0;aspect-ratio:16/9;overflow:hidden;border-radius:10px;background:#e9e1d6;grid-column:1;grid-row:1}
 .place-photo img{display:block;width:100%;height:100%;object-fit:cover}
 .place-body{grid-column:2;grid-row:1;min-width:0}
 .place-card--reverse .place-photo{grid-column:2}
 .place-card--reverse .place-body{grid-column:1;justify-self:end;text-align:right}
-.place-card h4{margin:0;color:#382a24;font:500 clamp(24px,4vw,40px)/1.1 Lora,Georgia,serif;letter-spacing:-.035em}
-.place-actions{display:flex;flex-wrap:wrap;column-gap:20px;margin-top:8px}
+.place-card h3{margin:0;color:#382a24;font:400 clamp(24px,4.2vw,44px)/1.07 "Playfair Display",Georgia,serif;letter-spacing:-.035em}
+.place-city{margin:7px 0 0;color:#854b31;font:600 10px/1.4 Inter,Arial,sans-serif;letter-spacing:.13em;text-transform:uppercase}
+.place-actions{display:flex;flex-wrap:wrap;column-gap:20px;margin-top:12px}
 .place-card--reverse .place-actions{justify-content:flex-end}
 .place-actions a{display:inline-flex;align-items:center;gap:5px;min-height:44px;color:#854b31;font-size:13px;text-decoration:none}
-.place-actions .place-book{font-weight:650}
+.place-actions .place-book{font-weight:600}
 .place-actions .place-more{color:#71665e}
 .place-actions a:hover{text-decoration:underline;text-underline-offset:4px}
 .place-card a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:600px){
   .places-heading p{font-size:14px}
-  .place-town{padding:16px 0 21px}
-  .place-town h3{margin-bottom:12px}
-  .places-grid{gap:14px}
-  .place-card{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-  .place-photo{aspect-ratio:4/3;border-radius:8px}
-  .place-card h4{font-size:clamp(19px,5.5vw,26px)}
-  .place-actions{column-gap:10px;margin-top:2px}
+  .place-card,.place-card--reverse{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;border-radius:12px}
+  .place-photo{aspect-ratio:1;align-self:stretch;border-radius:7px}
+  .place-card h3{font-size:clamp(19px,5.5vw,26px)}
+  .place-city{margin-top:5px;font-size:9px;letter-spacing:.09em}
+  .place-actions{column-gap:8px;margin-top:1px}
   .place-actions a{font-size:11px}
 }
 #resenas{background:transparent;padding:36px 24px;max-width:1120px;margin:auto;border-top:1px solid #ded6cb}#resenas .section-head{margin-bottom:22px}#resenas .section-head h2{font-size:30px}#resenas .section-head p{font-size:12px;color:#71665e}.resenas-grid{display:flex;gap:24px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:14px}.resenas-grid .resena{flex:1 0 28%;min-width:230px;box-shadow:none;border:0;border-radius:0;background:transparent;padding:0 18px 0 0;scroll-snap-align:start}.resena p{font-family:Georgia,serif;font-size:19px;font-style:normal;line-height:1.5;color:#493629}.resena strong{font:500 10px Inter,sans-serif;letter-spacing:.05em;margin-top:12px;color:#71665e}
@@ -123,23 +129,15 @@
       <div id="clubBanner" class="club-banner"></div>
 
       <section id="locales" class="places-preview"><header class="places-heading"><h2>Nuestros locales</h2><p>Cerca de ti. Como en casa.</p></header>
-        <section class="place-town"><h3>Blanes</h3><div class="places-grid">
-          <article class="place-card"><a class="place-photo" href="local.html?slug=la-tapeta-blanes" aria-label="Ver La Tapeta de Blanes"><img src="uploads/gallery/LaTapeta_Blanes_01.jpg" alt="La Tapeta · Blanes" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h4>La Tapeta</h4><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="La Tapeta - Blanes" aria-label="Reservar en La Tapeta de Blanes">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=la-tapeta-blanes" aria-label="Ver local: La Tapeta de Blanes">Ver local <span aria-hidden="true">→</span></a></div></div></article>
-          <article class="place-card place-card--reverse"><a class="place-photo" href="local.html?slug=cooperativa" aria-label="Ver Cooperativa de Blanes"><img src="assets/preview-locales/cooperativa.jpg" alt="Cooperativa · Blanes" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h4>Cooperativa</h4><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="Cooperativa - Blanes" aria-label="Reservar en Cooperativa de Blanes">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=cooperativa" aria-label="Ver local: Cooperativa de Blanes">Ver local <span aria-hidden="true">→</span></a></div></div></article>
-        </div></section>
-        <section class="place-town"><h3>Lloret de Mar</h3><div class="places-grid">
-          <article class="place-card"><a class="place-photo" href="local.html?slug=la-tapeta-lloret" aria-label="Ver La Tapeta de Lloret de Mar"><img src="uploads/gallery/LaTapeta_Lloret_01.jpg" alt="La Tapeta · Lloret de Mar" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h4>La Tapeta</h4><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="La Tapeta - Lloret" aria-label="Reservar en La Tapeta de Lloret de Mar">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=la-tapeta-lloret" aria-label="Ver local: La Tapeta de Lloret de Mar">Ver local <span aria-hidden="true">→</span></a></div></div></article>
-        </div></section>
-        <section class="place-town"><h3>Girona</h3><div class="places-grid">
-          <article class="place-card place-card--reverse"><a class="place-photo" href="local.html?slug=la-tapeta-girona" aria-label="Ver La Tapeta de Girona"><img src="uploads/gallery/LaTapeta_Girona_01.jpg" alt="La Tapeta · Girona" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h4>La Tapeta</h4><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="La Tapeta - Girona" aria-label="Reservar en La Tapeta de Girona">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=la-tapeta-girona" aria-label="Ver local: La Tapeta de Girona">Ver local <span aria-hidden="true">→</span></a></div></div></article>
-        </div></section>
-        <section class="place-town"><h3>Tordera</h3><div class="places-grid">
-          <article class="place-card"><a class="place-photo" href="local.html?slug=can-mateu" aria-label="Ver Can Mateu de Tordera"><img src="assets/preview-locales/can-mateu.jpg" alt="Can Mateu · Tordera" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h4>Can Mateu</h4><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="Can Mateu - Tordera" aria-label="Reservar en Can Mateu de Tordera">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=can-mateu" aria-label="Ver local: Can Mateu de Tordera">Ver local <span aria-hidden="true">→</span></a></div></div></article>
-          <article class="place-card place-card--reverse"><a class="place-photo" href="local.html?slug=la-tapa-iberica" aria-label="Ver La Tapa Ibérica de Tordera"><img src="assets/preview-locales/la-tapa.jpg" alt="La Tapa Ibérica · Tordera" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h4>La Tapa Ibérica</h4><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="La Tapa Ibérica - Tordera" aria-label="Reservar en La Tapa Ibérica de Tordera">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=la-tapa-iberica" aria-label="Ver local: La Tapa Ibérica de Tordera">Ver local <span aria-hidden="true">→</span></a></div></div></article>
-        </div></section>
-        <section class="place-town"><h3>Palafolls</h3><div class="places-grid">
-          <article class="place-card"><a class="place-photo" href="local.html?slug=tribeca" aria-label="Ver Tribeca de Palafolls"><img src="uploads/gallery/Tribeca_01.jpg" alt="Tribeca · Palafolls" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h4>Tribeca</h4><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="Tribeca - Palafolls" aria-label="Reservar en Tribeca de Palafolls">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=tribeca" aria-label="Ver local: Tribeca de Palafolls">Ver local <span aria-hidden="true">→</span></a></div></div></article>
-        </div></section>
+        <div class="places-grid">
+          <article class="place-card"><a class="place-photo" href="local.html?slug=la-tapeta-blanes" aria-label="Ver La Tapeta de Blanes"><img src="uploads/gallery/LaTapeta_Blanes_01.jpg" alt="La Tapeta · Blanes" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h3>La Tapeta</h3><p class="place-city">Blanes</p><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="La Tapeta - Blanes" aria-label="Reservar en La Tapeta de Blanes">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=la-tapeta-blanes" aria-label="Ver local: La Tapeta de Blanes">Ver local <span aria-hidden="true">→</span></a></div></div></article>
+          <article class="place-card place-card--reverse"><a class="place-photo" href="local.html?slug=cooperativa" aria-label="Ver Cooperativa de Blanes"><img src="assets/preview-locales/cooperativa.jpg" alt="Cooperativa · Blanes" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h3>Cooperativa</h3><p class="place-city">Blanes</p><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="Cooperativa - Blanes" aria-label="Reservar en Cooperativa de Blanes">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=cooperativa" aria-label="Ver local: Cooperativa de Blanes">Ver local <span aria-hidden="true">→</span></a></div></div></article>
+          <article class="place-card"><a class="place-photo" href="local.html?slug=la-tapeta-lloret" aria-label="Ver La Tapeta de Lloret de Mar"><img src="uploads/gallery/LaTapeta_Lloret_01.jpg" alt="La Tapeta · Lloret de Mar" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h3>La Tapeta</h3><p class="place-city">Lloret de Mar</p><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="La Tapeta - Lloret" aria-label="Reservar en La Tapeta de Lloret de Mar">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=la-tapeta-lloret" aria-label="Ver local: La Tapeta de Lloret de Mar">Ver local <span aria-hidden="true">→</span></a></div></div></article>
+          <article class="place-card place-card--reverse"><a class="place-photo" href="local.html?slug=la-tapeta-girona" aria-label="Ver La Tapeta de Girona"><img src="uploads/gallery/LaTapeta_Girona_01.jpg" alt="La Tapeta · Girona" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h3>La Tapeta</h3><p class="place-city">Girona</p><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="La Tapeta - Girona" aria-label="Reservar en La Tapeta de Girona">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=la-tapeta-girona" aria-label="Ver local: La Tapeta de Girona">Ver local <span aria-hidden="true">→</span></a></div></div></article>
+          <article class="place-card"><a class="place-photo" href="local.html?slug=can-mateu" aria-label="Ver Can Mateu de Tordera"><img src="assets/preview-locales/can-mateu.jpg" alt="Can Mateu · Tordera" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h3>Can Mateu</h3><p class="place-city">Tordera</p><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="Can Mateu - Tordera" aria-label="Reservar en Can Mateu de Tordera">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=can-mateu" aria-label="Ver local: Can Mateu de Tordera">Ver local <span aria-hidden="true">→</span></a></div></div></article>
+          <article class="place-card place-card--reverse"><a class="place-photo" href="local.html?slug=la-tapa-iberica" aria-label="Ver La Tapa Ibérica de Tordera"><img src="assets/preview-locales/la-tapa.jpg" alt="La Tapa Ibérica · Tordera" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h3>La Tapa Ibérica</h3><p class="place-city">Tordera</p><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="La Tapa Ibérica - Tordera" aria-label="Reservar en La Tapa Ibérica de Tordera">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=la-tapa-iberica" aria-label="Ver local: La Tapa Ibérica de Tordera">Ver local <span aria-hidden="true">→</span></a></div></div></article>
+          <article class="place-card"><a class="place-photo" href="local.html?slug=tribeca" aria-label="Ver Tribeca de Palafolls"><img src="uploads/gallery/Tribeca_01.jpg" alt="Tribeca · Palafolls" loading="lazy" decoding="async" width="900" height="600"></a><div class="place-body"><h3>Tribeca</h3><p class="place-city">Palafolls</p><div class="place-actions"><a class="place-book" href="#reservas" data-reserva-local="Tribeca - Palafolls" aria-label="Reservar en Tribeca de Palafolls">Reservar <span aria-hidden="true">↗</span></a><a class="place-more" href="local.html?slug=tribeca" aria-label="Ver local: Tribeca de Palafolls">Ver local <span aria-hidden="true">→</span></a></div></div></article>
+        </div>
       </section>
 <!-- GALERÍA -->
       <section id="galeria" class="block">
