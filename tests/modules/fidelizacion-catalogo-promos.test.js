@@ -263,6 +263,22 @@ describe("quién se la lleva", () => {
 });
 
 describe("el Reward que se manda", () => {
+  test("DiscountRate usa tanto por uno: una cuenta de 20 € con 10 % queda en 18 €", () => {
+    const promo = { tipo: "descuento_pct", reward_id: "fidp:black-friday", valor: 10 };
+    const reward = rewardDePromo(promo);
+    assert.equal(reward.Type, "DiscountRate");
+    assert.equal(reward.Value, 0.1);
+    assert.equal(2000 - Math.round(2000 * reward.Value), 1800);
+    assert.equal(reward.Code, undefined);
+    assert.equal(promo.valor, 10, "el valor del panel sigue siendo un porcentaje");
+    for (const [valor, esperado] of [[25, 0.25], [0.5, 0.005], [100, 1]]) {
+      assert.equal(rewardDePromo({ ...promo, valor }).Value, esperado);
+    }
+    for (const valor of [0, -10, 101, null, "", "incorrecto", Infinity]) {
+      assert.equal(rewardDePromo({ ...promo, valor }), null);
+    }
+  });
+
   test("el Id es el GUARDADO, no uno calculado", () => {
     const r = rewardDePromo({ tipo: "descuento_euros", reward_id: "fidp:ABC", valor: 5,
       nombre: "X", texto_camarero: "5 € de descuento", texto_cliente: "Cinco euros" });

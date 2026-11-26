@@ -273,7 +273,13 @@ export function rewardDePromo(promo) {
     Type: t.reward,
   };
   if (t.valor === "euros") r.Value = Number(promo.valor);
-  if (t.valor === "porciento") r.Value = Number(promo.valor);
+  if (t.valor === "porciento") {
+    // El panel guarda 10 para el 10 %; Ágora recibe tanto por uno (0.10).
+    // Guía del Integrador, Fidelización: DiscountRate.Value.
+    const porcentaje = Number(promo.valor);
+    if (!Number.isFinite(porcentaje) || porcentaje <= 0 || porcentaje > 100) return null;
+    r.Value = porcentaje / 100;
+  }
   if (t.codigo) {
     // ÚLTIMO CANDADO. El `Code` sale de la FILA GUARDADA, nunca de la petición, y si lo que hay
     // guardado no es un código válido NO se manda un `Offer` a medias: Ágora lo ignoraría en
