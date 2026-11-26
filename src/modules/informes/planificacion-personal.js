@@ -2,7 +2,7 @@ import {desplazarMes} from './mensuales.js';
 import {fuentesVentas} from '../locales/centros.js';
 export const LOCALES_PERSONAL=['La Tapeta - Blanes','La Tapeta - Lloret','La Tapeta - Girona','Can Mateu - Tordera','La Tapa Ibérica - Tordera'];
 export const DESTINO_PERSONAL='34622065974';
-const euros=n=>n.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+const euros=n=>n.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:'always'})+' €';
 const titulo=mes=>new Date(mes+'-15T12:00:00Z').toLocaleDateString('es-ES',{month:'long',year:'numeric',timeZone:'UTC'});
 const valido=n=>n!==null&&n!==undefined&&n!==''&&Number.isFinite(Number(n));
 // Solo el ciclo vigente: no enviar planes de meses ya pasados tras una desconexión larga.
