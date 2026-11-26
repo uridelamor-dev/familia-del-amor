@@ -42,3 +42,19 @@ Pruebas: reglas de validación, cola y tandas sobre PostgreSQL temporal, regresi
 - Corrección y auditoría en una misma transacción, con bloqueo de filas y comprobación de la cabecera actual frente a la que se abrió. Evita sobrescribir cambios posteriores. Un doble envío no repite la decisión. Auditoría append-only: autor, fecha, motivo, datos anteriores/nuevos; no copia los bytes del original de recepciones.
 - Confirmación humana y motivo obligatorios. Los avisos persistentes necesitan excepción explícita. La corrección no cambia pagos ni líneas de producto. Cambios de importes marcan el desglose IVA para revisar; una fecha corregida recalcula el vencimiento salvo que proceda expresamente del documento. Drive/Sheets se sincronizan después de guardar y su fallo no revierte el dato confirmado.
 - Solo Dirección puede iniciar/controlar/decidir el repaso. No está lanzado en producción. Pruebas locales con datos ficticios: pausa, continuación, límite de 25, variedad, conflictos y rollback ante fallo de auditoría; interfaz de ordenador y móvil.
+
+## Ampliación del contraste — 18/11/2026
+
+La segunda lectura independiente extrae ahora también el detalle completo. Compara filas, descripciones (ignorando mayúsculas, acentos y puntuación), unidades, cantidades, precios, descuentos e importes. La cabecera correcta no justifica un detalle diferente: una tercera lectura solo resuelve la discrepancia si corrobora las líneas que se conservarán. No se sustituyen productos por una votación ni se modifica el original para cuadrar.
+
+Las nuevas extracciones deben declarar cobertura: documento completo, páginas leídas y detalle completo o ausencia explícitamente justificada. Una foto recortada, líneas omitidas o cantidades sin leer no se autoaceptan. Un albarán sin valorar puede conservar precios e importes nulos. El número de páginas declarado sigue siendo evidencia del lector, no una garantía independiente de que el remitente enviara todas las páginas.
+
+La auditoría `_contraste` versión3 conserva las lecturas, ajustes, discrepancias y estado `lectura_validada` / `requiere_revision` dentro del resultado de recepción. No modifica el distintivo humano al100% ni ofrece porcentajes de confianza no medidos. Un fallo de consulta del historial en la validación impide continuar como si la consulta estuviera vacía; la recepción queda en el circuito técnico de reintentos.
+
+Circuito compartido comprobado en servidor: WhatsApp, correo, carga manual (con y sin local), importación Drive y documentos fusionados utilizan recepción y lector verificado. Las aprobaciones humanas explícitas mantienen su circuito propio. Identidad, fechas, IVA, duplicados, condiciones de pago y archivo siguen usando sus controles existentes. `lectura_validada` describe la lectura: no certifica que Drive se haya sincronizado ni que las relaciones con albaranes estén completas. No se añade una aprobación general ni se cambia retrospectivamente el histórico.
+
+Coste: no se añade una llamada al caso normal (siguen siendo dos), pero la segunda devuelve más contenido. La tercera sigue limitada a una. Se deben medir coste, latencia y falsos positivos con una muestra real después de publicar; las pruebas automatizadas no llaman a IA ni modifican documentos de producción. Si las descripciones equivalentes se transcriben de forma distinta, se mantiene revisión: no se equiparan productos distintos solo por sus importes.
+
+### 26/11/2026 — falsos avisos de recepción
+
+La versión 4 normaliza el prefijo fiscal español ES y los importes ya netos corroborados por cantidad/tarifa/descuento. Un adjunto decorativo explícito puede tener tipo vacío; se conserva su original. El repaso acotado de 73 recepciones antiguas vuelve a leer el original, nunca aprueba desde la extracción vieja. Detalle, alcance y límites en `../verificaciones/2026-11-26-falsos-pendientes.md`.

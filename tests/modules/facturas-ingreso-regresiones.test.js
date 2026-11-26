@@ -9,11 +9,11 @@ test('cabecera corroborada no acepta las líneas de una primera lectura incompat
 });
 test('detalle correcto no añade una tercera lectura y conserva céntimos del original',async()=>{
  const mitjans={...base,base_imponible:121.66,cuota_iva:12.17,porcentaje_iva:10,total:133.83,lineas:[{descripcion:'Pavo',cantidad:8.454,precio_unitario:14.39,importe:121.66}]};let n=0;
- const r=await leerDocumentoVerificado(Buffer.from('fixture'),'image/jpeg',{leer:async()=>structuredClone(++n===1?mitjans:{...mitjans,lineas:[]})});
+ const r=await leerDocumentoVerificado(Buffer.from('fixture'),'image/jpeg',{leer:async()=>(n++,structuredClone(mitjans))});
  assert.equal(n,2);assert.equal(r.lineas[0].importe,121.66);
 });
-test('la relectura de productos pide detalle; la comprobación normal solo cabecera',()=>{
- assert.match(instruccionesRevision({revision:true}),/No extraigas productos/);
+test('la relectura de productos pide detalle; la comprobación normal también contrasta productos',()=>{
+ assert.match(instruccionesRevision({revision:true}),/Relee también todas las líneas/);
  const t=instruccionesRevision({revision:true,camposRevision:['lineas','total']});
  assert.match(t,/Relee también todas las líneas/);assert.doesNotMatch(t,/No extraigas productos/);
 });

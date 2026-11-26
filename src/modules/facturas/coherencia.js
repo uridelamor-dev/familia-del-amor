@@ -1,3 +1,4 @@
+import { normNif } from './emisor.js';
 // Facturas — comprobar que lo leído se sostiene. Lógica PURA.
 //
 // LA IDEA DE FONDO: no vamos a conseguir que la lectura no falle nunca. Ni con visión, ni
@@ -68,7 +69,7 @@ export function cuadraIva(d) {
  */
 export function contraHistorial(d, historial = {}) {
   const avisos = [];
-  const normalizar=v=>String(v||'').replace(/[\s.\-/]/g,'').toUpperCase();
+  const normalizar=normNif;
   const nifs = (historial.nifs || []).map(normalizar).filter(Boolean);
   const confirmados=[...new Set((historial.nifsConfirmados || []).map(normalizar).filter(Boolean))];
   const nif = normalizar(d.nif_proveedor || d.nif);

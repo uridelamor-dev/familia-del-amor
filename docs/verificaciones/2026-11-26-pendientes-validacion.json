@@ -1,0 +1,694 @@
+{
+  "corte": "2026-11-26T17:53:21.677479+00:00",
+  "total_recepciones": 578,
+  "afectadas": 73,
+  "alcance": "Lecturas guardadas, sin revalidar originales, memoria de proveedor ni Drive. No supone aprobación contable. Recuperación preparada para publicación.",
+  "documentos": [
+    {
+      "id": "3042",
+      "motivos": [
+        "prefijo_ES",
+        "descuento_neto"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "3041",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "3028",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2997",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2996",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2995",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2993",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2991",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2982",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2964",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2941",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas",
+        "descuadre_total"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2940",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "cuota_iva",
+        "lineas",
+        "descuadre_total"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2938",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "total"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2937",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "total"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2936",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2935",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "total",
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2923",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2903",
+      "motivos": [
+        "prefijo_ES",
+        "descuento_neto"
+      ],
+      "avisos_restantes": [
+        "total",
+        "cuota_iva",
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2881",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2878",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2703",
+      "motivos": [
+        "descuento_neto"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2694",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2693",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2692",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2668",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2641",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2640",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas",
+        "vencimiento"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2597",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2592",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2591",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2590",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2550",
+      "motivos": [
+        "descuento_neto"
+      ],
+      "avisos_restantes": [
+        "nif_proveedor",
+        "lineas",
+        "iva_desglose",
+        "recargo_equivalencia"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2508",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2504",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2501",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "proveedor",
+        "nif_proveedor",
+        "nif_receptor"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2500",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2391",
+      "motivos": [
+        "descuento_neto"
+      ],
+      "avisos_restantes": [
+        "lineas",
+        "retencion"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2161",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2146",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "nif_proveedor",
+        "lineas",
+        "numero_factura"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2145",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "nif_proveedor",
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2076",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "cuota_iva",
+        "lineas",
+        "descuadre_total"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2075",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2074",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2073",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "2071",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "2070",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "1904",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1778",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "nif_proveedor",
+        "proveedor",
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1759",
+      "motivos": [
+        "descuento_neto"
+      ],
+      "avisos_restantes": [
+        "iva_desglose",
+        "lineas",
+        "retencion"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1718",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "nif_proveedor"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1717",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "1701",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "1695",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1694",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1692",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "1645",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "1641",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas",
+        "otros_cargos",
+        "nif_receptor"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1639",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1524",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1521",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "1520",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "1427",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "1426",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas",
+        "descuadre_total",
+        "otros_cargos"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "978",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "977",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "961",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "951",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "950",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "949",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "948",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "947",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    },
+    {
+      "id": "946",
+      "motivos": [
+        "prefijo_ES"
+      ],
+      "avisos_restantes": [
+        "lineas"
+      ],
+      "original_disponible": true
+    },
+    {
+      "id": "824",
+      "motivos": [
+        "decorativo"
+      ],
+      "avisos_restantes": [],
+      "original_disponible": true
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { comprobarCobertura } from './contraste-detalle.js';
 import { vencimientoManualValido } from './vencimiento.js';
 import { numeroDocumentoAusente } from './numero-documento.js';
 import { avisosEvidenciaCabecera } from './evidencia-cabecera.js';
@@ -11,7 +12,7 @@ import { revisarCoherencia } from './coherencia.js';
 export const CAMPOS_REVISION = ['tipo','proveedor','nif_proveedor','fecha','vencimiento','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'];
 const numero = v => v === null || v === undefined || v === '' ? null : Number(v);
 export function controlesLectura(d = {}) {
-  const avisos = [...avisosAbono(d), ...avisosTipoDocumento(d), ...avisosEvidenciaCabecera(d)];
+  const avisos = [...comprobarCobertura(d), ...avisosAbono(d), ...avisosTipoDocumento(d), ...avisosEvidenciaCabecera(d)];
   const aviso = (campo,texto) => avisos.push({campo,texto});
   if (!String(d.proveedor || '').trim()) aviso('proveedor','No se ha identificado al proveedor.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.fecha || '') || !Number.isFinite(Date.parse(d.fecha)) || new Date(d.fecha).toISOString().slice(0,10) !== d.fecha) aviso('fecha','Falta una fecha de emisión válida.');
@@ -63,7 +64,7 @@ export function compararLecturas(a,b) {
     const x=a[campo], y=b[campo];
     const numerico=['base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'].includes(campo);
     const normal=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-    const iguales=numerico ? (numero(x)===null && numero(y)===null) || (numero(x)!==null && numero(y)!==null && Math.abs(numero(x)-numero(y))<=0.02) : normal(x)===normal(y);
+    const iguales=numerico ? (numero(x)===null && numero(y)===null) || (numero(x)!==null && numero(y)!==null && Math.abs(numero(x)-numero(y))<=0.02) : (['nif_proveedor','nif_receptor'].includes(campo) ? normNif(x)===normNif(y) : normal(x)===normal(y));
     if(!iguales) diferentes.push({campo,texto:`Las dos lecturas no coinciden en ${campo.replaceAll('_',' ')}.`});
   }
   const desglose = d => (Array.isArray(d.iva_desglose) ? d.iva_desglose : [])

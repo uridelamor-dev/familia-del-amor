@@ -1,3 +1,4 @@
+import { compararDetalle } from './contraste-detalle.js';
 import {mismoNombreFiscal} from './identidad-documento.js';
 import { completarIva } from './iva-inferido.js';
 // Conciliación conservadora: no promedia ni construye una factura mezclando importes.
@@ -23,6 +24,13 @@ function varianteMinima(a,b) {
 export function prepararContraste(lecturas, fichas=[], nuestras=[], propios=[]) {
   const copias=structuredClone(lecturas);
   const cambios=[];
+  for(const d of copias)for(const campo of ['nif_proveedor','nif_receptor']) {
+    const literal=String(d[campo]||'').replace(/[\s.\-/]/g,'').toUpperCase();
+    if(literal.startsWith('ES') && normNif(literal)!==literal) {
+      cambios.push({campo,antes:d[campo],valor:normNif(literal),origen:'Prefijo de país ES; misma identidad fiscal'});
+      d[campo]=normNif(literal);
+    }
+  }
   for (const d of copias) { const cambio=completarIva(d); if(cambio) cambios.push(cambio); }
   // Solo fichas confirmadas por una persona y corroboradas por un NIF leído del original.
   // Un historial de OCR repetido no es prueba de identidad.
@@ -71,7 +79,7 @@ export function elegirLecturaContrastada(primera,segunda,tercera) {
       if(['ilegible','recortada'].includes(primera.calidad_imagen) || primera._lecturaIncompleta || (primera.campos_dudosos || []).some(c=>/linea|producto/i.test(c))) return null;
       const resultado={...structuredClone(candidata),lineas:structuredClone(primera.lineas || []),_pistasFecha:primera._pistasFecha};
       // La cabecera elegida no puede validar un detalle extraído contra otra base.
-      if(controlesLectura(resultado).length) return null;
+      if(controlesLectura(resultado).length || compararDetalle(resultado,tercera).length) return null;
       return resultado;
     }
   }

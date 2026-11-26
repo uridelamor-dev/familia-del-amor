@@ -64,3 +64,32 @@ test('decorativos verificados antiguos salen de la cola conservando el original 
  assert.equal(f.estado,'descartado');assert.equal(f.resultado.descartado,true);
  assert.deepEqual(f.original,archivo.buffer);assert.equal(llamadas,1);
 }));
+test('decorativo reconocido por lectura conserva original y no se vuelve a procesar',async t=>preparar(t,async db=>{
+ let llamadas=0;const a=cola(db,async()=>{llamadas++;return {descartado:true,motivo:'Adjunto corporativo sin información de compra'};});
+ await a.recibir(archivo);
+ const f=await db.get('SELECT * FROM facturas_recepciones');
+ assert.equal(f.estado,'descartado');assert.deepEqual(f.original,archivo.buffer);
+ await a.ejecutar(f.id);assert.equal(llamadas,1);
+}));
+test('recupera solo el lote afectado, de dos en dos y una sola vez, sin aprobar errores reales',async t=>preparar(t,async db=>{
+ const {crearRecuperacionValidacion}=await import('../../src/modules/facturas/recuperar-validacion.js');
+ const {RevisionDocumento}=await import('../../src/modules/facturas/validacion-lectura.js');
+ const datos={tipo:'factura',proveedor:'Proveedor',nif_proveedor:'ESB60599461',total:121};
+ const anterior={datos,avisos:[{campo:'nif_proveedor',texto:'Prefijo'}],contraste:{version:2,primera:datos,segunda:datos}};
+ for(const id of [3042,2982,2964,2941,3147])await db.run(`INSERT INTO facturas_recepciones(id,clave,hash,canal,nombre,mime,original,estado,resultado) VALUES (?,?,?,'Email','original.pdf','application/pdf',?,'revision',?::jsonb)`,[id,String(id),String(id),archivo.buffer,JSON.stringify(id===2941?{...anterior,aprobacion:{autor:'humano'}}:anterior)]);
+ const recuperar=crearRecuperacionValidacion({db,lock:async(_h,fn)=>fn()});
+ assert.equal(await recuperar(),2);
+ assert.equal((await db.all("SELECT id FROM facturas_recepciones WHERE estado='pendiente'")).length,2);
+ assert.equal(await recuperar(),1);assert.equal(await recuperar(),0);
+ assert.equal((await db.get('SELECT estado FROM facturas_recepciones WHERE id=3147')).estado,'revision');
+ assert.equal((await db.get('SELECT estado FROM facturas_recepciones WHERE id=2941')).estado,'revision');
+ let llamadas=0;
+ const q=cola(db,async()=>{llamadas++;throw new RevisionDocumento(datos,[{campo:'total',texto:'Descuadre real'}]);});
+ await assert.rejects(q.ejecutar(3042),e=>e.recibido);
+ const f=await db.get('SELECT * FROM facturas_recepciones WHERE id=3042');
+ assert.equal(f.estado,'revision');assert.deepEqual(f.original,archivo.buffer);
+ assert.deepEqual(f.resultado.revalidacion.anterior,anterior);
+ assert.equal(f.resultado.avisos[0].campo,'total');
+ const reinicio=crearRecuperacionValidacion({db,lock:async(_h,fn)=>fn()});
+ assert.equal(await reinicio(),0);assert.equal(llamadas,1);
+}));

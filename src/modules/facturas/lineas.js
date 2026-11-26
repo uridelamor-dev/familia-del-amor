@@ -59,6 +59,19 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
   let bruto = n(cruda.importe);
   let neto = n(cruda.importe_neto);
 
+  // Algunas lecturas ponen el total ya descontado en importe y dejan importe_neto
+  // vacío. Reconocerlo solo si cantidad × tarifa × descuento lo demuestra; nunca
+  // aplicar dos veces el descuento ni corregir una diferencia inexplicada.
+  if (neto == null && bruto != null && cantidad != null && precioBruto != null
+    && dto != null && dto > 0 && dto <= 100) {
+    const calculado = red(cantidad * precioBruto);
+    if (Math.abs(calculado - bruto) > 0.02
+      && Math.abs(red(calculado * (1 - dto / 100)) - bruto) <= 0.01) {
+      neto = bruto;
+      bruto = calculado;
+    }
+  }
+
   // Si falta el importe pero están cantidad y precio, se deriva: es aritmética, no adivinar.
   if (bruto == null && cantidad != null && precioBruto != null) bruto = red(cantidad * precioBruto);
 

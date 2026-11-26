@@ -31,7 +31,7 @@ function harness(){
 test('recupera fuera del día previsto, persiste y no repite al reiniciar',async()=>{
  const h=harness();await crearMensuales(h.opts).tick();assert.equal(h.sent.length,0);
  h.connect();await crearMensuales(h.opts).tick();await crearMensuales(h.opts).tick();await crearMensuales(h.opts).tick();
- assert.equal(h.sent.length,3);assert.ok(h.sent.every(([tel])=>tel==='622149946'));
+ assert.equal(h.sent.length,2);assert.ok(h.sent.every(([tel])=>tel==='622149946'));
 });
 test('si envío es incierto no reenvía y sigue con el otro informe',async()=>{
  const h=harness();h.connect();h.fail();await crearMensuales(h.opts).tick();await crearMensuales(h.opts).tick();await crearMensuales(h.opts).tick();
@@ -41,14 +41,14 @@ test('si envío es incierto no reenvía y sigue con el otro informe',async()=>{
 test('general y cada local con comparaciones, sin comparar un grupo parcial',()=>{
  const row={local:'Lloret',disponible:true,ventas:45000,tickets:2250};
  const msgs=mensajesVentas('2026-10',{actual:[row],anterior:[{...row,ventas:42000}],anual:[{...row,ventas:40000}]});
- assert.equal(msgs.length,2);assert.match(msgs[1],/7,1 %/);assert.match(msgs[1],/12,5 %/);
+ assert.equal(msgs.length,1);assert.match(msgs[0],/7,1 %/);assert.match(msgs[0],/12,5 %/);assert.match(msgs[0],/Lloret/);
  const parcial=mensajesVentas('2026-10',{actual:[row],anterior:[{...row,disponible:false}],anual:[]});
  assert.match(parcial[0],/septiembre de 2026: No disponible/);
  const compras=mensajesCompras('2026-10',{rows:[{local:'Lloret',documentos:1,total:121,base:100,iva:21},{local:'Empresa · SL',documentos:1,total:50,base:50,iva:0}]});
  assert.equal(compras.length,2);assert.match(compras[0],/Empresa · SL/);assert.doesNotMatch(compras[1],/171,00/);
 });
 test('cola de varios mensajes reanuda desde el siguiente sin regenerar ni repetir',async()=>{
- const h=harness();h.connect();h.opts.ventas=async()=>[{local:'Lloret',disponible:true,ventas:100,tickets:5}];
+ const h=harness();h.connect();h.state.set('informe_ventas_2026-10_v1',JSON.stringify({estado:'preparada',mensajes:['resumen anterior','VENTAS · LLORET'],enviados:0}));
  await crearMensuales(h.opts).tick();
  h.opts.ventas=async()=>{throw Error('no regenerar');};
  await crearMensuales(h.opts).tick();
@@ -107,11 +107,11 @@ test('padre recibe solo ventas desde diciembre, con mismo contenido y progreso i
  for(let i=0;i<8;i++)await crearMensuales(h.opts).tick();
  const uriel=h.sent.filter(([t])=>t==='622149946').map(([,m])=>m);
  const padre=h.sent.filter(([t])=>t==='34633492120').map(([,m])=>m);
- assert.equal(uriel.length,2);assert.deepEqual(padre,uriel);
+ assert.equal(uriel.length,1);assert.deepEqual(padre,uriel);
  assert.equal([...h.state.keys()].some(k=>k.includes('2026-10_v1_')),false);
  h.opts.now=()=>new Date('2026-12-10T10:00Z');
  for(let i=0;i<4;i++)await crearMensuales(h.opts).tick();
- assert.equal(h.sent.filter(([t])=>t==='34633492120').length,2);
+ assert.equal(h.sent.filter(([t])=>t==='34633492120').length,1);
  assert.match(h.sent.at(-1)[1],/COMPRAS/);assert.equal(h.sent.at(-1)[0],'622149946');
 });
 test('envío incierto al padre no repite la entrega ni modifica el ciclo de Uriel',async()=>{
@@ -124,4 +124,26 @@ test('envío incierto al padre no repite la entrega ni modifica el ciclo de Urie
  assert.equal(h.sent.length,1);assert.equal(h.sent[0][0],'34633492120');
  assert.equal(h.state.get(k),original);
  assert.equal(JSON.parse(h.state.get(k+'_34633492120')).estado,'incierta');
+});
+
+
+test('resumen único conserva importes, variaciones y actividad por local sin duplicar bloques',()=>{
+ const a={local:'Lloret',disponible:true,ventas:1200,tickets:60};
+ const b={local:'Girona',disponible:true,ventas:800,tickets:20};
+ const [m]=mensajesVentas('2026-11',{actual:[a,b],anterior:[{...a,ventas:1000},{...b,ventas:1000}],anual:[{...a,ventas:600},{...b,ventas:0}]});
+ assert.match(m,/TOTAL: 2000,00/);assert.match(m,/80 tickets · Media: 25,00/);
+ assert.match(m,/Lloret · 1200,00/);assert.match(m,/Girona · 800,00/);
+ assert.match(m,/60 tickets · Media: 20,00/);assert.match(m,/20 tickets · Media: 40,00/);
+ assert.match(m,/octubre de 2026: \+200,00 € · \+20 %/);
+ assert.match(m,/octubre de 2026: −200,00 € · -20 %/);
+ assert.match(m,/noviembre de 2025: \+800,00 € \(periodo anterior: 0 €\)/);
+ assert.doesNotMatch(m,/Infinity|NaN/);assert.equal(m.match(/https:\/\//g).length,1);
+ assert.equal(m.match(/📍/g).length,2);assert.match(m,/Importes con IVA/);
+});
+test('no compara total con un ámbito diferente aunque los datos estén disponibles',()=>{
+ const a={local:'Lloret',disponible:true,ventas:1200,tickets:60};
+ const b={local:'Girona',disponible:true,ventas:800,tickets:20};
+ const [m]=mensajesVentas('2026-11',{actual:[a,b],anterior:[a],anual:[]});
+ assert.match(m.split('📍')[0],/octubre de 2026: No disponible/);
+ assert.match(m.split('📍')[1],/octubre de 2026: \+0,00 € · \+0 %/);
 });

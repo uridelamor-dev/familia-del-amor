@@ -11,7 +11,12 @@
 // proveedor. Eso no es una heurística: es un hecho.
 
 /** Quita puntos, guiones y espacios, y sube a mayúsculas. */
-export const normNif = (s) => String(s || "").replace(/[\s.\-/]/g, "").toUpperCase();
+export const normNif = (s) => {
+  const n = String(s || "").replace(/[\s.\-/]/g, "").toUpperCase();
+  // ES es el prefijo de país, no parte de la identidad española. No quitar
+  // prefijos extranjeros ni aceptar por ello un dígito de control incorrecto.
+  return /^ES(?:[0-9]{8}[A-Z]|[XYZ][0-9]{7}[A-Z]|[ABCDEFGHJNPQRSUVW][0-9]{7}[0-9A-J])$/.test(n) ? n.slice(2) : n;
+};
 
 // La barra y el guion separan igual que un espacio: «P.AYLLON/CAN MATEU» son tres palabras, no
 // una. Sin esto, un nombre nuestro pegado con barra a otra cosa no se reconocía.

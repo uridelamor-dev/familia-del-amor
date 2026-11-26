@@ -26,10 +26,10 @@ export function desplazarMes(mes,n) {
  const [y,m]=mes.split('-').map(Number);return new Date(Date.UTC(y,m-1+n,1)).toISOString().slice(0,7);
 }
 function comparar(actual,anterior,label) {
- if(actual==null || anterior==null)return `• ${label}: No disponible`;
+ if(actual==null || anterior==null)return `• Frente a ${label}: No disponible`;
  const diff=actual-anterior;
  const pct=anterior>0?` · ${diff>=0?'+':''}${(diff/anterior*100).toLocaleString('es-ES',{maximumFractionDigits:1})} %`:'';
- return `• ${label}: ${diff>=0?'+':'−'}${euros(Math.abs(diff))}${pct}${anterior===0?' (periodo anterior: 0 €)':''}`;
+ return `• Frente a ${label}: ${diff>=0?'+':'−'}${euros(Math.abs(diff))}${pct}${anterior===0?' (periodo anterior: 0 €)':''}`;
 }
 function agruparVentas(rows) {
  return agruparPorCentro(rows.map(r=>({...r,ventas:r.disponible?r.ventas:0,tickets:r.disponible?r.tickets:0,faltan:r.disponible?0:1})),['ventas','tickets','faltan']);
@@ -43,10 +43,14 @@ export function mensajesVentas(mes,data) {
  const comparaciones=local=>{
   const valor=(lista)=>local?(lista.find(r=>r.local===local && !r.faltan)?.ventas ?? null):(mismoAmbito(lista)?totalCompleto(lista):null);
   const actual=valor(actuales);
-  return `📈 *Comparación*\n${comparar(actual,valor(anterior),titulo(desplazarMes(mes,-1)))}\n${comparar(actual,valor(anual),titulo(desplazarMes(mes,-12)))}`;
+  return `${comparar(actual,valor(anterior),titulo(desplazarMes(mes,-1)))}\n${comparar(actual,valor(anual),titulo(desplazarMes(mes,-12)))}`;
  };
- const general=mensajeVentas(mes,rows).replace('\n\nImportes de ventas',`\n\n${comparaciones()}\n\nImportes de ventas`);
- return [general,...actuales.map(r=>`📍 *VENTAS · ${r.local.toLocaleUpperCase('es-ES')}*\n${titulo(mes)}\n\n💶 *Total vendido: ${r.faltan?'No disponible · datos incompletos':euros(r.ventas)}*\n\n${comparaciones(r.local)}\n\n🧾 *Actividad*\n${r.faltan?'Datos incompletos':`${r.tickets} tickets\nTicket medio: ${r.tickets?euros(r.ventas/r.tickets):'No disponible'}`}\n\nVentas registradas en el TPV. No representan el beneficio.`)];
+ const completo=actuales.length>0&&actuales.every(r=>!r.faltan);
+ const disponibles=actuales.filter(r=>!r.faltan);
+ const total=suma(disponibles,'ventas'),tickets=suma(disponibles,'tickets');
+ const actividad=r=>`${r.tickets} tickets · Media: ${r.tickets?euros(r.ventas/r.tickets):'No disponible'}`;
+ const bloques=actuales.map(r=>`📍 *${r.local} · ${r.faltan?'Datos incompletos':euros(r.ventas)}*\n${comparaciones(r.local)}${r.faltan?'':`\n${actividad(r)}`}`);
+ return [`💶 *FACTURACIÓN · ${titulo(mes).toLocaleUpperCase('es-ES')}*\nImportes con IVA.\n\n*${completo?'TOTAL':'SUBTOTAL DISPONIBLE'}: ${disponibles.length?euros(total):'Sin datos'}*\n${actividad({ventas:total,tickets})}\n${comparaciones()}\n\n${bloques.join('\n\n')}\n\n${completo?'':'⚠️ Faltan locales: el subtotal no representa todo el grupo.\n'}Ventas del TPV, no beneficio.\nDetalle: https://familiadelamor.org/panel/#dashboard`];
 }
 
 // Desde octubre de 2026. Ventas el día 1 y compras el 10 del siguiente; recuperar también

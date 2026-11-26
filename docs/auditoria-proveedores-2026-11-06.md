@@ -2148,3 +2148,15 @@ Foto1G69-x4N6fZ95SCf2I5_ovH2scF8oeCDQ completaampliada:03nov,F46078986,Lloret,8p
 - Drive verificado nombre `2026-10-28 · Factura · BOTIGA DE REGAL · 2026036686 · BLANES · ID-418.jpg`, carpeta actual `14Qcz_SyM8s9nU5k39xvCflXlkyogeg6V`, ya contrastada Contabilidad/Del Amor Uriel SLU/2026/10 · Octubre/BLANES. Sin mover ni renombrar innecesariamente.
 - Confirmación completa guardada y distintivo ✓ Revisado al100% observado. Evidencia `/tmp/revision-botiga-418.jpg`.
 - Cierre acumulado285/535 (53,27%), quedan250 según último censo535 observado. Las mejoras de código siguen en local, no publicadas.
+
+### 18/11 — comprobación posterior a publicación y cierre 286
+
+- Usuario confirma publicación de f7bcaf3. Compras recargada: listado y distintivos disponibles; guardado, reapertura y confirmación de revisión probados en producción. Esto no verifica por sí solo todas las ramas nuevas ni revalida el histórico en bloque.
+- Botiga de Regal #417, factura 2026036558 del 28/10/2026. Original Drive `1Wcnyq54pUChv2Xj9-5tH78KBiBkg36wp`, imagen completa ampliada: emisor X2667376-C, receptor Del Amor Uriel SLU B70799135. Local Blanes conservado; Tordera es domicilio fiscal.
+- Original: PREBEN 10 TIRAS A 1×2,75=2,75; MATA MOSQUITO 2W 2×17,95=35,90; total38,65. Corregida segunda cantidad1→2 y precio vacío→17,95; depurados textos de productos, concepto y tipo Ticket→Factura. El paquete de diez tiras sigue siendo un artículo, no diez unidades.
+- Activado IVA incluido en líneas. Conservados base31,942, cuota21%6,708 y total38,65 impresos. Vencimiento15/11→28/10 por condición confirmada de pago al comprar; no equivale a conciliación bancaria.
+- Guardado y reapertura verifican campos y detalle. Persisten etiquetas históricas «dudosa» en líneas sin unidad explícita; cantidades y precios cotejados contra original, no inventada unidad. Número buscado devuelve un registro.
+- Drive seguía mostrando Ticket tras cambiar tipo. Renombrado manualmente y verificado: `2026-10-28 · Factura · BOTIGA DE REGAL · 2026036558 · BLANES · ID-417.jpg`. Carpeta actual verificada `14Qcz_SyM8s9nU5k39xvCflXlkyogeg6V`: Contabilidad/Del Amor Uriel SLU/2026/10 · Octubre/BLANES. No requirió movimiento.
+- Siete comprobaciones de revisión confirmadas, nombre y ruta registrados. Distintivo «✓ Revisado al 100 %» observado en fila tras guardar. Evidencia `/tmp/revision-botiga-417.jpg`.
+- Cierres acumulados286/535 (53,46%), quedan249 respecto al último censo535; no se hizo nuevo censo completo en esta comprobación.
+- Mejoras detectadas para seguimiento: OCR no debe mezclar precio/IVA con descripción; contrastar cantidad×precio aunque total cuadre; actualizar nombre Drive al cambiar tipo; aclarar por qué persisten etiquetas de línea dudosa tras corrección contrastada.

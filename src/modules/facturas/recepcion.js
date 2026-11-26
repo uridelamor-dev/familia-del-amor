@@ -1,3 +1,4 @@
+import { crearRecuperacionValidacion } from './recuperar-validacion.js';
 import { nombreArchivo } from './archivo-drive.js';
 import { datosRevision, controlesLectura } from './validacion-lectura.js';
 import { ADJUNTOS_DECORATIVOS_VERIFICADOS } from './adjuntos-verificados.js';
@@ -32,7 +33,7 @@ export function errorRecibido(id) {
 
 // El original se confirma en PostgreSQL antes de llamar a Google o a la IA.
 // lock debe serializar por hash entre procesos; no mantener transacciones abiertas durante la IA.
-export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar, validarRevision = controlesLectura, ahora = () => new Date()}) {
+export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar, recuperarPendientes = false, validarRevision = controlesLectura, ahora = () => new Date()}) {
   async function ejecutar(id) {
     const inicial = await db.get('SELECT hash FROM facturas_recepciones WHERE id = ?', [id]);
     if (!inicial) throw new Error('Recepción no encontrada');
@@ -63,10 +64,11 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
         const nombre=nombreRecepcion(f);
         await db.run('UPDATE facturas_recepciones SET nombre=? WHERE id=?',[nombre,id]);
         const r = await conPlazoFactura(() => procesar({buffer:f.original,mimeType:f.mime,filename:f.nombre,local:f.local,canal:f.canal,origen:f.canal,datosAprobados:f.resultado?.aprobacion ? f.resultado.datos : null}));
-        await db.run(`UPDATE facturas_recepciones SET estado=?, resultado=?::jsonb, nombre=?, original=CASE WHEN contexto->>'grupo' IS NOT NULL THEN original ELSE NULL END, error=NULL, actualizado=NOW() WHERE id=?`, [r?.descartado ? 'descartado' : 'registrado',JSON.stringify({...r, revisionPrevia:f.resultado?.aprobacion ? f.resultado : undefined}),nombreRecepcion({...f,resultado:r}),id]);
+        await db.run(`UPDATE facturas_recepciones SET estado=?, resultado=?::jsonb, nombre=?, original=CASE WHEN ? OR contexto->>'grupo' IS NOT NULL THEN original ELSE NULL END, error=NULL, actualizado=NOW() WHERE id=?`, [r?.descartado ? 'descartado' : 'registrado',JSON.stringify({...r, revalidacion:f.resultado?.revalidacion, revisionPrevia:f.resultado?.aprobacion ? f.resultado : undefined}),nombreRecepcion({...f,resultado:r}),r?.descartado === true,id]);
         return r;
       } catch(e) {
         if(e.revisionDocumento) {
+          if(f.resultado?.revalidacion)e.resultado.revalidacion=f.resultado.revalidacion;
           await db.run("UPDATE facturas_recepciones SET estado='revision',resultado=?::jsonb,nombre=?,error=?,actualizado=NOW() WHERE id=?",[JSON.stringify(e.resultado),nombreRecepcion({...f,resultado:e.resultado}),'Comprueba los campos señalados. Original guardado; importes sin registrar.',id]);
           const recibido=errorRecibido(id); recibido.message=e.message; throw recibido;
         }
@@ -103,11 +105,13 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
     }
     return ejecutar(f.id);
   }
+  const recuperarValidaciones = crearRecuperacionValidacion({db,lock,ahora});
   let trabajando = false;
   async function reintentar() {
     if (trabajando) return;
     trabajando = true;
     try {
+      if(recuperarPendientes) await recuperarValidaciones();
       // Recupera también los decorativos antiguos que agotaron los intentos.
       const decorativos = await db.all("SELECT id FROM facturas_recepciones WHERE estado IN ('pendiente','leyendo','error') AND hash = ANY(?::text[])",[[...ADJUNTOS_DECORATIVOS_VERIFICADOS]]);
       for (const f of decorativos) { try { await ejecutar(f.id); } catch(e) { if (!e.recibido) console.error('[Recepción] no se pudo apartar el adjunto verificado',f.id); } }

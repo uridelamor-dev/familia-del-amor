@@ -469,6 +469,7 @@ const paginasFacturas=crearPaginas({db:{get:dbGet,all:dbAll,run:dbRun},transacci
 });
 // Una sola lectura externa a la vez; el original ya está guardado si el trabajador está ocupado.
 const recepcionFacturas = crearRecepcion({
+  recuperarPendientes: isProduction(),
   validarRevision: datos=>comprobarRevisionHumana(datos,{dbAll}),
   antesProcesar: f=>paginasFacturas.antes(f),
   db: {get:dbGet,run:dbRun,all:dbAll},
