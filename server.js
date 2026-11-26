@@ -4444,6 +4444,20 @@ app.get("/api/google/status", requireAuth(["direccion", "encargado", "contabilid
   res.json({ ...status, mensaje: mensajeEstadoReseñas(status) });
 });
 
+app.get("/api/publico/resenas/locales", async (_req, res) => {
+  try {
+    const fichas = JSON.parse(await getConfig("places_ids") || "[]");
+    const data = LOCALES_RESERVA.flatMap(local => {
+      const ficha = fichas.find(x => x?.name === local && x.placeId);
+      const url = enlaceResena(ficha?.placeId);
+      return url ? [{ local, url }] : [];
+    });
+    res.json({ ok: true, data });
+  } catch {
+    res.status(503).json({ ok: false, data: [] });
+  }
+});
+
 app.get("/api/reviews", async (req, res) => {
   const limit  = Math.min(parseInt(req.query.limit)  || 20, 50);
   const rating = parseInt(req.query.rating) || 4;

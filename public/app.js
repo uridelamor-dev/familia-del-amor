@@ -1144,55 +1144,6 @@ if (edadSelect) {
   }
 }
 
-// Las reseñas vienen de Google, o sea, de texto que escribe cualquiera. Se escapa antes de
-// pintarlo: es la portada del sitio y no hay motivo para meter HTML ajeno tal cual.
-const escapeHtml = (s) => String(s == null ? "" : s)
-  .replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-
-async function loadReviews() {
-  const container = document.getElementById("resenasList");
-  if (!container) return;
-  try {
-    const res = await fetch("/api/reviews?limit=6&rating=4");
-    const data = await res.json();
-    if (!data.ok || !data.data.length) return;
-
-    const stars = (n) => "⭐".repeat(Math.min(n, 5));
-    const REVIEWS_KEY = "reviews_shown_idx";
-    const REVIEWS_DATE_KEY = "reviews_shown_date";
-    const today = new Date().toDateString();
-    const lastDate = localStorage.getItem(REVIEWS_DATE_KEY);
-    let startIdx = parseInt(localStorage.getItem(REVIEWS_KEY) || "0");
-    if (lastDate !== today) {
-      startIdx = (startIdx + 3) % data.data.length;
-      localStorage.setItem(REVIEWS_KEY, startIdx);
-      localStorage.setItem(REVIEWS_DATE_KEY, today);
-    }
-
-    const visible = [];
-    for (let i = 0; i < 3 && i < data.data.length; i++) {
-      visible.push(data.data[(startIdx + i) % data.data.length]);
-    }
-
-    // Una reseña sin texto o sin autor NO se pinta: esto es la web pública y escribir
-    // «"undefined" — UNDEFINED» debajo de las estrellas es peor que no enseñar nada.
-    // Si no queda ninguna válida, se dejan las que ya estaban escritas en el HTML.
-    const validas = visible.filter((r) => r && String(r.text || "").trim() && String(r.author || "").trim());
-    if (!validas.length) return;
-
-    container.innerHTML = validas.map((r) => `
-      <div class="card resena">
-        <div style="font-size:0.85rem;margin-bottom:0.4rem">${stars(r.rating)}</div>
-        <p>"${escapeHtml(r.text)}"</p>
-        <strong>— ${escapeHtml(r.author)}${r.location_name ? `, ${escapeHtml(r.location_name)}` : ""}</strong>
-      </div>`).join("");
-  } catch {
-    // mantiene las reseñas hardcodeadas si falla
-  }
-}
-
-loadReviews();
-
 const hrForm = document.getElementById("hrForm");
 const hrMsg = document.getElementById("hrMsg");
 if (hrForm) {

@@ -82,12 +82,19 @@
   .place-actions{column-gap:8px;margin-top:1px}
   .place-actions a{font-size:11px}
 }
-#resenas{background:transparent;padding:36px 24px;max-width:1120px;margin:auto;border-top:1px solid #ded6cb}#resenas .section-head{margin-bottom:22px}#resenas .section-head h2{font-size:30px}#resenas .section-head p{font-size:12px;color:#71665e}.resenas-grid{display:flex;gap:24px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:14px}.resenas-grid .resena{flex:1 0 28%;min-width:230px;box-shadow:none;border:0;border-radius:0;background:transparent;padding:0 18px 0 0;scroll-snap-align:start}.resena p{font-family:Georgia,serif;font-size:19px;font-style:normal;line-height:1.5;color:#493629}.resena strong{font:500 10px Inter,sans-serif;letter-spacing:.05em;margin-top:12px;color:#71665e}
-@media(max-width:600px){#resenas{padding:28px 20px}.resenas-grid .resena{flex:0 0 85%;min-width:0}}
-#resenas .section-head h2{position:static;writing-mode:horizontal-tb;transform:none;text-align:left;font-style:normal;font-size:29px;margin:0 0 10px}#resenas .section-head{text-align:left}#resenas .resenas-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;gap:26px;padding:0}#resenas .resena{min-width:0;padding:0;display:block}#resenas .resena p{font:400 16px/1.7 Inter,Arial,sans-serif;color:#382a24;white-space:normal;overflow-wrap:anywhere}#resenas .resena strong{display:block;font:500 12px/1.5 Inter,sans-serif;letter-spacing:0;text-transform:none;margin-top:12px;color:#6b5a4c}
-@media(max-width:600px){#resenas .resenas-grid{grid-template-columns:1fr;gap:22px}#resenas .resena{padding-bottom:22px;border-bottom:1px solid #ded6cb}#resenas .resena:last-child{border:0;padding-bottom:0}}
-#resenas{border-top:0;padding-top:28px;padding-bottom:22px}#resenas .resenas-grid{gap:16px}#resenas .resena,#resenas .resena:last-child{background:#fffdf8;border:1px solid #e4dcd1;border-radius:16px;padding:22px;box-shadow:0 3px 14px #49362904}#resenas .resena p{font-size:15px;line-height:1.75}#resenas .resena strong{padding-top:14px;margin-top:16px;border-top:1px solid #eee6dc;color:#766052}#galeria{margin-bottom:0}
-@media(max-width:600px){#resenas .resena,#resenas .resena:last-child{padding:20px}#resenas .resenas-grid{gap:14px}}
+#galeria{margin-bottom:0}
+.review-invite{text-align:center;margin:0 auto;padding:16px 20px 44px}
+.review-dialog{box-sizing:border-box;width:min(440px,calc(100% - 28px));max-height:calc(100dvh - 28px);padding:24px;border:1px solid #e4d8cb;border-radius:18px;background:#fffaf3;color:#382a24}
+.review-dialog::backdrop{background:#21171199}
+.review-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.review-dialog h2{margin:0;font-size:26px;font-weight:400}
+.review-dialog-close{min-width:44px;min-height:44px;border:0;background:transparent;color:inherit;font-size:24px;cursor:pointer}
+.review-venues{display:grid}
+.review-venue{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:48px;border-top:1px solid #e4d8cb;color:#854b31;text-decoration:none}
+.review-venue:hover{text-decoration:underline;text-underline-offset:3px}
+.review-venue[aria-disabled]{color:#71665e}
+.review-venue[aria-disabled]:hover{text-decoration:none}
+.review-venue small{color:#71665e;text-align:right}
 </style></head>
   <body>
 
@@ -149,27 +156,18 @@
       </section>
 
 
-      <!-- RESEÑAS -->
-      <section id="resenas" class="block">
-        <div class="section-head">
-          <h2 data-i18n="reviews_title" data-content-key="reviews_title">Reseñas</h2>
-          <p >Opiniones de quienes nos visitan</p>
+      <div class="review-invite">
+        <button id="reviewOpen" type="button" class="btn" aria-haspopup="dialog" aria-controls="reviewDialog">Déjanos una reseña</button>
+      </div>
+      <dialog id="reviewDialog" class="review-dialog" aria-labelledby="reviewHeading">
+        <div class="review-dialog-head">
+          <h2 id="reviewHeading">Déjanos una reseña</h2>
+          <form method="dialog"><button type="submit" class="review-dialog-close" aria-label="Cerrar">×</button></form>
         </div>
-        <div class="cards resenas-grid" id="resenasList">
-          <div class="card resena">
-            <p>"Un sitio increíble. La comida estupenda y el trato inmejorable. Volveremos sin duda."</p>
-            <strong>— María G., Google</strong>
-          </div>
-          <div class="card resena">
-            <p>"El mejor local de tapas de Blanes. Ambiente familiar y precios muy razonables."</p>
-            <strong>— Jordi P., Google</strong>
-          </div>
-          <div class="card resena">
-            <p>"Reservamos para una celebración y todo perfecto. El equipo muy atento y profesional."</p>
-            <strong>— Laura M., Google</strong>
-          </div>
-        </div>
-      </section>
+        <p>Elige el local que visitaste.</p>
+        <p id="reviewStatus" role="status"></p>
+        <div id="reviewVenues" class="review-venues"></div>
+      </dialog>
 
       <!-- RESERVAS -->
       <dialog id="reservaDialog" class="reserva-dialog" aria-labelledby="reservaDialogTitle">
@@ -309,6 +307,7 @@
     <script src="/js/content-preview.js"></script>
     <script src="/reservas-modal.js?v=local-20261126"></script>
     <script src="app.js?v=landing-approved-20261126"></script>
+    <script src="/js/resenas-locales.js"></script>
       <script src="/js/consentimiento.js"></script>
     <script src="/js/meta.js"></script>
   <script src="/calendar.js"></script>
