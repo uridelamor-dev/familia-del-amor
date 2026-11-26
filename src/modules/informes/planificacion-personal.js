@@ -39,25 +39,24 @@ export async function leerPersonal(referencia,{configs,leer,respaldo=async()=>nu
     }
    }
   }
-  resultado.push({local,ventas:faltan.length?null:ventas,base:faltan.length?null:Math.round(base*100)/100,faltan:[...new Set(faltan)],sinBase});
+  resultado.push({local,ventas:faltan.length?null:ventas,base:faltan.length?null:Math.round(ventas/1.10*100)/100,faltan:[...new Set(faltan)],sinBase});
  }
  return resultado;
 }
-const nota='Referencia histórica, no previsión garantizada. El 35 % incluye salarios brutos y Seguridad Social de empresa. Equivalencias a 2.200 €/mes por jornada completa: orientativas, sin redondear al alza; ajustar turnos, descansos, reservas y días de apertura.';
-function detalle(r){
- if(r.base==null)return `${r.ventas==null?'Ventas: datos pendientes':`Ventas con IVA: ${euros(r.ventas)}`}\n⚠️ ${r.faltan.length?'No se pudo obtener el histórico de: '+r.faltan.join(', '):'Ágora no facilita la base sin IVA en este informe'}. Presupuesto y plantilla pendientes; no se consideran cero.`;
- const presupuesto=Math.round(Math.max(0,r.base)*.35*100)/100;
- return `💶 Ventas con IVA: *${euros(r.ventas)}*\nBase sin IVA: *${euros(r.base)}*\nIVA: *${euros(Math.round((r.ventas-r.base)*100)/100)}*${r.sinBase?"\nDesglose calculado al 10 %: total ÷ 1,10.":""}\n👥 Presupuesto de personal (35 %): *${euros(presupuesto)}*\nEquivale a *${(presupuesto/2200).toLocaleString('es-ES',{maximumFractionDigits:2})} jornadas completas* durante el mes.`;
-}
+const redondear=n=>Math.round((n+Number.EPSILON)*100)/100;
+const nombres=['Blanes','Lloret','Girona','Can Mateu','La Tapa Ibérica'];
 export function mensajesPersonal(ciclo,rows){
- if(rows.length!==5||!LOCALES_PERSONAL.every(l=>rows.some(r=>r.local===l)))throw Error('Faltan locales en el informe');
- const cabecera=`📅 *PLANIFICACIÓN DE PERSONAL · ${titulo(ciclo.objetivo).toLocaleUpperCase('es-ES')}*\nReferencia: ventas de ${titulo(ciclo.referencia)} en Ágora.`;
- const mensajes=rows.map(r=>`${cabecera}\n📍 *${r.local}*\n\n${detalle(r)}\n\n${nota}`);
- const completas=rows.every(r=>r.base!=null);
- const total=rows.reduce((s,r)=>s+(r.base??0),0);
- const ventas=rows.reduce((s,r)=>s+(r.ventas??0),0);
- mensajes.push(`${cabecera}\n🏘️ *RESUMEN GENERAL · 5 LOCALES*\n\n${rows.map(r=>`📍 *${r.local}*\n${detalle(r)}`).join('\n\n')}\n\n${completas?'*TOTAL DEL GRUPO*\n'+detalle({base:total,ventas,sinBase:rows.some(r=>r.sinBase)}):'⚠️ Total del grupo pendiente: hay locales sin datos suficientes.'}\n\n${nota}`);
- return mensajes;
+ if(rows.length!==5||!LOCALES_PERSONAL.every(l=>rows.filter(r=>r.local===l).length===1)||rows.some(r=>!valido(r.ventas)||r.faltan?.length))throw Error('Faltan ventas completas en el informe');
+ // Criterio acordado: total mensual / 1,10, redondeo por local y suma de importes visibles.
+ const datos=LOCALES_PERSONAL.map((local,i)=>{
+  const base=redondear(Number(rows.find(r=>r.local===local).ventas)/1.10);
+  const presupuesto=redondear(Math.max(0,base)*.35);
+  const personas=(presupuesto/2200).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return {base,presupuesto,texto:`📍 *${nombres[i]}*\nFacturación sin IVA: *${euros(base)}*\nPersonal: *${euros(presupuesto)} (${personas} personas)*`};
+ });
+ const base=redondear(datos.reduce((s,r)=>s+r.base,0));
+ const personal=redondear(datos.reduce((s,r)=>s+r.presupuesto,0));
+ return [`📅 *PLANIFICACIÓN · ${titulo(ciclo.objetivo).toLocaleUpperCase('es-ES')}*\n\nReferencia: facturación de ${titulo(ciclo.referencia)}, sin IVA (total ÷ 1,10).\nPresupuesto de personal: *35 %*, incluyendo salarios y Seguridad Social.\n\n${datos.map(r=>r.texto).join('\n\n')}\n\n*TOTAL*\nFacturación sin IVA: *${euros(base)}*\nPersonal: *${euros(personal)}*\n\nPersonas equivalentes a jornada completa, con *2.200 €/mes de coste de empresa*. Referencia orientativa para organizar la plantilla.`];
 }
 // Estado persistente por ciclo y mensaje; nunca repetir una entrega de resultado incierto.
 export function crearPlanificacionPersonal({pool,enabled,conectado,preparar,enviar,now=()=>new Date()}){
@@ -77,7 +76,7 @@ export function crearPlanificacionPersonal({pool,enabled,conectado,preparar,envi
    if(!state.mensajes){
     try{
      const rows=await preparar(ciclo.referencia);
-     if(rows.length!==5||!LOCALES_PERSONAL.every(l=>rows.filter(r=>r.local===l).length===1)||rows.some(r=>!valido(r.base)||!valido(r.ventas)||r.faltan?.length)){
+     if(rows.length!==5||!LOCALES_PERSONAL.every(l=>rows.filter(r=>r.local===l).length===1)||rows.some(r=>!valido(r.ventas)||r.faltan?.length)){
       state.intentosDatos=(state.intentosDatos||0)+1;state.error='Informe retenido: faltan ventas completas de Ágora';state.retryAt=new Date(+now()+15*60000).toISOString();await save();return;
      }
      const anterior=await c.query('SELECT value FROM config WHERE key IN ($1,$2)',[`planificacion_personal_${ciclo.mes}_v1`,`planificacion_personal_${ciclo.mes}_v2`]);

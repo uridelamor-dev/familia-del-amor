@@ -11,11 +11,10 @@ test('día 20 a las 10 Madrid, recuperación del 23 y cambio de año',()=>{
  assert.equal(cicloPersonal(new Date('2026-12-20T12:00Z')).referencia,'2026-01');
  assert.equal(cicloPersonal(new Date('2026-10-23T19:00Z')),null);
 });
-test('cinco locales y general, cálculo sobre base y jornadas equivalentes',()=>{
+test('un mensaje con todos los locales, presupuesto y personas',()=>{
  const mensajes=mensajesPersonal(cicloPersonal(new Date('2026-10-23T12:00Z')),rows);
- assert.equal(mensajes.length,6);assert.match(mensajes[0],/14.000,00/);assert.match(mensajes[0],/6,36 jornadas/);assert.match(mensajes[5],/70.000,00/);
- const incompletos=rows.map((r,i)=>i===0?{...r,base:null,sinBase:true}:r);
- assert.match(mensajesPersonal(cicloPersonal(new Date('2026-10-23T12:00Z')),incompletos)[5],/Total del grupo pendiente/);
+ assert.equal(mensajes.length,1);assert.match(mensajes[0],/14.000,00/);assert.match(mensajes[0],/6,36 personas/);assert.match(mensajes[0],/70.000,00/);
+ assert.throws(()=>mensajesPersonal({},rows.map((r,i)=>i===0?{...r,ventas:null}:r)),/Faltan ventas/);
 });
 test('consulta mes completo y estima bases ausentes al 10 %',async()=>{
  const configs=LOCALES_PERSONAL.flatMap(l=>fuentesVentas(l)).map(local=>({local,usuario:'u',password:'p'}));
@@ -37,10 +36,10 @@ function fixture({error=false,estado=null}={}){
  const deps={pool:{connect:async()=>client},enabled:true,conectado:()=>true,now:()=>new Date('2026-10-23T12:00Z'),preparar:async()=>{preparaciones++;return rows;},enviar:async(t,m)=>{assert.equal(t,DESTINO_PERSONAL);entregas.push(m);if(error)throw Error('incierto');}};
  return {deps,entregas,estado:()=>JSON.parse(value),preparaciones:()=>preparaciones};
 }
-test('al publicar envía seis mensajes y conserva el progreso entre reinicios',async()=>{
+test('al publicar envía un mensaje y conserva el progreso entre reinicios',async()=>{
  const f=fixture();
  for(let i=0;i<8;i++)await crearPlanificacionPersonal(f.deps).tick();
- assert.equal(f.entregas.length,6);assert.equal(f.preparaciones(),1);assert.equal(f.estado().estado,'enviada');
+ assert.equal(f.entregas.length,1);assert.equal(f.preparaciones(),1);assert.equal(f.estado().estado,'enviada');
 });
 test('desconectado no prepara ni envía; entrega incierta nunca se repite',async()=>{
  const f=fixture({error:true});await crearPlanificacionPersonal({...f.deps,conectado:()=>false}).tick();assert.equal(f.preparaciones(),0);
@@ -66,13 +65,18 @@ test('datos ausentes retienen el informe sin enviar cifras incompletas',async()=
  assert.equal(lecturas,7);assert.equal(f.entregas.length,0);
 });
 
-test('desglose muestra total real, base e IVA en cada local y en el grupo',()=>{
- const mensajes=mensajesPersonal(cicloPersonal(new Date('2026-10-24T12:00Z')),rows);
- assert.match(mensajes[0],/Ventas con IVA: \*44.000,00 €/);
- assert.match(mensajes[0],/Base sin IVA: \*40.000,00 €/);
- assert.match(mensajes[0],/IVA: \*4\.?000,00 €/);
- assert.match(mensajes[5],/220.000,00/);assert.match(mensajes[5],/20.000,00/);
- assert.match(mensajes[0],/NOVIEMBRE DE 2026/);assert.match(mensajes[0],/noviembre de 2025/);
+test('diciembre real usa siempre total dividido entre 1,10 y suma presupuestos redondeados',()=>{
+ const ventas=[57585.14,63762.49,32803.97,27095.24,57345.90];
+ const [m]=mensajesPersonal({objetivo:'2026-12',referencia:'2025-12'},rows.map((r,i)=>({...r,ventas:ventas[i],base:999})));
+ for(const importe of ['52.350,13','57.965,90','29.821,79','24.632,04','52.132,64','216.902,50','75.915,87'])assert.ok(m.includes(importe));
+ for(const personas of ['8,33','9,22','4,74','3,92','8,29'])assert.ok(m.includes(personas+' personas'));
+ assert.match(m,/DICIEMBRE DE 2026/);assert.match(m,/diciembre de 2025/);
+});
+test('publicar formato nuevo no reenvía ciclos completados ni entregas inciertas',async()=>{
+ for(const estado of ['enviada','incierta']){
+  const f=fixture({estado:{estado,enviados:6,mensajes:Array(6).fill('anterior')}});
+  await crearPlanificacionPersonal(f.deps).tick();assert.equal(f.entregas.length,0);assert.equal(f.preparaciones(),0);
+ }
 });
 test('serie inválida intenta el respaldo sin sumar datos erróneos',async()=>{
  const configs=LOCALES_PERSONAL.flatMap(l=>fuentesVentas(l)).map(local=>({local,usuario:'u',password:'p'}));
