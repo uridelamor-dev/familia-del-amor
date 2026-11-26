@@ -15,3 +15,41 @@
 .club-acceptance{font-size:11px;line-height:1.6;color:#526458;margin:16px 0 0}
 
 .club-launch{background:#f6e8c8;border-color:#e5d6b6;border-radius:20px;box-shadow:0 6px 24px #182d321c}.club-launch small{letter-spacing:0;text-transform:none;font-size:11px;margin:4px 0 0;color:#536448}.club-launch-icon{border:0;border-radius:12px;background:#ffffff55;width:40px;height:40px}
+
+/* Franja del Club en portada: queda sola en el borde superior al desplazarse. */
+.club-banner{position:sticky;top:0;z-index:11;background:var(--public-terracotta, #985b3b);color:#fff5e6;box-shadow:0 3px 12px #172d221a}
+.club-banner-link{width:100%;display:flex;align-items:stretch;border:0;padding:0;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left}
+.club-banner-window{flex:1;min-width:0;overflow:hidden;mask-image:linear-gradient(to right,transparent,#000 20px,#000 calc(100% - 20px),transparent)}
+.club-banner-track{display:flex;width:max-content;animation:club-banner-scroll 44s linear infinite}
+.club-banner-copy{display:flex;align-items:center;justify-content:center;gap:20px;flex-shrink:0;min-width:calc(100vw - 175px);box-sizing:border-box;padding:13px 28px;white-space:nowrap;font-size:14px;line-height:20px;letter-spacing:.015em}
+.club-banner-copy strong{font-weight:600}.club-banner-copy>span:first-child{color:#efd49f}
+.club-banner-cta{display:flex;align-items:center;justify-content:center;gap:12px;flex:0 0 auto;padding:0 24px;border-left:1px solid #fff5e633;font-size:13px;font-weight:600;white-space:nowrap}
+.club-banner-cta>span{font-size:18px}.club-banner-link:hover .club-banner-cta{text-decoration:underline;text-underline-offset:4px}
+.club-banner button:focus-visible{outline:2px solid #efd49f;outline-offset:-4px}
+@keyframes club-banner-scroll{to{transform:translateX(-50%)}}
+@media(max-width:650px){.club-banner-copy{font-size:13px;padding:11px 20px;gap:16px}.club-banner-cta{font-size:12px;padding:0 14px;gap:8px}}
+.top.club-header-away{transform:translateY(-100%);visibility:hidden;pointer-events:none}
+
+/* Mismo terracota que el banner; limitado al Club público. */
+.club-dialog{--accent:var(--public-terracotta, #985b3b);--accent-2:var(--public-terracotta, #985b3b);--brand:var(--public-terracotta, #985b3b);color:#382a24}
+.club-dialog::backdrop{background:#201a16aa}
+.club-dialog .club-close{color:#493629;border-color:#ded6cb}
+.club-dialog .club-story{background:#f4eadf}
+.club-dialog :is(h1,h2,h3,.alta-campo label,.club-benefits strong){color:#382a24}
+.club-dialog :is(.club-eyebrow,.club-benefits li>span){color:var(--public-terracotta, #985b3b)}
+.club-dialog :is(.club-story>p,.club-benefits small,.club-note,.tj-sub,.alta-ayuda,.alta-legal,.club-acceptance,.profile-intro,.profile-help,.profile-skip){color:#71665e}
+.club-dialog .club-card{background-image:linear-gradient(115deg,rgba(80,40,23,.80),rgba(80,40,23,.28)),url('/uploads/gallery/Cooperativa_1.jpg')}
+.club-dialog .alta-btn{background:var(--public-terracotta, #985b3b);color:#fff5e6}
+.club-dialog .alta-btn:hover{background:#80472d}
+.club-dialog a{color:#80472d}
+.club-dialog :focus-visible{outline-color:var(--public-terracotta, #985b3b)}
+.club-dialog :is(.profile-step,.profile-status){background:#f4eadf;color:#80472d}
+.club-dialog :is(.birthday-trigger,.birthday-row select){background-color:#f4eadf;color:#493629;border-color:#ded6cb}
+.club-dialog :is(.birthday-trigger:hover,.birthday-trigger[aria-expanded=true],.birthday-row select:hover){background-color:#efe1d2;border-color:var(--public-terracotta, #985b3b)}
+body:has(.club-dialog[open]) :is(.fa-calendar,.birthday-popover){--brand:var(--public-terracotta, #985b3b);--surface:#fffdf8;--surface2:#f4eadf;--ink:#382a24;--ink3:#71665e;color:#493629}
+body:has(.club-dialog[open]) .birthday-options button{color:#493629}
+body:has(.club-dialog[open]) .birthday-options button:hover{background:#f4eadf}
+body:has(.club-dialog[open]) .birthday-options button[aria-selected=true]{background:var(--public-terracotta, #985b3b);color:#fff5e6}
+body:has(.club-dialog[open]) .birthday-popover :focus-visible{outline-color:var(--public-terracotta, #985b3b)}
+
+.lot-header.club-header-away{transform:translateY(-100%);visibility:hidden;pointer-events:none}

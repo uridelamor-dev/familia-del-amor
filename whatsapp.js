@@ -1,3 +1,4 @@
+import { DIRECCIONES_RESERVA } from './src/modules/reservas/direcciones.js';
 import {HERRAMIENTA_CARNET,instruccionesCarnet} from './src/modules/messaging/sara-carnet.js';
 import { pausaBloqueante } from './src/modules/messaging/atencion.js';
 import { conTurno } from './src/modules/messaging/turno.js';
@@ -1607,7 +1608,7 @@ export async function sendConfirmacionCliente(telefono, reserva) {
     const msg =
       `¡Hola ${nombre}! 😊 Soy Sara, la asistente virtual de Familia del Amor. Te escribo para confirmarte la reserva:\n\n` +
       `✅ *Reserva confirmada*\n\n` +
-      `🏠 ${reserva.local}\n` +
+      `🏠 ${reserva.local}\n` + (DIRECCIONES_RESERVA[reserva.local] ? `📍 ${DIRECCIONES_RESERVA[reserva.local]}\n` : "") +
       `📅 ${formatFecha(reserva.dia)}\n` +
       `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}` +
@@ -1631,12 +1632,12 @@ export async function sendConfirmacionPendienteCliente(telefono, reserva) {
     const msg =
       `¡Hola ${nombre}! 😊 Soy Sara, la asistente virtual de Familia del Amor. Te escribo para confirmarte que hemos recibido tu solicitud de reserva:\n\n` +
       `⏳ *Reserva pendiente de confirmación*\n\n` +
-      `🏠 ${reserva.local}\n` +
+      `🏠 ${reserva.local}\n` + (DIRECCIONES_RESERVA[reserva.local] ? `📍 ${DIRECCIONES_RESERVA[reserva.local]}\n` : "") +
       `📅 ${formatFecha(reserva.dia)}\n` +
       `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} personas\n` +
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
-      `Por el número de comensales, un encargado se pondrá en contacto contigo en breve para confirmar todos los detalles. ¡Gracias!`;
+      `Por el número de comensales, un encargado se pondrá en contacto contigo en breve para confirmar todos los detalles. Si necesitas modificar o cancelar la solicitud, responde aquí. ¡Gracias!`;
     await sock.sendMessage(jid, { text: msg });
     addSaraToHistorial(jid, msg);
     if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
@@ -1656,7 +1657,7 @@ export async function sendNotificacionGrupo(groupId, reserva) {
       `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}` +
       lineaZona(reserva.zona) + `\n` +
-      `📞 ${reserva.telefono}`;
+      `📞 ${reserva.telefono}` + (reserva.observaciones ? `\n📝 ${reserva.observaciones}` : "");
     await sock.sendMessage(groupId, { text: msg });
     console.log(`📤 Notificación enviada al grupo de ${reserva.local}`);
   } catch (err) {
@@ -1676,7 +1677,7 @@ export async function sendNotificacionGrupoPendiente(groupId, reserva) {
       lineaZona(reserva.zona) + `\n` +
       `📞 ${reserva.telefono}\n` +
       `📍 ${reserva.local}\n\n` +
-      `Responde con *OK* cuando hayas hablado con el cliente.`;
+      (reserva.observaciones ? `📝 ${reserva.observaciones}\n\n` : "") + `Responde con *OK* cuando hayas hablado con el cliente.`;
     await sock.sendMessage(groupId, { text: msg });
     console.log(`📤 Notificación pendiente enviada al grupo de ${reserva.local}`);
   } catch (err) {
@@ -1690,7 +1691,7 @@ export async function sendCancelacionCliente(telefono, reserva) {
     const jid = formatPhone(telefono);
     const msg =
       `❌ *Reserva cancelada*\n\n` +
-      `🏠 ${reserva.local}\n` +
+      `🏠 ${reserva.local}\n` + (DIRECCIONES_RESERVA[reserva.local] ? `📍 ${DIRECCIONES_RESERVA[reserva.local]}\n` : "") +
       `📅 ${formatFecha(reserva.dia)}\n` +
       `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
@@ -1714,7 +1715,7 @@ export async function sendCancelacionGrupo(groupId, reserva) {
       `📅 ${formatFecha(reserva.dia)}\n` +
       `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
-      `📞 ${reserva.telefono}`;
+      `📞 ${reserva.telefono}` + (reserva.observaciones ? `\n📝 ${reserva.observaciones}` : "");
     await sock.sendMessage(groupId, { text: msg });
     console.log(`📤 Cancelación enviada al grupo de ${reserva.local}`);
   } catch (err) {

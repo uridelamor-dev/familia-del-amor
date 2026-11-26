@@ -1,3 +1,5 @@
+import { DIRECCIONES_RESERVA } from './src/modules/reservas/direcciones.js';
+import { horasDisponibles, horarioConfirmado, LOCALES_RESERVA } from './src/modules/reservas/disponibilidad.js';
 import {actualizarAvisosTrasCorreccion} from './src/modules/facturas/avisos-vigentes.js';
 import {validarCargosBase,leerCargosBase} from './src/modules/facturas/cargos-base.js';
 import {conciliarDocumentos} from './src/modules/facturas/conciliar-decision.js';
@@ -8231,8 +8233,21 @@ app.post("/api/uploads/optimize-existing", requireAuth(["direccion", "marketing"
 });
 
 // Reservas
+async function disponibilidadReserva(local, dia) {
+  if (!LOCALES_RESERVA.includes(local)) return {ok:false,horas:[],mensaje:'Elige un local válido.'};
+  const config = JSON.parse((await getConfig('reservas_horarios')) || '{}');
+  const bloqueo = await estaBloqueado(local, dia);
+  return horasDisponibles({dia,horario:config[local] ?? horarioConfirmado(local),bloqueado:!!bloqueo});
+}
+app.get('/api/reservas/disponibilidad', async (req,res) => {
+  res.set('Cache-Control','no-store');
+  try { res.json(await disponibilidadReserva(String(req.query.local || ''),String(req.query.dia || ''))); }
+  catch { res.status(503).json({ok:false,horas:[],mensaje:'No se han podido comprobar los horarios. Inténtalo de nuevo.'}); }
+});
+
 app.post("/api/reservas", async (req, res) => {
   const { local, personas, dia, hora, telefono, nombre_reserva } = req.body;
+  const observaciones = String(req.body.observaciones || "").trim().slice(0,1000);
   if (!local || !personas || !dia || !hora || !telefono || !nombre_reserva) {
     return res.status(400).json({ ok: false, error: "Faltan campos" });
   }
@@ -8241,43 +8256,20 @@ app.post("/api/reservas", async (req, res) => {
   if (esLocalSinPublico(local)) {
     return res.status(400).json({ ok: false, error: "En ese centro no se pueden hacer reservas." });
   }
-  const [y, m, d] = dia.split("-").map((n) => Number(n));
-  const dayDate = new Date(y, m - 1, d);
-  dayDate.setHours(0, 0, 0, 0);
-  const nowDate = new Date();
-  nowDate.setHours(0, 0, 0, 0);
-  if (dayDate < nowDate) {
-    return res.status(400).json({ ok: false, error: "Fecha inválida" });
-  }
-  if (dayDate.getTime() === nowDate.getTime()) {
-    const [hh, mm] = hora.split(":").map((n) => Number(n));
-    const now = new Date();
-    if (hh * 60 + mm < now.getHours() * 60 + now.getMinutes()) {
-      return res.status(400).json({ ok: false, error: "Hora inválida" });
-    }
-  }
   try {
-    const bloqueo = await estaBloqueado(local, dia);
-    if (bloqueo) {
-      return res.status(400).json({
-        ok: false,
-        code: "reservas_bloqueadas",
-        local,
-        motivo: bloqueo.motivo || "",
-        error: `En esas fechas no se aceptan reservas en ${local}${bloqueo.motivo ? ` (${bloqueo.motivo})` : ""}.`
-      });
-    }
-  } catch (e) { console.error("Error comprobando bloqueo de reservas:", e.message); }
+    const disponibilidad = await disponibilidadReserva(local, dia);
+    if (!disponibilidad.ok || !disponibilidad.horas.includes(hora)) return res.status(400).json({ok:false,error:disponibilidad.mensaje || 'Esa hora ya no está disponible. Elige otra.'});
+  } catch { return res.status(503).json({ok:false,error:'No podemos comprobar el horario ahora. Inténtalo de nuevo.'}); }
 
   try {
     const creado_en = new Date().toISOString();
     const rowRes = await dbRun(
-      `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      [local, personas, dia, hora, telefono, nombre_reserva, creado_en]
+      `INSERT INTO reservas (local, personas, dia, hora, telefono, nombre_reserva, creado_en, notas_sala) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      [local, personas, dia, hora, telefono, nombre_reserva, creado_en, observaciones]
     );
     const reserva_id = rowRes.id;
     const pendiente = parseInt(personas) > 8;
-    const reserva = { local, personas, dia, hora, telefono, nombre_reserva };
+    const reserva = { local, personas, dia, hora, telefono, nombre_reserva, observaciones };
     upsertLeadFromReserva({ nombre_reserva, telefono });
     // AQUÍ NO HABÍA NADA. Las reservas del panel —las de teléfono, las de la puerta— son casi
     // todas, y ninguna programaba el seguimiento del día siguiente: solo lo hacían las que se
@@ -8306,7 +8298,7 @@ app.post("/api/reservas", async (req, res) => {
         }
       }
     }).catch(() => {});
-    return res.json({ ok: true, reserva_id, pendiente });
+    return res.json({ ok: true, reserva_id, pendiente, direccion: DIRECCIONES_RESERVA[local] || "" });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Error guardando reserva" });
   }
@@ -14492,7 +14484,7 @@ app.post("/api/tarjeta/alta", async (req, res) => {
   if (!pulsoRateLimit(req, res, TJ_ALTA_MAX)) return;
   try {
     const { alta, descartados } = sanearAlta(req.body, { locales: INV_LOCALES });
-    if (!alta.nombre || !alta.telefono || !alta.correo) {
+    if (!alta.nombre || !alta.telefono || descartados.some(d => d.campo === "correo")) {
       return res.status(400).json({ ok: false, error: descartados[0]?.motivo || "Faltan datos", descartados });
     }
 

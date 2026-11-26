@@ -4,7 +4,7 @@
   background: linear-gradient(145deg, #fffdf8, #f5f2e9);
   border: 1px solid #e1dfd2;
   border-radius: 28px;
-  box-shadow: 0 12px 40px #233c3208;
+  box-shadow: 0 12px 40px #382a2408;
   scroll-margin-top: 90px;
 }
 #reservas .section-head { margin-bottom: 28px; }
@@ -15,13 +15,13 @@
   font-size: clamp(28px, 4vw, 38px);
   line-height: 1.2;
   letter-spacing: -.025em;
-  color: #233c32;
+  color: #382a24;
   margin: 0 0 12px;
 }
-#reservas .section-head p { font-size: 15px; line-height: 1.6; max-width: 580px; margin: 0; color: #62695d; }
+#reservas .section-head p { font-size: 15px; line-height: 1.6; max-width: 580px; margin: 0; color: #71665e; }
 #reservas .reserva-form { max-width: none; gap: 22px; }
 #reservas .reserva-step { min-width: 0; gap: 8px; }
-#reservas .reserva-step-label { font-size: 14px; letter-spacing: 0; text-transform: none; color: #354c40; font-weight: 600; }
+#reservas .reserva-step-label { font-size: 14px; letter-spacing: 0; text-transform: none; color: #493629; font-weight: 600; }
 #reservas .reserva-row { gap: 20px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 #reservas .reserva-row--datetime { grid-template-columns: minmax(0, 1fr) minmax(0, 1.65fr); gap: 28px; }
 #reservas .reserva-col { gap: 20px; }
@@ -32,25 +32,25 @@
   border: 1px solid #d9dbce;
   border-radius: 14px;
   background-color: #fffefa;
-  box-shadow: 0 2px 4px #233c3203;
+  box-shadow: 0 2px 4px #382a2403;
   font-size: 16px;
-  color: #233c32;
+  color: #382a24;
 }
 #reservas .reserva-select { padding-right: 40px; }
-#reservas :is(input, select, button):focus-visible { outline: 3px solid #9aaa91; outline-offset: 3px; }
-#reservas .stepper { width: fit-content; max-width: 100%; gap: 10px; padding: 5px; background: #eeeee4; border: 1px solid #dedfd2; border-radius: 30px; }
-#reservas .stepper-btn { width: 44px; height: 44px; border: 0; background: #fffefa; color: #294d3e; box-shadow: 0 2px 5px #233c3208; font-size: 22px; }
+#reservas :is(input, select, button):focus-visible { outline: 3px solid var(--public-terracotta, #985b3b); outline-offset: 3px; }
+#reservas .stepper { width: fit-content; max-width: 100%; gap: 10px; padding: 5px; background: #f4eadf; border: 1px solid #dedfd2; border-radius: 30px; }
+#reservas .stepper-btn { width: 44px; height: 44px; border: 0; background: #fffefa; color: var(--public-terracotta, #985b3b); box-shadow: 0 2px 5px #382a2408; font-size: 22px; }
 #reservas #personasDisplay { font-size: 22px; min-width: 26px; }
 #reservas .stepper-unit { font-size: 13px; margin-right: 3px; }
 #reservas #timePicker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 #reservas .time-section { min-width: 0; }
 #reservas .time-section-label { font-size: 12px; text-transform: none; letter-spacing: 0; margin: 0 0 8px; }
 #reservas .time-pills { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-#reservas .time-pill { min-width: 0; min-height: 44px; padding: 9px 4px; border: 1px solid #d9dbce; border-radius: 11px; background: #fffefa; font-size: 14px; color: #354c40; }
-#reservas .time-pill:hover { border-color: #617e6e; background: #edf1e7; }
-#reservas .time-pill.selected { background: #294d3e; color: #fff; border-color: #294d3e; box-shadow: 0 3px 8px #294d3e20; font-weight: 700; }
-#reservas button[type="submit"] { min-height: 54px; border-radius: 15px; background: #294d3e; color: white; text-transform: none; letter-spacing: 0; font-size: 16px; font-weight: 600; }
-#reservas button[type="submit"]:hover { background: #203e32; }
+#reservas .time-pill { min-width: 0; min-height: 44px; padding: 9px 4px; border: 1px solid #d9dbce; border-radius: 11px; background: #fffefa; font-size: 14px; color: #493629; }
+#reservas .time-pill:hover { border-color: var(--public-terracotta, #985b3b); background: #f4eadf; }
+#reservas .time-pill.selected { background: var(--public-terracotta, #985b3b); color: #fff; border-color: var(--public-terracotta, #985b3b); box-shadow: 0 3px 8px #985b3b20; font-weight: 700; }
+#reservas button[type="submit"] { min-height: 54px; border-radius: 15px; background: var(--public-terracotta, #985b3b); color: white; text-transform: none; letter-spacing: 0; font-size: 16px; font-weight: 600; }
+#reservas button[type="submit"]:hover { background: #80472d; }
 #reservas #reservaMsg:empty { display: none; }
 @media (max-width: 640px) {
   #reservas { padding: 26px 20px 32px; border-radius: 24px; }
@@ -66,3 +66,96 @@
   body:has(#reservaForm:focus-within) .wa-float svg { width: 25px; height: 25px; }
   #reservas :is(input, select, button) { scroll-margin-block: 110px; }
 }
+
+/* El mismo formulario público, presentado en un diálogo accesible. */
+.reserva-dialog{width:min(820px,calc(100vw - 32px));max-width:820px;max-height:calc(100dvh - 32px);padding:0;border:1px solid #e1dfd2;border-radius:24px;background:#fffdf8;color:#28231f;box-shadow:0 24px 80px #0004;overflow:hidden;overscroll-behavior:contain;isolation:isolate}
+.reserva-dialog::backdrop{background:#201a16aa;backdrop-filter:blur(5px)}
+.reserva-dialog #reservas{margin:0;border:0;border-radius:inherit;padding:30px;box-shadow:none;max-height:calc(100dvh - 34px);box-sizing:border-box;overflow:auto;overscroll-behavior:contain}
+.reserva-dialog #reservas .section-head{padding-right:34px;margin-bottom:22px}
+.reserva-dialog-close{position:absolute;top:12px;right:12px;margin:0;z-index:2;width:40px;height:40px;border:1px solid #ded6cb;border-radius:50%;background:#fffdf8;color:#493629;font-size:28px;cursor:pointer}
+.reserva-dialog-close:focus-visible{outline:3px solid var(--public-terracotta, #985b3b);outline-offset:2px}
+@media(max-width:650px){.reserva-dialog{width:calc(100vw - 20px);max-height:calc(100dvh - 20px);border-radius:20px}.reserva-dialog #reservas{padding:24px 20px;max-height:calc(100dvh - 22px)}.reserva-dialog #reservas .section-head h2{font-size:28px}}
+
+/* Distribución compacta: todos los controles visibles en una ventana normal. */
+.reserva-dialog #reservas{padding:22px 26px}
+.reserva-dialog #reservas .section-head{margin-bottom:16px}
+.reserva-dialog #reservas .section-head h2{font-size:30px;margin-bottom:6px}
+.reserva-dialog #reservas .section-head p{font-size:13px;line-height:1.45}
+.reserva-dialog #reservas .reserva-form{gap:14px}
+.reserva-dialog #reservas .reserva-step{gap:5px}
+.reserva-dialog #reservas .reserva-col{gap:12px}
+.reserva-dialog #reservas .reserva-row{gap:16px}
+.reserva-dialog #reservas .reserva-row--datetime{grid-template-columns:minmax(0,1fr) minmax(0,1.8fr)}
+.reserva-dialog #reservas .reserva-select,.reserva-dialog #reservas .reserva-form input:not([type="hidden"]){min-height:44px;padding:9px 12px}
+.reserva-dialog #reservas .time-pills{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+.reserva-dialog #reservas #timePicker{gap:10px}
+.reserva-dialog #reservas .time-pill{padding:7px 3px;font-size:13px}
+.reserva-dialog #reservas .time-section-label{margin-bottom:5px}
+.reserva-dialog #reservas .stepper{gap:6px;padding:2px}
+.reserva-dialog #reservas button[type="submit"]{min-height:46px;padding:10px 18px}
+@media(max-width:640px){
+ .reserva-dialog #reservas{padding:18px 16px}
+ .reserva-dialog #reservas .section-head h2{font-size:26px}
+ .reserva-dialog #reservas .reserva-form{gap:12px}
+ .reserva-dialog #reservas .reserva-row--datetime{grid-template-columns:1fr;gap:12px}
+ .reserva-dialog #reservas .reserva-col{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+ .reserva-dialog #reservas #timePicker{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .reserva-dialog #reservas .time-pills{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .reserva-dialog #reservas .reserva-row:not(.reserva-row--datetime){grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+ .reserva-dialog #reservas .stepper-unit{display:none}
+}
+.reserva-dialog #localSelect[hidden]{display:none}
+.reserva-local-picker{position:relative}
+.reserva-local-trigger{width:100%;min-height:44px;padding:10px 42px 10px 14px;border:1px solid #d9dbce;border-radius:12px;background:#fffefa;color:#493629;text-align:left;font:inherit;font-size:15px;cursor:pointer}
+.reserva-local-trigger::after{content:'⌄';position:absolute;right:16px;top:10px;color:var(--public-terracotta, #985b3b)}
+.reserva-local-trigger[aria-expanded="true"]{border-color:var(--public-terracotta, #985b3b);box-shadow:0 0 0 3px #985b3b12}
+.reserva-local-options{position:absolute;top:calc(100% + 7px);left:0;right:0;z-index:5;padding:6px;border:1px solid #e6ded3;border-radius:16px;background:#fffdf8;box-shadow:0 14px 36px #38251c24;max-height:min(320px,45dvh);overflow:auto}
+.reserva-local-options[hidden]{display:none}
+.reserva-local-options button{display:block;width:100%;min-height:42px;padding:10px 38px 10px 12px;border:0;border-radius:10px;background:transparent;text-align:left;color:#493629;font:inherit;font-size:14px;cursor:pointer;position:relative}
+.reserva-local-options button:hover,.reserva-local-options button:focus{background:#f4eadf;outline:none}
+.reserva-local-options button[aria-selected="true"]{background:#efe1d2;color:#80472d;font-weight:600}
+.reserva-local-options button[aria-selected="true"]::after{content:'✓';position:absolute;right:14px}
+
+/* La hora ocupa un único campo, junto al día y las personas. */
+.reserva-dialog #reservas .reserva-row--datetime{grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;align-items:start}
+.reserva-dialog #reservas .reserva-col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.reserva-dialog #reservas #timePicker{display:block}
+.reserva-dialog #reservas .reserva-hour-select{width:100%}
+@media(max-width:480px){.reserva-dialog #reservas .reserva-row--datetime{grid-template-columns:1fr}.reserva-dialog #reservas .reserva-col{gap:10px}}
+@media(max-width:760px){.reserva-dialog #reservas .stepper-unit{display:none}}
+
+.reserva-hour-options{top:auto;bottom:calc(100% + 7px);max-height:min(220px,32dvh)}
+.reserva-hour-options button{font-variant-numeric:tabular-nums}
+
+/* Confirmación e invitación al Club con el mismo acabado que la reserva. */
+#reservaPopup{background:#201a16aa;backdrop-filter:blur(5px);z-index:1000;padding:16px}
+#reservaPopup .popup-card{width:min(560px,100%);max-height:calc(100dvh - 32px);overflow:auto;box-sizing:border-box;padding:30px;border:1px solid #e1dfd2;border-radius:24px;background:linear-gradient(145deg,#fffdf8,#f5f2e9);color:#28231f;box-shadow:0 24px 80px #0004;text-align:left}
+#reservaPopup .close{top:12px;right:12px;width:40px;height:40px;border:1px solid #ded6cb;border-radius:50%;background:#fffdf8;color:#493629;font-size:28px}
+#reservaPopup h3{font-family:"Playfair Display",Georgia,serif;font-size:30px;line-height:1.2;color:#382a24;margin:8px 40px 12px 0}
+#reservaPopup .reserva-success-icon{font-size:24px;text-align:left;margin:0 0 10px}
+#reservaPopup .reserva-success-details{font-size:14px;line-height:1.6;color:#71665e;margin-bottom:22px}
+.reserva-club-invite{border-top:1px solid #e5dcd0;padding-top:22px}
+.reserva-club-eyebrow{font-size:10px;letter-spacing:.16em;font-weight:700;color:var(--public-terracotta, #985b3b)}
+.reserva-club-invite h4{font-family:"Playfair Display",Georgia,serif;font-size:24px;line-height:1.25;margin:12px 0;color:#493629}
+.reserva-club-invite p{font-size:14px;line-height:1.6;margin:0 0 12px;color:#626056}
+.reserva-club-invite .reserva-club-note{font-size:12px;color:#777166}
+.reserva-club-actions{display:flex;gap:12px;margin-top:20px;flex-wrap:wrap}
+#reservaPopup .reserva-club-actions .btn{min-height:44px;border-radius:12px;letter-spacing:0;text-transform:none;font-size:14px;background:var(--public-terracotta, #985b3b);color:#fff5e6;border:1px solid var(--public-terracotta, #985b3b)}
+#reservaPopup .reserva-club-actions .ghost{background:transparent;color:#493629;border-color:#ded6cb}
+@media(max-width:480px){#reservaPopup .popup-card{padding:24px 20px}#reservaPopup h3{font-size:27px}.reserva-club-invite h4{font-size:22px}}
+#reservaPopup{align-items:center}
+#reservaPopup .popup-card{margin:0}
+#reservaPopup .close{position:absolute}
+#reservaPopup .popup-card{padding:24px}
+#reservaPopup .reserva-success-icon{display:none}
+#reservaPopup h3{margin:0 40px 10px 0}
+#reservaPopup .reserva-success-details{margin-bottom:16px}
+.reserva-club-invite{padding-top:16px}
+
+.reserva-hours-hint{display:block;font-size:12px;line-height:1.4;color:#776b5b;margin-top:6px}.reserva-hours-hint:empty{display:none}.reserva-local-trigger:disabled{opacity:.65;cursor:default}
+.reserva-observaciones{font-size:13px;color:#626056}.reserva-observaciones summary{cursor:pointer}.reserva-observaciones label{display:block;margin-top:10px}.reserva-observaciones textarea{display:block;width:100%;box-sizing:border-box;font:inherit;border:1px solid #d9dbce;border-radius:10px;padding:10px;margin:6px 0}.reserva-observaciones small{font-size:12px}
+
+/* Paleta pública: también en el calendario abierto sobre el modal. */
+body:has(.reserva-dialog[open]) .fa-calendar{--brand:var(--public-terracotta, #985b3b);--surface:#fffdf8;--surface2:#f4eadf;--ink:#382a24;--ink3:#71665e}
+#reservas textarea:focus-visible{outline:3px solid var(--public-terracotta, #985b3b);outline-offset:3px}
+#reservaPopup .reserva-club-actions .btn:not(.ghost):hover{background:#80472d;border-color:#80472d}

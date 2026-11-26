@@ -121,7 +121,7 @@ describe("el mensaje de WhatsApp", () => {
   });
 });
 
- test("el correo vacío devuelve un motivo para bloquear el alta", () => {
+ test("el correo es opcional y no bloquea el alta", () => {
  const {alta,descartados}=sanearAlta({nombre:"Marta",telefono:"600112233"});
- assert.equal(alta.correo,"");assert.ok(descartados.some(d=>d.campo==="correo"&&d.motivo==="Dinos tu correo electrónico"));
+ assert.equal(alta.correo,"");assert.ok(!descartados.some(d=>d.campo==="correo"));
  });

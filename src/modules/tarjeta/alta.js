@@ -18,7 +18,7 @@ export function tel9(t) {
 const texto = (v, max) => String(v == null ? "" : v).trim().slice(0, max);
 
 /** Un correo suficientemente correo. No se valida más: rechazar direcciones raras que existen
- *  cuesta altas de verdad. El correo es obligatorio para el alta. */
+ *  cuesta altas de verdad. El correo es opcional; si se aporta debe ser válido. */
 const CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 /**
@@ -43,7 +43,7 @@ export function sanearAlta(crudo = {}, { locales = [] } = {}) {
   if (!a.telefono) descartados.push({ campo: "telefono", motivo: "El teléfono no está completo" });
 
   const correo = texto(crudo.correo, 120);
-  if (!correo || !CORREO.test(correo)) {
+  if (correo && !CORREO.test(correo)) {
     descartados.push({ campo: "correo", valor: correo, motivo: correo ? "Ese correo no parece válido" : "Dinos tu correo electrónico" });
     a.correo = "";
   } else {

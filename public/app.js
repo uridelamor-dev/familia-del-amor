@@ -682,22 +682,28 @@ function renderLocalesTeaser() {
 }
 
 const DEFAULT_GALLERY = [
+  "assets/galeria-laura/Cooperativa_152.jpg",
+  "assets/galeria-laura/Cooperativa_211.jpg",
+  "assets/galeria-laura/SR_00242.jpg",
+  "assets/galeria-laura/SR_00985.jpg",
+  "assets/galeria-laura/STR04572.jpg",
+  "assets/galeria-laura/STR04845.jpg",
+  "assets/galeria-laura/STR06127.jpg",
+  "assets/galeria-laura/STR06175.jpg",
+  "assets/galeria-laura/STR06179.jpg",
+
   "uploads/gallery/Cooperativa_208.jpg",
   "uploads/gallery/TapaIberica_STR05644.jpg",
   "uploads/gallery/CanMateu_STR04942.jpg",
-  "uploads/gallery/Cooperativa_181.jpg",
   "uploads/gallery/TapaIberica_STR05479.jpg",
   "uploads/gallery/CanMateu_STR05254.jpg",
-  "uploads/gallery/Cooperativa_75.jpg",
   "uploads/gallery/TapaIberica_STR05831.jpg",
   "uploads/gallery/CanMateu_STR04434.jpg",
-  "uploads/gallery/Cooperativa_226.jpg",
   "uploads/gallery/TapaIberica_STR05475.jpg",
   "uploads/gallery/CanMateu_STR04757.jpg",
   "uploads/gallery/Cooperativa_1.jpg",
   "uploads/gallery/TapaIberica_STR05620.jpg",
   "uploads/gallery/CanMateu_STR05013.jpg",
-  "uploads/gallery/Cooperativa_24.jpg",
   "uploads/gallery/TapaIberica_STR05815.jpg",
   "uploads/gallery/CanMateu_STR04457.jpg",
   "uploads/gallery/TapaIberica_STR05485.jpg",
@@ -732,6 +738,9 @@ function renderGallery() {
     `<div class="carousel-slide"><img src="${url}" alt="Foto del local" loading="lazy" /></div>`
   ).join("");
   grid.innerHTML = `<div class="carousel-track" id="carouselTrack">${imgs}${imgs}</div>`;
+  grid.querySelectorAll("img").forEach(img => {
+    img.addEventListener("error", () => img.closest(".carousel-slide")?.remove(), { once: true });
+  });
   startCarousel();
 }
 
@@ -806,40 +815,101 @@ document.getElementById("personasPlus")?.addEventListener("click", () => {
   if (personasCount < 20) { personasCount++; updateStepper(); }
 });
 
-// ── Selector de hora por turnos ────────────────────────────────────────────────
-
-const TIME_SLOTS_RAW = {
-  lunch: ["12:30","13:00","13:30","14:00","14:30","15:00","15:30"],
-  dinner: ["19:30","20:00","20:30","21:00","21:30","22:00","22:30"]
-};
-
+let bookingHours = [], bookingHoursMessage = 'Elige primero local y día.', bookingHoursRequest = 0;
+async function actualizarHorasReserva() {
+  const local = document.getElementById('localSelect')?.value;
+  const dia = document.getElementById('diaValue')?.value;
+  const request = ++bookingHoursRequest;
+  const anterior = document.getElementById('horaValue')?.value;
+  bookingHours = []; bookingHoursMessage = local && dia ? 'Consultando horarios…' : 'Elige primero local y día.';
+  if (document.getElementById('horaValue')) document.getElementById('horaValue').value = '';
+  renderTimePicker();
+  if (!local || !dia) return;
+  try {
+    const response = await fetch(`/api/reservas/disponibilidad?local=${encodeURIComponent(local)}&dia=${encodeURIComponent(dia)}`, {cache:'no-store'});
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    if(request !== bookingHoursRequest) return;
+    bookingHours = data.ok && Array.isArray(data.horas) ? data.horas : [];
+    bookingHoursMessage = data.mensaje || 'No hay horas disponibles.';
+    if(bookingHours.includes(anterior)) document.getElementById('horaValue').value = anterior;
+  } catch {
+    if(request !== bookingHoursRequest) return;
+    bookingHoursMessage = 'No se han podido comprobar los horarios. Vuelve a seleccionar el día.';
+  }
+  renderTimePicker();
+}
+// Selector compacto de hora, de 09:00 a 23:00 inclusive.
 function renderTimePicker() {
   const container = document.getElementById("timePicker");
   if (!container) return;
-  const selectedTime = document.getElementById("horaValue")?.value;
-  const t = i18n[currentLang] || i18n.es;
-  const sections = [
-    { key: "lunch",  label: t.time_slot_lunch,  slots: TIME_SLOTS_RAW.lunch },
-    { key: "dinner", label: t.time_slot_dinner, slots: TIME_SLOTS_RAW.dinner }
-  ];
-  container.innerHTML = sections.map(({ label, slots }) => `
-    <div class="time-section">
-      <div class="time-section-label">${label}</div>
-      <div class="time-pills">
-        ${slots.map((s) => `<button type="button" class="time-pill${selectedTime === s ? " selected" : ""}" data-time="${s}">${s}</button>`).join("")}
-      </div>
-    </div>`).join("");
-
-  container.querySelectorAll(".time-pill").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      container.querySelectorAll(".time-pill").forEach((b) => b.classList.remove("selected"));
-      btn.classList.add("selected");
-      document.getElementById("horaValue").value = btn.dataset.time;
-    });
+  const value = document.getElementById("horaValue");
+  container.hourPickerCleanup?.();
+  const controller = new AbortController();
+  container.hourPickerCleanup = () => controller.abort();
+  const picker = document.createElement('div');
+  picker.className = 'reserva-local-picker reserva-time-picker';
+  const trigger = document.createElement('button');
+  trigger.type = 'button'; trigger.className = 'reserva-local-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.setAttribute('aria-controls', 'reservaHourOptions');
+  const placeholder = currentLang === 'en' ? 'Choose time…' : currentLang === 'ca' ? 'Tria hora…' : 'Elige hora…';
+  const label = currentLang === 'en' ? 'Time' : 'Hora';
+  const list = document.createElement('div');
+  list.id = 'reservaHourOptions'; list.className = 'reserva-local-options reserva-hour-options';
+  list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', label);
+  list.hidden = true;
+  const sync = () => {
+    trigger.textContent = value.value || placeholder;
+    trigger.setAttribute('aria-label', `${label}: ${value.value || placeholder}`);
+    for (const item of list.children) item.setAttribute('aria-selected', String(item.textContent === value.value));
+  };
+  const close = () => { list.hidden = true; trigger.setAttribute('aria-expanded', 'false'); };
+  for (const hour of bookingHours) {
+    const option = document.createElement('button');
+    option.type = 'button'; option.textContent = hour; option.tabIndex = -1;
+    option.setAttribute('role', 'option');
+    option.addEventListener('click', () => { value.value = hour; sync(); close(); trigger.focus(); });
+    list.append(option);
+  }
+  const open = (last = false) => {
+    const surface = container.closest('dialog') || document.documentElement;
+    const available = trigger.getBoundingClientRect().top - surface.getBoundingClientRect().top - 20;
+    list.style.maxHeight = `${Math.max(90, Math.min(220, available))}px`;
+    list.hidden = false; trigger.setAttribute('aria-expanded', 'true');
+    const target = last ? list.lastElementChild : list.querySelector('[aria-selected="true"]') || list.firstElementChild;
+    target?.focus({preventScroll:true});
+    if (target) list.scrollTop = target.offsetTop - list.clientHeight / 2;
+  };
+  trigger.addEventListener('click', () => list.hidden ? open() : close());
+  trigger.addEventListener('keydown', event => {
+    if (['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); open(event.key === 'ArrowUp'); }
   });
+  list.addEventListener('keydown', event => {
+    const items = [...list.children], index = items.indexOf(document.activeElement);
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      items[next]?.focus({preventScroll:true});
+      if (items[next]) list.scrollTop = items[next].offsetTop - list.clientHeight / 2;
+    } else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); trigger.focus(); }
+    else if (event.key === 'Tab') close();
+  });
+  document.addEventListener('click', event => { if (!picker.contains(event.target)) close(); }, {signal:controller.signal});
+  container.closest('dialog')?.addEventListener('close', close, {signal:controller.signal});
+  picker.append(trigger, list);
+  const hint = document.createElement('small');
+  hint.className = 'reserva-hours-hint'; hint.setAttribute('role','status');
+  hint.textContent = bookingHours.length ? '' : bookingHoursMessage;
+  trigger.disabled = !bookingHours.length;
+  container.replaceChildren(picker, hint); sync();
+
 }
 
 renderTimePicker();
+document.getElementById("localSelect")?.addEventListener("change", actualizarHorasReserva);
+document.getElementById("diaValue")?.addEventListener("change", actualizarHorasReserva);
 
 
 
@@ -927,6 +997,11 @@ if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
     return;
   }
 
+  if (reservaForm.dataset.sending) return;
+  reservaForm.dataset.sending = '1';
+  const submit = reservaForm.querySelector('[type="submit"]');
+  if (submit) submit.disabled = true;
+  try {
   const res = await fetch("/api/reservas", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -942,8 +1017,11 @@ if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
       if (successDetails) successDetails.textContent = data.pendiente
         ? `Hemos recibido tu solicitud para ${payload.local} el ${payload.dia} a las ${payload.hora} (${payload.personas} personas). Un encargado se pondrá en contacto contigo para confirmar.`
         : `${payload.local} · ${payload.dia} ${t.reservation_at} ${payload.hora} · ${payload.personas} ${t.reservation_people_unit}`;
-      // Guardamos a qué reserva pertenecen los datos opcionales que pueda rellenar ahora.
-      reservaPerfilCtx = { id: data.reserva_id, telefono: payload.telefono };
+      if (successDetails) successDetails.textContent += (data.direccion ? ` · ${data.direccion}` : '') + ' Para modificar o cancelar, responde al WhatsApp de confirmación o contacta con el local.';
+      // Reutilizamos los datos de la reserva en el alta voluntaria del Club.
+      reservaPerfilCtx = { id: data.reserva_id, telefono: payload.telefono, nombre: payload.nombre_reserva };
+      const invitation = document.getElementById("reservaClubTitle");
+      if (invitation) invitation.textContent = data.pendiente ? "Mientras confirmamos tu mesa, ¿te unes al Club?" : "Ya tienes mesa. ¿Te unes al Club?";
       abrirReservaPopup();
     }
     reservaForm.reset();
@@ -952,12 +1030,20 @@ if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
     document.getElementById("localValue").value = "";
     document.getElementById("timePicker").querySelectorAll(".time-pill").forEach((b) => b.classList.remove("selected"));
     document.getElementById("horaValue").value = "";
+    actualizarHorasReserva();
     personasCount = 2; updateStepper();
   } else if (data.code === "reservas_bloqueadas" && t.reserva_bloqueada) {
     reservaMsg.textContent = t.reserva_bloqueada.replace("{local}", data.local || payload.local);
   } else {
     reservaMsg.textContent = data.error || t.err_generic;
   }
+  } catch {
+    reservaMsg.textContent = 'No se ha podido confirmar la reserva. Comprueba la conexión antes de volver a intentarlo.';
+  } finally {
+    delete reservaForm.dataset.sending;
+    if (submit) submit.disabled = false;
+  }
+
 });
 
 const savedLang = localStorage.getItem(LANG_KEY) || "es";
@@ -968,6 +1054,8 @@ loadContent();
 let reservaPerfilCtx = null;
 
 function abrirReservaPopup() {
+  const bookingDialog = document.getElementById("reservaDialog");
+  if (bookingDialog?.open) bookingDialog.close();
   const popup = document.getElementById("reservaPopup");
   if (!popup) return;
   const form = document.getElementById("reservaPerfilForm");
@@ -986,6 +1074,11 @@ function cerrarReservaPopup() {
 
 document.getElementById("reservaPopupClose")?.addEventListener("click", cerrarReservaPopup);
 document.getElementById("reservaPerfilSkip")?.addEventListener("click", cerrarReservaPopup);
+document.getElementById("reservaJoinClub")?.addEventListener("click", () => {
+  const details = {nombre: reservaPerfilCtx?.nombre || '', telefono: reservaPerfilCtx?.telefono || ''};
+  cerrarReservaPopup();
+  document.dispatchEvent(new CustomEvent('club:open', {detail:details}));
+});
 document.getElementById("reservaPopup")?.addEventListener("click", (e) => {
   if (e.target.id === "reservaPopup") cerrarReservaPopup();
 });
@@ -1270,6 +1363,7 @@ document.querySelectorAll('a[href^="#"]').forEach((link) => {
   link.addEventListener("click", (e) => {
     const targetId = link.getAttribute("href");
     if (!targetId || targetId === "#") return;
+    if (targetId === "#reservas" && document.getElementById("reservaDialog")) return;
     const el = document.querySelector(targetId);
     if (!el) return;
     e.preventDefault();

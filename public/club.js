@@ -16,7 +16,63 @@
   document.body.append(host);
   const dialog = host.querySelector('dialog');
   const launch = host.querySelector('.club-launch');
+  let banner = document.getElementById('clubBanner');
+  if (!banner && document.body.hasAttribute('data-public-club')) {
+    banner = document.createElement('div');
+    banner.id = 'clubBanner';
+    banner.className = 'club-banner';
+    const placeBanner = () => {
+      const main = document.querySelector('main');
+      const hero = main?.querySelector('.hero, .lot-hero, .privacy-hero');
+      if (hero && hero.nextElementSibling !== banner) hero.after(banner);
+      else if (!hero && main && !banner.isConnected) main.prepend(banner);
+    };
+    placeBanner();
+    // The shop rebuilds its hero when its catalogue or language changes.
+    if (document.getElementById('shop')) {
+      new MutationObserver(placeBanner).observe(document.getElementById('shop'), {childList:true});
+    }
+  }
+  if (banner) {
+    const message = 'Forma parte del Club de La Tapeta. Regístrate y disfruta de nuestras promociones.';
+    launch.className = 'club-banner-link';
+    launch.setAttribute('aria-label', message + ' Únete al Club');
+    launch.innerHTML = `<span class="club-banner-window" aria-hidden="true"><span class="club-banner-track">${[0, 1].map(() => `<span class="club-banner-copy"><span>✦</span><strong>Forma parte del Club de La Tapeta</strong><span>·</span><span>Regístrate y disfruta de nuestras promociones.</span></span>`).join('')}</span></span><span class="club-banner-cta" aria-hidden="true">Únete al Club <span>↗</span></span>`;
+    banner.append(launch);
+    const header = document.querySelector('header.top, header.lot-header');
+    if (header) {
+      let scheduled = false;
+      const updateHeader = () => {
+        const pinned = banner.getBoundingClientRect().top <= 0;
+        header.classList.toggle('club-header-away', pinned);
+        header.inert = pinned;
+        scheduled = false;
+      };
+      window.addEventListener('scroll', () => {
+        if (!scheduled) {
+          scheduled = true;
+          requestAnimationFrame(updateHeader);
+        }
+      }, { passive: true });
+      new ResizeObserver(updateHeader).observe(banner);
+      updateHeader();
+    }
+  }
   let ready = false, loading = false, previousOverflow = '';
+  let bookingPrefill = null;
+  function applyBookingPrefill() {
+    if (!bookingPrefill) return;
+    const name = host.querySelector('#altaNombre'), phone = host.querySelector('#altaTel');
+    if (!name || !phone) return;
+    name.value = bookingPrefill.nombre || '';
+    phone.value = bookingPrefill.telefono || '';
+    bookingPrefill = null;
+  }
+  document.addEventListener('club:open', event => {
+    bookingPrefill = {nombre: event.detail?.nombre || '', telefono: event.detail?.telefono || ''};
+    openClub();
+    if (ready) applyBookingPrefill();
+  });
   const close = () => dialog.close();
   host.querySelector('.club-close').addEventListener('click', close);
   dialog.addEventListener('click', event => { if (event.target === dialog) { const r=dialog.getBoundingClientRect(); if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom) close(); } });
@@ -45,6 +101,7 @@
       const script = document.createElement('script'); script.src='/alta.js';
       await new Promise((resolve,reject)=>{script.onload=resolve;script.onerror=reject;document.body.append(script);});
       ready = true;
+      applyBookingPrefill();
     } catch {
       target.innerHTML='<p>No hemos podido cargar el formulario.</p><a class="alta-btn" href="/alta.html">Abrir el registro</a>';
     } finally { loading = false; }

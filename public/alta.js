@@ -57,8 +57,7 @@
     if (!nombre) return error("Dinos cómo te llamas.", $("altaNombre"));
     if (telefono.replace(/\D/g, "").length < 9) return error("El teléfono no está completo.", $("altaTel"));
 
-    if (!$("altaCorreo").value.trim()) return error("Dinos tu correo electrónico.", $("altaCorreo"));
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test($("altaCorreo").value.trim()) || !$("altaCorreo").checkValidity()) return error("Revisa tu dirección de correo.", $("altaCorreo"));
+    if ($("altaCorreo").value.trim() && (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test($("altaCorreo").value.trim()) || !$("altaCorreo").checkValidity())) return error("Revisa tu dirección de correo.", $("altaCorreo"));
 
     var btn = $("altaBtn");
     btn.disabled = true;
