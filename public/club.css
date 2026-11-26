@@ -26,7 +26,7 @@
 .club-banner button:focus-visible{outline:2px solid #efd49f;outline-offset:-4px}
 @keyframes club-banner-scroll{to{transform:translateX(-50%)}}
 @media(max-width:650px){.club-banner-copy{font-size:13px;padding:11px 20px;gap:16px}}
-.club-banner-oferta{background:#a3472b;color:#fff6e3}
+.club-banner-oferta{background:#17140f;color:#fff6e3;border-block:2px solid var(--public-terracotta, #985b3b)}
 .club-banner-oferta .club-banner-window{mask-image:none}
 .club-banner-oferta .club-banner-track{width:100%;animation:club-banner-oferta 4.8s linear infinite}
 .club-banner-oferta .club-banner-copy{width:100%;min-width:0;white-space:normal;flex-wrap:wrap;gap:4px 14px;text-align:center;font-size:clamp(15px,2vw,22px);line-height:1.25;font-weight:700}
