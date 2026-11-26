@@ -1,6 +1,9 @@
 import {agruparPorCentro} from '../locales/centros.js';
 import {ventasPendientes} from './ventas-mensuales.js';
 const DESTINO='622149946';
+// Alta autorizada el 26/11: empieza con noviembre (envío del 1 de diciembre).
+const DESTINO_PADRE='34633492120';
+const destinosInforme=(tipo,mes)=>tipo==='ventas'&&mes>='2026-11'?[DESTINO,DESTINO_PADRE]:[DESTINO];
 const euros=n=>Number(n).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 const titulo=mes=>new Date(mes+'-15T12:00:00Z').toLocaleDateString('es-ES',{month:'long',year:'numeric',timeZone:'UTC'});
 const suma=(rows,key)=>rows.reduce((n,r)=>n+Number(r[key] || 0),0);
@@ -63,8 +66,9 @@ export function crearMensuales({pool,enabled,conectado,compras,ventas,enviar,now
   busy=true;let c,lock=false;
   try {
    c=await pool.connect();lock=(await c.query('SELECT pg_try_advisory_lock(73992015) AS locked')).rows[0].locked;if(!lock)return;
-   for(const tipo of ['ventas','compras'])for(const mes of mesesVencidos(now(),tipo==='ventas'?1:10,tipo==='ventas'?11:9)){
-    const key=`informe_${tipo}_${mes}_v1`;
+   for(const tipo of ['ventas','compras'])for(const mes of mesesVencidos(now(),tipo==='ventas'?1:10,tipo==='ventas'?11:9))for(const destino of destinosInforme(tipo,mes)){
+    const originalKey=`informe_${tipo}_${mes}_v1`;
+    const key=destino===DESTINO?originalKey:`${originalKey}_${destino}`;
     const stored=await c.query('SELECT value FROM config WHERE key=$1',[key]);
     let state=stored.rows.length?JSON.parse(stored.rows[0].value):{};
     const save=()=>c.query('INSERT INTO config(key,value,updated_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=EXCLUDED.updated_at',[key,JSON.stringify(state)]);
@@ -76,6 +80,13 @@ export function crearMensuales({pool,enabled,conectado,compras,ventas,enviar,now
      if(old.rows[0]?.value===mes){state={estado:'enviada',legado:true};await save();continue;}
     }
     try {
+     if(!state.mensajes&&destino!==DESTINO){
+      // Copiar la misma instantánea, sin releer ventas ni tocar el progreso de Uriel.
+      const original=await c.query('SELECT value FROM config WHERE key=$1',[originalKey]);
+      const previo=original.rows.length?JSON.parse(original.rows[0].value):{};
+      if(!previo.mensajes?.length)continue;
+      state.mensajes=previo.mensajes;state.enviados=0;
+     }
      if(!state.mensajes){
       let data;
       if(tipo==='ventas'&&!state.mensaje){
@@ -91,7 +102,7 @@ export function crearMensuales({pool,enabled,conectado,compras,ventas,enviar,now
     }catch{state.error='No se pudo preparar el informe';state.retryAt=new Date(+now()+30*60000).toISOString();await save();continue;}
     if(!conectado())return;
     state.estado='enviando';state.intentado=now().toISOString();await save();
-    try{await enviar(DESTINO,state.mensajes[state.enviados]);}catch{state.estado='incierta';state.error='Envío no confirmado; revisar antes de repetir';await save();return;}
+    try{await enviar(destino,state.mensajes[state.enviados]);}catch{state.estado='incierta';state.error='Envío no confirmado; revisar antes de repetir';await save();return;}
     state.enviados++;state.estado=state.enviados===state.mensajes.length?'enviada':'preparada';state.error=null;state.retryAt=null;await save();return;
    }
   }finally{if(c){try{if(lock)await c.query('SELECT pg_advisory_unlock(73992015)');}finally{c.release();}}busy=false;}

@@ -97,3 +97,31 @@ test('un TPV sin confirmar retrasa el envío y se vuelve a consultar al reintent
  await crearMensuales(h.opts).tick();assert.equal(lecturas,2);assert.equal(h.sent.length,1);
  assert.match(h.sent[0][1],/32.888,00/);assert.doesNotMatch(h.sent[0][1],/incompletos/);
 });
+
+
+test('padre recibe solo ventas desde diciembre, con mismo contenido y progreso independiente',async()=>{
+ const h=harness();h.connect();
+ // Octubre ya se envió antes del alta: no se reenvía a ninguno.
+ for(const tipo of ['ventas','compras'])h.state.set(`informe_${tipo}_2026-10_v1`,JSON.stringify({estado:'enviada'}));
+ h.opts.now=()=>new Date('2026-12-01T10:00Z');
+ for(let i=0;i<8;i++)await crearMensuales(h.opts).tick();
+ const uriel=h.sent.filter(([t])=>t==='622149946').map(([,m])=>m);
+ const padre=h.sent.filter(([t])=>t==='34633492120').map(([,m])=>m);
+ assert.equal(uriel.length,2);assert.deepEqual(padre,uriel);
+ assert.equal([...h.state.keys()].some(k=>k.includes('2026-10_v1_')),false);
+ h.opts.now=()=>new Date('2026-12-10T10:00Z');
+ for(let i=0;i<4;i++)await crearMensuales(h.opts).tick();
+ assert.equal(h.sent.filter(([t])=>t==='34633492120').length,2);
+ assert.match(h.sent.at(-1)[1],/COMPRAS/);assert.equal(h.sent.at(-1)[0],'622149946');
+});
+test('envío incierto al padre no repite la entrega ni modifica el ciclo de Uriel',async()=>{
+ const h=harness();h.connect();h.opts.now=()=>new Date('2026-12-01T10:00Z');
+ const k='informe_ventas_2026-11_v1';
+ h.state.set('informe_ventas_2026-10_v1',JSON.stringify({estado:'enviada'}));
+ h.state.set('informe_compras_2026-10_v1',JSON.stringify({estado:'enviada'}));
+ const original=JSON.stringify({estado:'enviada',mensajes:['resumen','local'],enviados:2});h.state.set(k,original);
+ h.fail();await crearMensuales(h.opts).tick();await crearMensuales(h.opts).tick();
+ assert.equal(h.sent.length,1);assert.equal(h.sent[0][0],'34633492120');
+ assert.equal(h.state.get(k),original);
+ assert.equal(JSON.parse(h.state.get(k+'_34633492120')).estado,'incierta');
+});
