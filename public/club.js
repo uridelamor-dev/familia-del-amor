@@ -44,7 +44,10 @@
       const registro = oferta ? 'Regístrate gratis' : '';
       banner.classList.toggle('club-banner-oferta', oferta);
       launch.setAttribute('aria-label', `${titulo}. ${detalle}${registro ? '. ' + registro + '.' : ''}`);
-      launch.innerHTML = `<span class="club-banner-window" aria-hidden="true"><span class="club-banner-track">${[0, 1].map(() => `<span class="club-banner-copy"><span class="club-banner-separador">✦</span><strong>${titulo}</strong><span class="club-banner-separador">·</span><span class="club-banner-detalle">${detalle}</span>${oferta ? `<span class="club-banner-detalle-corto">−10 % en todo</span>` : ''}${registro ? `<span class="club-banner-separador">·</span><span>${registro}</span>` : ''}</span>`).join('')}</span></span>`;
+      const contenido = oferta
+        ? `<span class="club-banner-copy"><strong>${titulo}</strong><span>${detalle}</span><span>${registro}</span></span>`
+        : [0, 1].map(() => `<span class="club-banner-copy"><span>✦</span><strong>${titulo}</strong><span>·</span><span>${detalle}</span></span>`).join('');
+      launch.innerHTML = `<span class="club-banner-window" aria-hidden="true"><span class="club-banner-track">${contenido}</span></span>`;
       const proximoCambio = ahora < inicioOferta ? inicioOferta : oferta ? finOferta : null;
       if (proximoCambio !== null) setTimeout(actualizarBanner, Math.min(proximoCambio - ahora, 2147483647));
     };

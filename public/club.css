@@ -28,26 +28,23 @@
 @media(max-width:650px){.club-banner-copy{font-size:13px;padding:11px 20px;gap:16px}}
 .club-banner-oferta{background:#17140f;color:#fff6e3;border-block:2px solid var(--public-terracotta, #985b3b)}
 .club-banner-oferta .club-banner-window{mask-image:none}
-.club-banner-oferta .club-banner-track{width:100%;animation:club-banner-oferta 4.8s linear infinite}
-.club-banner-oferta .club-banner-copy{width:100%;min-width:0;white-space:normal;flex-wrap:wrap;gap:4px 14px;text-align:center;font-size:clamp(15px,2vw,22px);line-height:1.25;font-weight:700}
-.club-banner-oferta .club-banner-copy:nth-child(2){display:none}
+.club-banner-oferta .club-banner-track{width:100%;animation:none}
+.club-banner-oferta .club-banner-copy{display:grid;place-items:center;width:100%;min-width:0;padding:10px 6px;text-align:center;font-size:clamp(11px,3.3vw,19px);line-height:20px;font-weight:700}
 .club-banner-oferta .club-banner-copy strong{color:#ffd36f;font-weight:900;letter-spacing:.08em}
-.club-banner-detalle-corto{display:none}
-@media(max-width:650px){
-  .club-banner-oferta .club-banner-copy{padding:10px 6px;gap:clamp(3px,1vw,8px);font-size:clamp(10px,3.2vw,14px);line-height:16px;white-space:nowrap;flex-wrap:nowrap}
-  .club-banner-oferta .club-banner-copy>span:first-child,
-  .club-banner-oferta .club-banner-detalle{display:none}
-  .club-banner-oferta .club-banner-detalle-corto{display:inline}
+.club-banner-oferta .club-banner-copy>*{grid-area:1/1;opacity:0;animation:club-banner-mensaje 7.5s ease-in-out infinite}
+.club-banner-oferta .club-banner-copy>*:nth-child(2){animation-delay:2.5s}
+.club-banner-oferta .club-banner-copy>*:nth-child(3){animation-delay:5s}
+@keyframes club-banner-mensaje{
+  0%{opacity:0;transform:translateX(18px)}
+  3.333333%,30%{opacity:1;transform:translateX(0)}
+  33.333333%,100%{opacity:0;transform:translateX(-18px)}
 }
-@keyframes club-banner-oferta{
-  0%{transform:translateX(105%);animation-timing-function:ease-out}
-  18.75%,81.25%{transform:translateX(0)}
-  81.25%{animation-timing-function:ease-in}
-  100%{transform:translateX(-105%)}
-}
-.club-banner-oferta .club-banner-link:focus-visible .club-banner-track{animation:none}
 @media(prefers-reduced-motion:reduce){
-  .club-banner-oferta .club-banner-track{animation:none}
+  .club-banner-oferta .club-banner-copy>*{animation-name:club-banner-mensaje-fijo}
+  @keyframes club-banner-mensaje-fijo{
+    0%,33.333332%{opacity:1}
+    33.333333%,100%{opacity:0}
+  }
 }
 .top.club-header-away{transform:translateY(-100%);visibility:hidden;pointer-events:none}
 
