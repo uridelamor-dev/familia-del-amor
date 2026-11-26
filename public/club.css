@@ -28,14 +28,14 @@
 @media(max-width:650px){.club-banner-copy{font-size:13px;padding:11px 20px;gap:16px}}
 .club-banner-oferta{background:#a3472b;color:#fff6e3}
 .club-banner-oferta .club-banner-window{mask-image:none}
-.club-banner-oferta .club-banner-track{width:100%;animation:club-banner-oferta 6s linear infinite}
+.club-banner-oferta .club-banner-track{width:100%;animation:club-banner-oferta 4.8s linear infinite}
 .club-banner-oferta .club-banner-copy{width:100%;min-width:0;white-space:normal;flex-wrap:wrap;gap:4px 14px;text-align:center;font-size:clamp(15px,2vw,22px);line-height:1.25;font-weight:700}
 .club-banner-oferta .club-banner-copy:nth-child(2){display:none}
 .club-banner-oferta .club-banner-copy strong{color:#ffd36f;font-weight:900;letter-spacing:.08em}
 @keyframes club-banner-oferta{
   0%{transform:translateX(105%);animation-timing-function:ease-out}
-  14%,86%{transform:translateX(0)}
-  86%{animation-timing-function:ease-in}
+  18.75%,81.25%{transform:translateX(0)}
+  81.25%{animation-timing-function:ease-in}
   100%{transform:translateX(-105%)}
 }
 .club-banner-oferta .club-banner-link:focus-visible .club-banner-track{animation:none}
