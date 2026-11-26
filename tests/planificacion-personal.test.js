@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {cicloPersonal,leerPersonal,mensajesPersonal,crearPlanificacionPersonal,LOCALES_PERSONAL,DESTINO_PERSONAL} from '../src/modules/informes/planificacion-personal.js';
-import {barras as barrasDelCentro} from '../src/modules/locales/centros.js';
+import {fuentesVentas} from '../src/modules/locales/centros.js';
 const rows=LOCALES_PERSONAL.map(local=>({local,base:40000,ventas:44000,faltan:[],sinBase:false}));
 test('día 20 a las 10 Madrid, recuperación del 23 y cambio de año',()=>{
  assert.equal(cicloPersonal(new Date('2026-10-19T12:00Z')),null);
@@ -17,13 +17,13 @@ test('cinco locales y general, cálculo sobre base y jornadas equivalentes',()=>
  const incompletos=rows.map((r,i)=>i===0?{...r,base:null,sinBase:true}:r);
  assert.match(mensajesPersonal(cicloPersonal(new Date('2026-10-23T12:00Z')),incompletos)[5],/Total del grupo pendiente/);
 });
-test('consulta mes completo, suma barras de Blanes y estima bases ausentes al 10 %',async()=>{
- const configs=LOCALES_PERSONAL.flatMap(l=>barrasDelCentro(l,'ventas')).map(local=>({local,usuario:'u',password:'p'}));
+test('consulta mes completo y estima bases ausentes al 10 %',async()=>{
+ const configs=LOCALES_PERSONAL.flatMap(l=>fuentesVentas(l)).map(local=>({local,usuario:'u',password:'p'}));
  const result=await leerPersonal('2025-11',{configs,leer:async(c,from,to)=>{
   assert.equal(from,'2025-11-01');assert.equal(to,'2025-12-01');
   return [{dia:'2025-11-03',ventas:110,base_imponible:c.local.includes('Girona')?null:100}];
  }});
- assert.equal(result[0].base,100*barrasDelCentro(LOCALES_PERSONAL[0],'ventas').length);
+ assert.equal(result[0].base,100*fuentesVentas(LOCALES_PERSONAL[0]).length);
  assert.equal(result[2].base,100);assert.equal(result[2].sinBase,true);assert.equal(result[2].ventas,110);
 });
 function fixture({error=false,estado=null}={}){
@@ -49,11 +49,11 @@ test('desconectado no prepara ni envía; entrega incierta nunca se repite',async
 });
 
 test('un fallo de TPV usa el respaldo por barra y no duplica resultados parciales',async()=>{
- const configs=LOCALES_PERSONAL.flatMap(l=>barrasDelCentro(l,'ventas')).map(local=>({local,usuario:'u',password:'p'}));
+ const configs=LOCALES_PERSONAL.flatMap(l=>fuentesVentas(l)).map(local=>({local,usuario:'u',password:'p'}));
  let respaldos=0;
  const r=await leerPersonal('2025-11',{configs,leer:async()=>{throw Error('timeout');},respaldo:async(local,desde,hasta)=>{respaldos++;assert.equal(desde,'2025-11-01');assert.equal(hasta,'2025-12-01');return [{dia:'2025-11-10',ventas:1100}];}});
  assert.equal(respaldos,configs.length);assert.ok(r.every(x=>x.base>0&&x.sinBase));
- assert.equal(r[0].base,1000*barrasDelCentro(LOCALES_PERSONAL[0],'ventas').length);
+ assert.equal(r[0].base,1000*fuentesVentas(LOCALES_PERSONAL[0]).length);
  const msg=mensajesPersonal(cicloPersonal(new Date('2026-10-23T12:00Z')),r);assert.match(msg[0],/total ÷ 1,10/);
 });
 test('datos ausentes retienen el informe sin enviar cifras incompletas',async()=>{
@@ -75,7 +75,23 @@ test('desglose muestra total real, base e IVA en cada local y en el grupo',()=>{
  assert.match(mensajes[0],/NOVIEMBRE DE 2026/);assert.match(mensajes[0],/noviembre de 2025/);
 });
 test('serie inválida intenta el respaldo sin sumar datos erróneos',async()=>{
- const configs=LOCALES_PERSONAL.flatMap(l=>barrasDelCentro(l,'ventas')).map(local=>({local,usuario:'u',password:'p'}));
+ const configs=LOCALES_PERSONAL.flatMap(l=>fuentesVentas(l)).map(local=>({local,usuario:'u',password:'p'}));
  const r=await leerPersonal('2025-11',{configs,leer:async()=>[{dia:'2025-12-01',ventas:999999}],respaldo:async()=>[{dia:'2025-11-01',ventas:110}]});
  assert.ok(r.every(x=>x.ventas>0&&x.ventas<1000&&x.base>0));
+});
+
+
+test('Blanes incluye Cooperativa: no consulta ni exige un segundo servidor ni duplica ventas', async()=>{
+ const consultas=[];
+ const configs=[...LOCALES_PERSONAL,'Cooperativa - Blanes'].map(local=>({local,usuario:'u',password:'p'}));
+ const resultado=await leerPersonal('2025-12',{configs,leer:async cfg=>{
+   consultas.push(cfg.local);
+   return [{dia:'2025-12-01',ventas:1100,base_imponible:1000}];
+ },respaldo:async()=>{throw Error('No debe necesitar respaldo');}});
+ assert.equal(consultas.includes('Cooperativa - Blanes'),false);
+ assert.equal(resultado[0].ventas,1100);
+ assert.deepEqual(resultado[0].faltan,[]);
+ const f=fixture();
+ await crearPlanificacionPersonal({...f.deps,preparar:async()=>resultado}).tick();
+ assert.equal(f.entregas.length,1);
 });

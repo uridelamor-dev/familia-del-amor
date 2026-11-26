@@ -1,5 +1,5 @@
 import {desplazarMes} from './mensuales.js';
-import {barras as barrasDelCentro} from '../locales/centros.js';
+import {fuentesVentas} from '../locales/centros.js';
 export const LOCALES_PERSONAL=['La Tapeta - Blanes','La Tapeta - Lloret','La Tapeta - Girona','Can Mateu - Tordera','La Tapa Ibérica - Tordera'];
 export const DESTINO_PERSONAL='34622065974';
 const euros=n=>n.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
@@ -17,7 +17,7 @@ export async function leerPersonal(referencia,{configs,leer,respaldo=async()=>nu
  const serieValida=rows=>Array.isArray(rows)&&rows.length>0&&rows.every(r=>r.dia&&r.dia>=desde&&r.dia<hasta&&valido(r.ventas));
  for(const local of LOCALES_PERSONAL){
   let base=0,ventas=0,sinBase=false;const faltan=[];
-  for(const barra of barrasDelCentro(local,'ventas')){
+  for(const barra of fuentesVentas(local)){
    const fuentes=configs.filter(c=>c.local===barra&&c.usuario&&c.password);
    let series=[];
    try{
