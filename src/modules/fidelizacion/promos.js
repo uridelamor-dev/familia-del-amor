@@ -274,11 +274,13 @@ export function rewardDePromo(promo) {
   };
   if (t.valor === "euros") r.Value = Number(promo.valor);
   if (t.valor === "porciento") {
-    // El panel guarda 10 para el 10 %; Ágora recibe tanto por uno (0.10).
-    // Guía del Integrador, Fidelización: DiscountRate.Value.
+    // El TPV instalado interpreta Reward.Value en puntos porcentuales.
+    // Prueba real 26/11/2026: enviar 0.10 aplicó 0.10 % (18.50 → 18.48).
+    // No dividir por 100: para 10 % se envía 10. No confundir con otros
+    // campos DiscountRate del protocolo documentados como tanto por uno.
     const porcentaje = Number(promo.valor);
     if (!Number.isFinite(porcentaje) || porcentaje <= 0 || porcentaje > 100) return null;
-    r.Value = porcentaje / 100;
+    r.Value = porcentaje;
   }
   if (t.codigo) {
     // ÚLTIMO CANDADO. El `Code` sale de la FILA GUARDADA, nunca de la petición, y si lo que hay

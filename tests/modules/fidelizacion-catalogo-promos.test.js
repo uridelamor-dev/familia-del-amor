@@ -263,15 +263,19 @@ describe("quién se la lleva", () => {
 });
 
 describe("el Reward que se manda", () => {
-  test("DiscountRate usa tanto por uno: una cuenta de 20 € con 10 % queda en 18 €", () => {
+  test("Reward DiscountRate conserva el porcentaje según la prueba real del TPV", () => {
     const promo = { tipo: "descuento_pct", reward_id: "fidp:black-friday", valor: 10 };
     const reward = rewardDePromo(promo);
     assert.equal(reward.Type, "DiscountRate");
-    assert.equal(reward.Value, 0.1);
-    assert.equal(2000 - Math.round(2000 * reward.Value), 1800);
+    assert.equal(reward.Value, 10);
+    // Semántica observada en caja: Value=0.1 descuenta 2 céntimos de 18.50 €.
+    const totalEnCaja = (centimos, valor) => centimos - Math.round(centimos * valor / 100);
+    assert.equal(totalEnCaja(1850, 0.1), 1848);
+    assert.equal(totalEnCaja(1850, reward.Value), 1665);
+    assert.equal(totalEnCaja(2000, reward.Value), 1800);
     assert.equal(reward.Code, undefined);
     assert.equal(promo.valor, 10, "el valor del panel sigue siendo un porcentaje");
-    for (const [valor, esperado] of [[25, 0.25], [0.5, 0.005], [100, 1]]) {
+    for (const [valor, esperado] of [[25, 25], [0.5, 0.5], [100, 100]]) {
       assert.equal(rewardDePromo({ ...promo, valor }).Value, esperado);
     }
     for (const valor of [0, -10, 101, null, "", "incorrecto", Infinity]) {
