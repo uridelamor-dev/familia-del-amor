@@ -123,8 +123,8 @@
 @media (max-width: 640px) {
   .privacy-page .top { padding: 0 1rem; }
   .privacy-page .logo img { height: 74px; max-width: 118px; }
-  .privacy-page .nav { display: flex; flex-direction: row; position: static; width: auto; max-height: none; opacity: 1; overflow: visible; background: none; border: 0; box-shadow: none; padding: 0; gap: .65rem; }
-  .privacy-page .nav a { font-size: .68rem; min-height: 44px; display: inline-flex; align-items: center; }
+  .privacy-page .top:not(:has([data-menu-publico])) .nav { display: flex; flex-direction: row; position: static; width: auto; max-height: none; opacity: 1; overflow: visible; background: none; border: 0; box-shadow: none; padding: 0; gap: .65rem; }
+  .privacy-page .top:not(:has([data-menu-publico])) .nav a { font-size: .68rem; min-height: 44px; display: inline-flex; align-items: center; }
   .privacy-page .legal { padding: 2rem 1rem 3rem; }
   .privacy-owners { grid-template-columns: 1fr; }
   .privacy-section { border-radius: 16px; }

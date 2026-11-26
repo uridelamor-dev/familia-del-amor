@@ -39,3 +39,14 @@
 .welcome-options small{display:block;font-size:12px;line-height:1.5;color:#687167;margin-top:7px}
 .lots .shop-welcome .welcome-browse{display:flex;width:100%;border:0;font-size:12px;margin-top:14px;padding:12px 4px;text-decoration:underline;text-underline-offset:4px}
 @media(max-width:650px){.lots dialog.shop-welcome{padding:28px 21px}.lots .shop-welcome h2{font-size:30px}.lots .welcome-options button{padding:18px 13px;gap:10px}.welcome-options strong{font-size:20px}}
+
+.lot-header nav{align-items:center}
+.lot-menu-toggle{display:none}
+@media(max-width:1000px){
+ .lot-header{position:relative;z-index:10}
+ .lots .lot-menu-toggle{display:grid;align-content:center;gap:4px;width:44px;height:44px;padding:10px;background:transparent;border:1px solid #ffffff30;color:inherit}
+ .lot-menu-toggle span{display:block;height:2px;background:currentColor}
+ .lot-header nav.open{display:flex;position:absolute;top:100%;right:5vw;flex-direction:column;align-items:stretch;gap:0;min-width:190px;padding:8px 14px;background:#171614;border-radius:0 0 12px 12px}
+ .lot-header nav a{display:flex;align-items:center;min-height:44px}
+ .lot-header .languages{padding:8px 0}
+}
