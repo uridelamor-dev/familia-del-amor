@@ -43,11 +43,12 @@
       const detalle = oferta ? '10 % de descuento en todos nuestros productos' : 'Regístrate y disfruta de nuestras promociones.';
       const registro = oferta ? 'Regístrate gratis' : '';
       banner.classList.toggle('club-banner-oferta', oferta);
-      launch.setAttribute('aria-label', `${titulo}. ${detalle}${registro ? '. ' + registro + '.' : ''}`);
-      const contenido = oferta
-        ? `<span class="club-banner-copy"><strong>${titulo}</strong><span>${detalle}</span><span>${registro}</span></span>`
-        : [0, 1].map(() => `<span class="club-banner-copy"><span>✦</span><strong>${titulo}</strong><span>·</span><span>${detalle}</span></span>`).join('');
-      launch.innerHTML = `<span class="club-banner-window" aria-hidden="true"><span class="club-banner-track">${contenido}</span></span>`;
+      launch.setAttribute('aria-label', `${titulo}. ${detalle}${registro ? '. Pulsa para registrarte gratis.' : ''}`);
+      const contenido = [0, 1].map(() => oferta
+        ? `<span class="club-banner-copy"><strong>${titulo}</strong> · ${detalle} · ${registro}</span>`
+        : `<span class="club-banner-copy"><span>✦</span><strong>${titulo}</strong><span>·</span><span>${detalle}</span></span>`).join('');
+      const llamada = oferta ? '<span class="club-banner-pulsa" aria-hidden="true">Pulsa aquí ↗</span>' : '';
+      launch.innerHTML = `<span class="club-banner-window" aria-hidden="true"><span class="club-banner-track">${contenido}</span></span>${llamada}`;
       const proximoCambio = ahora < inicioOferta ? inicioOferta : oferta ? finOferta : null;
       if (proximoCambio !== null) setTimeout(actualizarBanner, Math.min(proximoCambio - ahora, 2147483647));
     };
