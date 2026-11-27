@@ -40,7 +40,7 @@ const locals = {
     gallery: ["uploads/gallery/LaTapeta_Girona_01.jpg"]
   },
   cooperativa: {
-    name: "Cooperativa",
+    name: "La Cooperativa",
     desc: "Tradición local y cocina con identidad.",
     type: "Restaurante",
     slug: "cooperativa",

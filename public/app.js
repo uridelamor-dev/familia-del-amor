@@ -26,7 +26,7 @@ const companies = [
     locations: ["Girona · Avinguda Sant Francesc 7"]
   },
   {
-    name: "Cooperativa",
+    name: "La Cooperativa",
     desc: "Tradición local y cocina con identidad.",
     logo: "assets/logos/7.svg",
     slug: "cooperativa",
@@ -654,7 +654,7 @@ const teaserCards = [
   { name: "La Tapeta", loc: "Blanes",       slug: "la-tapeta-blanes", photo: "uploads/gallery/LaTapeta_Blanes_01.jpg",  logo: "assets/logos/6.svg" },
   { name: "La Tapeta", loc: "Lloret de Mar", slug: "la-tapeta-lloret", photo: "uploads/gallery/LaTapeta_Lloret_01.jpg",  logo: "assets/logos/6.svg" },
   { name: "La Tapeta", loc: "Girona",        slug: "la-tapeta-girona", photo: "uploads/gallery/LaTapeta_Girona_01.jpg",  logo: "assets/logos/6.svg" },
-  { name: "Cooperativa", loc: "Blanes",      slug: "cooperativa",    photo: "uploads/gallery/Cooperativa_208.jpg",     logo: "assets/logos/7.svg" },
+  { name: "La Cooperativa", loc: "Blanes",      slug: "cooperativa",    photo: "uploads/gallery/Cooperativa_208.jpg",     logo: "assets/logos/7.svg" },
   { name: "Can Mateu",   loc: "Tordera",     slug: "can-mateu",      photo: "uploads/gallery/CanMateu_STR04757.jpg",   logo: "assets/logos/3.svg" },
   { name: "La Tapa Ibérica", loc: "Tordera", slug: "la-tapa-iberica",photo: "uploads/gallery/TapaIberica_STR05479.jpg",logo: "assets/logos/4.svg" },
   { name: "Tribeca",     loc: "Palafolls",   slug: "tribeca",        photo: "uploads/gallery/Tribeca_01.jpg",          logo: "assets/logos/tribeca.png" },
@@ -771,7 +771,7 @@ const RESERVA_LOCALS = [
   { value: "La Tapeta - Blanes",           name: "La Tapeta",           sub: "Blanes" },
   { value: "La Tapeta - Lloret",           name: "La Tapeta",           sub: "Lloret de Mar" },
   { value: "La Tapeta - Girona",           name: "La Tapeta",           sub: "Girona" },
-  { value: "Cooperativa - Blanes",         name: "Cooperativa",         sub: "Blanes" },
+  { value: "Cooperativa - Blanes",         name: "La Cooperativa",         sub: "Blanes" },
   { value: "Can Mateu - Tordera",          name: "Can Mateu",           sub: "Tordera" },
   { value: "La Tapa Ibérica - Tordera",    name: "La Tapa Ibérica",     sub: "Tordera" },
   { value: "Botiga d'en Mateu - Tordera",  name: "Botiga d'en Mateu",   sub: "Tordera" },
