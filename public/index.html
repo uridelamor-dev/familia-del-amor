@@ -21,7 +21,7 @@
     <meta name="twitter:image" content="https://familia-del-amor.replit.app/assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" />
 
     <link rel="stylesheet" href="/css/base.css" />
-    <link rel="stylesheet" href="/styles.css?v=portada-compartida-20261126" />
+    <link rel="stylesheet" href="/styles.css?v=contacto-pie-20261127" />
       <link rel="stylesheet" href="/css/consentimiento.css" />
   <link rel="stylesheet" href="/calendar.css">
     <link rel="stylesheet" href="/alta.css">
@@ -81,6 +81,28 @@
   .place-city{margin-top:5px;font-size:9px;letter-spacing:.09em}
   .place-actions{gap:2px 5px;margin-top:8px}
   .place-actions a{padding-inline:8px;font-size:11px}
+}
+
+.places-preview{box-sizing:border-box;padding:34px 24px 42px}
+.places-heading{margin-bottom:26px}
+.places-grid{gap:12px}
+.place-card,.place-card--reverse{grid-template-columns:minmax(0,1.1fr) minmax(0,1.65fr);gap:10px;padding:7px}
+.place-card--reverse{grid-template-columns:minmax(0,1.65fr) minmax(0,1.1fr)}
+.place-photo{aspect-ratio:auto;align-self:stretch;position:relative}
+.place-photo img{position:absolute;inset:0}
+.place-body{padding:8px 0}
+.place-card h3{font-size:clamp(21px,3.8vw,30px)}
+.place-city{margin-top:4px}
+.place-actions{gap:4px;margin-top:7px}
+.place-actions a{font-size:11px;padding-inline:8px}
+@media(max-width:360px){.places-preview{padding-inline:12px}.place-card,.place-card--reverse{gap:6px}.place-actions a{padding-inline:6px}}
+@media(min-width:780px){
+ .places-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+ .place-card,.place-card--reverse{grid-template-columns:repeat(2,minmax(0,1fr));min-height:152px;gap:13px;padding:9px}
+ .place-card{background:#fffaf3}
+ .place-body{padding:10px 4px}
+ .place-actions{gap:6px;margin-top:12px}
+ .place-actions a{font-size:12px;padding-inline:10px}
 }
 #galeria{margin-bottom:0}
 .review-invite{text-align:center;margin:0 auto;padding:16px 20px 44px}
@@ -253,44 +275,16 @@
         </div>
       </div>
 
-      <!-- ENLACES A PÁGINAS SECUNDARIAS -->
-      <section class="block home-links">
-        <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
-          <a href="nosotros.html" class="card card-link" style="display:flex;flex-direction:column;gap:0.5rem;padding:1.4rem">
-            <div style="font-size:2rem">👨‍👩‍👧‍👦</div>
-            <strong data-i18n="nav_about" style="font-size:1.1rem">Nuestra historia</strong>
-            <p class="muted" style="margin:0;font-size:0.88rem" data-i18n="history_sub">Nuestra manera de hacer las cosas, desde dentro.</p>
-            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto" data-i18n="cta_about">Conocernos →</span>
-          </a>
-          <a href="eventos.html" class="card card-link" style="display:flex;flex-direction:column;gap:0.5rem;padding:1.4rem">
-            <div style="font-size:2rem">🎉</div>
-            <strong data-i18n="events_title" style="font-size:1.1rem">Celebraciones y eventos</strong>
-            <p class="muted" style="margin:0;font-size:0.88rem" data-i18n="events_text">Cumpleaños, comuniones, eventos de empresa… lo organizamos todo.</p>
-            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto" data-i18n="cta_more">Ver más →</span>
-          </a>
-          <a href="trabaja.html" class="card card-link" style="display:flex;flex-direction:column;gap:0.5rem;padding:1.4rem">
-            <div style="font-size:2rem">👷</div>
-            <strong data-i18n="jobs_title" style="font-size:1.1rem">Trabaja con nosotros</strong>
-            <p class="muted" style="margin:0;font-size:0.88rem" data-i18n="jobs_text">Envíanos tu CV y cuéntanos en qué área te gustaría aportar.</p>
-            <span style="color:var(--accent);font-size:0.82rem;font-weight:600;margin-top:auto" data-i18n="cta_more">Ver más →</span>
-          </a>
-        </div>
-      </section>
-
-      <!-- CONTACTO -->
       <section class="block home-extra" style="max-width:1100px;margin:0 auto"><div data-blocks="home_extra"></div></section>
-      <section id="contacto" class="block home-contact">
-        <div class="section-head">
-          <h2 data-i18n="contact_title" data-content-key="contact_title">Contacto</h2>
-          <p data-i18n="contact_text" data-content-key="contact_text">Para cualquier consulta, escríbenos.</p>
-        </div>
-        <a class="btn ghost" href="mailto:hola@familia-del-amor.com">hola@familia-del-amor.com</a>
-      </section>
-
     </main>
 
-    <footer class="footer">
-      <div class="footer-inner">
+    <footer id="contacto" class="footer">
+      <div class="footer-inner footer-inner-home">
+        <div class="footer-contact">
+          <span data-i18n="nav_contact">Contacto</span>
+          <a href="https://wa.me/34633129031" target="_blank" rel="noopener">WhatsApp</a>
+          <a href="mailto:oficina@la-tapeta.com">oficina@la-tapeta.com</a>
+        </div>
         <span style="font-size:0.8rem;color:var(--muted)">© Familia del Amor</span>
         <a href="privacidad.html" style="font-size:0.8rem;color:var(--muted);text-decoration:underline;text-underline-offset:2px" data-i18n="footer_privacy">Privacidad</a>
         <button type="button" class="pie-enlace" data-cookies>Cookies</button>
