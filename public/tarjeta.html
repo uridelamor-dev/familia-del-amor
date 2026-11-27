@@ -10,14 +10,15 @@
     <link rel="stylesheet" href="/css/base.css" />
     <link rel="stylesheet" href="tarjeta.css" />
     <link rel="stylesheet" href="tarjeta-club.css" />
-  </head>
+  <link rel="stylesheet" href="/css/mile-art.css?v=20261127">
+</head>
   <!-- La tarjeta de cliente: su cuenta. La abre el CLIENTE en su móvil, desde el enlace de
        WhatsApp o desde el pase que tiene guardado en la wallet.
 
        Sin sesión: la llave es el token de la URL, como en el cupón, el pulso y el kiosco. NO
        carga app.js ni auth.js. `noindex` y `no-referrer` para que el token no se filtre ni a
        un buscador ni por la cabecera Referer al pulsar un enlace. -->
-  <body class="tj-body tj-account">
+  <body data-mile-art class="tj-body tj-account">
     <main class="tj-wrap">
       <a class="tj-marca" href="/">Familia del Amor <span>El Club</span></a>
 

@@ -281,7 +281,15 @@ function renderLocal() {
   const mapEl = document.getElementById("localMap");
   const safeUrl = value => { try { const u=new URL(value, location.href); return ["https:","http:"].includes(u.protocol) ? u : null; } catch { return null; } };
   const cover = data.gallery[0] && safeUrl(data.gallery[0]);
-  if (cover) document.getElementById("localHero").style.setProperty("--hero-image", `url(${JSON.stringify(cover.href)})`);
+  const hero = document.getElementById("localHero");
+  const coverPhoto = hero.querySelector(".mile-cover-photo");
+  if (coverPhoto) {
+    coverPhoto.hidden = !cover;
+    if (cover) coverPhoto.src = cover.href;
+    else coverPhoto.removeAttribute("src");
+  } else if (cover) {
+    hero.style.setProperty("--hero-image", `url(${JSON.stringify(cover.href)})`);
+  }
   // Directions use the postal address, not an embed URL or a relative website URL.
   const address = !data.itinerant && data.locations.map(l => typeof l === "string" ? l : l.dir).find(Boolean);
   mapEl.replaceChildren();

@@ -56,7 +56,7 @@
     actualizarBanner();
     banner.append(launch);
     const header = document.querySelector('header.top, header.lot-header');
-    if (header) {
+    if (header && !document.body.hasAttribute('data-mile-art')) {
       const navigation = header.querySelector('nav');
       let scheduled = false;
       const updateHeader = () => {

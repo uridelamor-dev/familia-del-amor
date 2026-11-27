@@ -1,0 +1,184 @@
+/* Sistema editorial de Mile Art Studio, limitado a las páginas públicas. */
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,700;9..144,900&display=swap");
+
+:root:has([data-mile-art]) {
+  --ma-paper:#fbfaf6; --ma-cream:#f1eee4; --ma-ink:#1b1f19; --ma-green:#2c4a3e;
+  --ma-terra:#904d38; --ma-gold:#ebb84a; --ma-muted:#5e6355;
+  --ma-serif:"Fraunces",Georgia,serif; --ma-sans:"DM Sans",system-ui,sans-serif;
+  --ma-header:64px; --ma-gutter:clamp(16px,4vw,56px);
+  --public-terracotta:var(--ma-terra);
+  scroll-padding-top:calc(var(--ma-header) + 62px);
+}
+body[data-mile-art]{background:var(--ma-cream);color:var(--ma-ink);font-family:var(--ma-sans);overflow-x:clip}
+[data-mile-art] :is(h1,h2,h3){font-family:var(--ma-serif);line-height:1.08;overflow-wrap:anywhere}
+[data-mile-art] :is(header.top,header.lot-header){position:sticky;top:0;z-index:60;height:var(--ma-header);background:var(--ma-ink);padding-inline:var(--ma-gutter);overflow:visible}
+[data-mile-art] :is(.nav-toggle[data-menu-publico],#navToggle,.lot-menu-toggle){display:grid;align-content:center;position:relative;z-index:26;min-width:44px;min-height:44px;margin-left:auto}
+[data-mile-art] :is(header.top,header.lot-header) nav{
+  display:none;position:absolute;inset:100% var(--ma-gutter) auto auto;z-index:25;
+  width:min(320px,calc(100vw - 32px));max-height:calc(100dvh - var(--ma-header) - 12px);
+  margin:0;padding:12px;overflow:auto;background:var(--ma-ink);color:var(--ma-paper);
+  border:1px solid var(--ma-gold);opacity:1;visibility:visible;transform:none;flex-direction:column;align-items:stretch;gap:4px
+}
+[data-mile-art] :is(header.top,header.lot-header) nav.open{display:flex;pointer-events:auto}
+[data-mile-art] :is(header.top,header.lot-header) nav a{display:block;min-height:44px;padding:10px;color:var(--ma-paper);white-space:normal}
+[data-mile-art] .club-banner{top:var(--ma-header);z-index:40;background:var(--ma-gold);color:var(--ma-ink);border-block:2px solid var(--ma-ink);box-shadow:none}
+[data-mile-art] .club-banner-copy{font-family:var(--ma-serif);font-weight:700}
+[data-mile-art] .club-banner-copy strong,[data-mile-art] .club-banner-copy>span:first-child{color:inherit;font-weight:900}
+[data-mile-art] .club-banner-pulsa{background:var(--ma-ink);color:var(--ma-gold);border-radius:0}
+@media(prefers-reduced-motion:reduce){
+  [data-mile-art] .club-banner-track{animation:none;width:100%}
+  [data-mile-art] .club-banner-copy{min-width:0;white-space:normal;gap:.4em;flex-wrap:wrap}
+  [data-mile-art] .club-banner-copy:nth-child(2){display:none}
+}
+
+[data-mile-art] .mile-home-cover{
+  display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);align-items:center;
+  gap:clamp(20px,6vw,90px);padding:clamp(32px,7vw,86px) max(var(--ma-gutter),calc((100% - 1230px)/2));
+  background:var(--ma-terra);color:var(--ma-cream);text-align:left;min-height:0
+}
+[data-mile-art] .mile-home-cover .hero-inner{width:100%;margin:0;padding:0}
+[data-mile-art] .mile-home-cover .hero-brand{position:relative;overflow:hidden;aspect-ratio:777/123;margin:0}
+[data-mile-art] .mile-home-cover .hero-brand img,.mile-brand-mark img{
+  position:absolute;display:block;max-width:none;width:128.7%;left:-11.58%;top:-315.4%;
+  height:auto;transform:none;filter:brightness(0) invert(1)
+}
+[data-mile-art] .mile-home-cover .hero-heritage{
+  position:static;margin:16px 0 0;font:700 clamp(19px,3vw,32px)/1.1 var(--ma-serif);
+  color:var(--ma-cream);letter-spacing:.04em;text-transform:uppercase
+}
+[data-mile-art] .mile-home-cover .hero-cta{position:static;justify-content:flex-start;margin:24px 0 0}
+[data-mile-art] .mile-home-cover .hero-cta .btn{background:var(--ma-paper);color:var(--ma-ink);box-shadow:5px 5px 0 var(--ma-ink)}
+.mile-collage{position:relative;isolation:isolate;min-width:0;aspect-ratio:1/1;max-width:545px;width:100%;margin:auto}
+.mile-collage figure{position:absolute;margin:0;border:3px solid var(--ma-cream);background:#32221a;box-shadow:6px 7px 0 var(--ma-ink)}
+.mile-collage img{display:block;width:100%;height:100%;object-fit:contain}
+.mile-collage .mile-family{inset:3% 13% 18% 9%;transform:rotate(-3deg)}
+.mile-collage .mile-food{inset:57% 66% 4% 3%;transform:rotate(-8deg)}
+.mile-collage .mile-venue{inset:49% 3% 6% 58%;transform:rotate(7deg)}
+.mile-year{position:absolute;top:1%;right:1%;display:grid;place-content:center;aspect-ratio:1;width:22%;border:2px solid var(--ma-ink);border-radius:50%;background:var(--ma-gold);color:var(--ma-ink);font:900 clamp(15px,4vw,42px)/1 var(--ma-serif);transform:rotate(10deg)}
+
+[data-mile-art] .mile-cover{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);align-items:center;gap:clamp(16px,4vw,48px);
+  max-width:1320px;min-height:0;margin:clamp(18px,4vw,40px) var(--ma-gutter) 28px;padding:clamp(18px,4vw,36px);
+  background:var(--ma-ink);color:var(--ma-paper);text-align:left;border:2px solid var(--ma-ink);box-shadow:7px 7px 0 var(--ma-gold)
+}
+@media(min-width:1450px){[data-mile-art] .mile-cover{margin-inline:auto}}
+[data-mile-art] .mile-cover .eyebrow{color:var(--ma-gold)}
+[data-mile-art] .mile-cover :is(h1,p){color:var(--ma-paper);margin:0 0 10px}
+[data-mile-art] .mile-cover h1{font-size:clamp(34px,5vw,66px);letter-spacing:-.035em;font-weight:900}
+[data-mile-art] .mile-cover .hero-cta{justify-content:flex-start}
+.mile-cover-photo{display:block;width:100%;max-height:430px;object-fit:contain}
+[data-mile-art] main>.block:not(#galeria){padding-block:clamp(24px,4vw,50px)}
+[data-mile-art] :is(.section-head h2,.places-heading h2){font-family:var(--ma-serif);font-size:clamp(30px,6vw,63px);letter-spacing:-.035em}
+[data-mile-art] :is(.card,.local-info-card,.form){border-radius:0;border:1px solid var(--ma-ink);background:var(--ma-paper);box-shadow:4px 4px 0 #bd9a8066;min-width:0;overflow-wrap:anywhere}
+[data-mile-art] .block:has(> [data-blocks]:empty){display:none}
+[data-mile-art] :is(.local-info-card,#localGallery,.menu-page,#companies) img{object-fit:contain}
+[data-mile-art] :is(.historia-quote, .eventos-cta){background:var(--ma-green);color:var(--ma-paper);border-radius:0}
+[data-mile-art] .eventos-cta :is(h2,p){color:inherit}
+[data-mile-art] .btn,.mile-cta{border-radius:0;font-family:var(--ma-sans);font-weight:700;min-height:44px;white-space:normal;box-shadow:3px 3px 0 var(--ma-gold)}
+
+[data-mile-art] .places-preview{max-width:1400px;padding:clamp(30px,7vw,100px) var(--ma-gutter)}
+[data-mile-art] .places-heading{display:flex;justify-content:space-between;align-items:end;gap:16px;flex-wrap:wrap;text-align:left}
+[data-mile-art] .places-heading h2{font-size:clamp(48px,10vw,120px);font-weight:900;max-width:8ch;line-height:.9}
+[data-mile-art] .places-heading p{max-width:16ch;color:var(--ma-terra);font:italic 500 clamp(16px,2.2vw,24px)/1.2 var(--ma-serif)}
+[data-mile-art] .places-grid{display:block;border-top:1px solid var(--ma-ink)}
+[data-mile-art] .place-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:18px 0;margin:0;border:0;border-bottom:1px solid var(--ma-ink);border-radius:0;background:transparent}
+[data-mile-art] .place-photo{display:none}
+[data-mile-art] .place-body{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(110px,.45fr) auto;align-items:center;text-align:left;gap:12px;padding:0}
+[data-mile-art] .place-card h3{color:var(--ma-ink);font:900 clamp(32px,6vw,75px)/.99 var(--ma-serif)}
+[data-mile-art] .place-city{margin:0;color:var(--ma-terra)}
+[data-mile-art] .place-actions{margin:0;justify-content:flex-start}
+[data-mile-art] .place-actions a{border-radius:0;border:1px solid var(--ma-ink);white-space:normal}
+[data-mile-art] .place-actions .place-book{background:var(--ma-ink)}
+[data-mile-art] .place-actions .place-more{color:var(--ma-ink)}
+.mile-peek{position:fixed;top:0;left:0;width:min(285px,27vw);height:min(340px,50vh);z-index:34;pointer-events:none;border:3px solid var(--ma-paper);background:var(--ma-ink);box-shadow:6px 6px 0 var(--ma-ink);overflow:hidden}
+.mile-peek img{width:100%;height:100%;object-fit:contain}
+
+[data-mile-art] #galeria,[data-mile-art] .review-invite{max-width:none;background:var(--ma-green);color:var(--ma-paper);margin:0;padding-inline:var(--ma-gutter)}
+[data-mile-art] #galeria .section-head h2{color:var(--ma-paper);font-size:clamp(48px,13vw,135px)}
+[data-mile-art] #galeria .section-head p{color:var(--ma-gold);font-family:var(--ma-serif)}
+[data-mile-art] #galeria .galeria-grid{overflow-x:auto;scroll-snap-type:x proximity}
+[data-mile-art] #galeria .carousel-track{width:max-content;animation:none}
+[data-mile-art] #galeria .carousel-slide{scroll-snap-align:start;background:var(--ma-ink);border:3px solid var(--ma-paper);border-radius:0;box-shadow:5px 5px 0 var(--ma-ink)}
+[data-mile-art] #galeria .carousel-slide img{object-fit:contain}
+
+[data-mile-art] :is(dialog,.reserva-popup .popup-card,#reservaPopup .popup-card,#checkout){
+  border:2px solid var(--ma-ink);border-radius:0;box-shadow:8px 8px 0 var(--ma-ink);background:var(--ma-paper);color:var(--ma-ink);
+  max-height:calc(100dvh - 28px);overscroll-behavior:contain
+}
+[data-mile-art] :is(.reserva-dialog #reservas,.club-dialog,.review-dialog,#checkout){max-width:calc(100vw - 24px);overflow:auto}
+[data-mile-art] .reserva-dialog #reservas{max-width:none;max-height:calc(100dvh - 34px)}
+[data-mile-art] :is(.club-story,.review-dialog-head,.reserva-dialog #reservas .section-head){background:var(--ma-gold);color:var(--ma-ink);padding:14px 18px}
+[data-mile-art] .reserva-dialog #reservas .section-head{padding-right:44px}
+[data-mile-art] :is(.club-story,.review-dialog-head,.reserva-dialog #reservas .section-head) :is(h2,p){color:var(--ma-ink)}
+[data-mile-art] :is(form,.alta-wrap,.club-dialog,.reserva-dialog) :is(input:not([type=checkbox]):not([type=radio]),select,textarea){
+  max-width:100%;min-width:0;border-radius:0;border-color:var(--ma-muted);font-family:var(--ma-sans)
+}
+[data-mile-art] :is(.alta-btn,.profile-skip,.reserva-submit){border-radius:0}
+[data-mile-art] :is(.tj-wrap,.cup-wrap,.legal){overflow-wrap:anywhere}
+[data-mile-art] :is(.tj-card,.alta-card,.cup-card,.lot-card,.enterprise){border-radius:0;font-family:var(--ma-sans)}
+[data-mile-art] :is(.tj-title,.alta-title,.cup-title){font-family:var(--ma-serif)}
+
+.mile-brand-mark{position:relative;display:block;overflow:hidden;aspect-ratio:777/123;width:min(840px,100%);margin:0 auto 24px}
+.mile-credit{
+  display:flex;justify-content:center;align-items:baseline;flex-wrap:wrap;gap:10px 22px;padding:20px var(--ma-gutter);
+  border-top:1px solid #ffffff45;background:var(--ma-ink);color:var(--ma-paper)
+}
+.mile-credit-label{color:var(--ma-gold);text-transform:uppercase;letter-spacing:.12em;font:700 .77rem var(--ma-sans)}
+.mile-credit a{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;color:var(--ma-paper);text-decoration:none}
+.mile-credit strong{font:700 clamp(24px,4vw,38px)/1.1 var(--ma-serif)}
+.mile-credit a span{text-decoration:underline;text-underline-offset:3px}
+[data-mile-art] .footer{background:var(--ma-ink)}
+[data-mile-art] .footer-inner{flex-wrap:wrap}
+@media(max-width:900px){
+  [data-mile-art] .place-card{grid-template-columns:minmax(85px,25%) minmax(0,1fr);align-items:stretch}
+  [data-mile-art] .place-card--reverse{grid-template-columns:minmax(0,1fr) minmax(85px,25%)}
+  [data-mile-art] .place-photo{display:block;grid-column:1;grid-row:1;position:relative;aspect-ratio:auto;background:#e7dac8;border-radius:0}
+  [data-mile-art] .place-photo img{position:absolute;inset:0;object-fit:contain}
+  [data-mile-art] .place-card--reverse .place-photo{grid-column:2}
+  [data-mile-art] .place-body{grid-column:2;grid-template-columns:minmax(0,1fr);align-content:center;gap:5px}
+  [data-mile-art] .place-card--reverse .place-body{grid-column:1}
+  [data-mile-art] .place-card h3{font-size:clamp(25px,7vw,48px)}
+}
+@media(max-width:650px){
+  [data-mile-art] :is(.mile-cover,.mile-home-cover){grid-template-columns:minmax(0,1fr)}
+  .mile-cover-photo{max-height:290px}
+  .mile-collage{max-width:360px}
+  [data-mile-art] .mile-home-cover .hero-cta{margin-top:18px}
+  [data-mile-art] .review-dialog{padding:12px}
+}
+[data-mile-art] header.lot-header{min-height:var(--ma-header);padding-block:0}
+[data-mile-art] .lot-menu-toggle{gap:4px;padding:10px;background:transparent;border:1px solid #ffffff55;color:var(--ma-paper)}
+[data-mile-art] .lot-menu-toggle span{background:currentColor}
+[data-mile-art].lots{--forest:var(--ma-green);--paper:var(--ma-cream);--gold:var(--ma-gold)}
+[data-mile-art] .lot-hero{background:var(--ma-terra);color:var(--ma-paper)}
+[data-mile-art] .lot-hero img{object-fit:contain}
+[data-mile-art] :is(.tj-titular,.cup-wrap h1){font-family:var(--ma-serif)}
+[data-mile-art] :is(.tj-card,.cup-card){border:1px solid var(--ma-ink);background:var(--ma-paper);box-shadow:5px 6px 0 #bd9a8066}
+[data-mile-art] :is(.alta-btn,.reserva-submit){background:var(--ma-terra);color:#fff}
+[data-mile-art] .places-grid{counter-reset:mile-local}
+[data-mile-art] .place-card{counter-increment:mile-local}
+[data-mile-art] .place-card h3::before{
+  content:counter(mile-local,decimal-leading-zero);
+  display:inline-block;margin-right:.55rem;vertical-align:middle;color:var(--ma-muted);
+  font:700 .72rem/1 var(--ma-sans);letter-spacing:.08em
+}
+[data-mile-art] #galeria .carousel-track{align-items:center;gap:clamp(14px,3vw,25px);padding:10px 8px}
+[data-mile-art] #galeria .carousel-slide img{border-radius:0}
+[data-mile-art] #galeria .carousel-slide:nth-child(4n+1){width:clamp(160px,26vw,310px)}
+[data-mile-art] #galeria .carousel-slide:nth-child(4n+1) img{height:clamp(210px,31vw,410px)}
+[data-mile-art] #galeria .carousel-slide:nth-child(4n+2) img{height:clamp(145px,22vw,280px)}
+[data-mile-art] #galeria .carousel-slide:nth-child(4n+3) img{height:clamp(190px,26vw,330px)}
+[data-mile-art] #galeria .galeria-grid{cursor:auto}
+[data-mile-art] .legal>.club-banner{width:100vw;margin-inline:calc(50% - 50vw)}
+[data-mile-art] .club-story{border-radius:0}
+[data-mile-art] .place-actions{position:relative;z-index:35}
+[data-mile-art] :is(header.top,header.lot-header) nav{transition:none}
+[data-mile-art] .ck{background:var(--ma-paper);border-top:2px solid var(--ma-ink)}
+[data-mile-art] .ck-btn{border-radius:0;border-color:var(--ma-ink);color:var(--ma-ink)}
+[data-mile-art] .ck-btn-si{background:var(--ma-ink);color:var(--ma-paper)}
+
+/* Retrato de Historia: encuadre horizontal centrado con las caras en la parte alta. */
+[data-mile-art] .mile-history-cover .mile-cover-photo{
+  width:100%;height:auto;aspect-ratio:16/10;max-height:none;
+  object-fit:cover;object-position:center top
+}

@@ -572,6 +572,8 @@ function applyContentOverrides() {
     if (logo) logo.src = contentCache.site_logo_url;
   }
   if (contentCache.hero_image_url) {
+    const foto = document.getElementById("mileFamilyPhoto");
+    if (foto) foto.src = contentCache.hero_image_url;
     document.documentElement.style.setProperty(
       "--hero-image",
       `url(\"${contentCache.hero_image_url}\")`
@@ -737,11 +739,12 @@ function renderGallery() {
   const imgs = urls.map(url =>
     `<div class="carousel-slide"><img src="${url}" alt="Foto del local" loading="lazy" /></div>`
   ).join("");
-  grid.innerHTML = `<div class="carousel-track" id="carouselTrack">${imgs}${imgs}</div>`;
+  const editorial = document.body.hasAttribute("data-mile-art");
+  grid.innerHTML = `<div class="carousel-track" id="carouselTrack">${imgs}${editorial ? "" : imgs}</div>`;
   grid.querySelectorAll("img").forEach(img => {
     img.addEventListener("error", () => img.closest(".carousel-slide")?.remove(), { once: true });
   });
-  startCarousel();
+  if (!editorial) startCarousel();
 }
 
 function startCarousel() {

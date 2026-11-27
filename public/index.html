@@ -117,8 +117,9 @@
 .review-venue[aria-disabled]{color:#71665e}
 .review-venue[aria-disabled]:hover{text-decoration:none}
 .review-venue small{color:#71665e;text-align:right}
-</style></head>
-  <body>
+</style><link rel="stylesheet" href="/css/mile-art.css?v=20261127">
+</head>
+  <body data-mile-art>
 
     <header class="top">
       <div class="logo">
@@ -145,13 +146,19 @@
     <main>
 
       <!-- HERO -->
-      <section class="hero public-cover" data-edit-key="hero_image_url">
+      <section class="hero public-cover mile-home-cover" data-edit-key="hero_image_url">
         <div class="hero-inner">
           <h1 class="hero-brand" aria-label="Familia del Amor"><span class="hero-title-space" aria-hidden="true">Familia del Amor</span><img src="assets/logos/Copia de Logo_proposta_DEL AMOR (1000 x 1000 px) (1920 x 1080 px).png" alt="Familia del Amor" /></h1>
           <p class="hero-heritage">Empresa familiar desde 1964</p>
           <div class="hero-cta">
             <a class="btn" href="#reservas" data-i18n="hero_cta" data-content-key="hero_cta">Reservar mesa</a>
           </div>
+        </div>
+        <div class="mile-collage" aria-hidden="true">
+          <figure class="mile-family"><img id="mileFamilyPhoto" src="/9175b3db-0a64-4326-a418-315d777c256b.JPG" alt=""></figure>
+          <figure class="mile-food"><img src="/uploads/gallery/TapaIberica_STR05644.jpg" alt=""></figure>
+          <figure class="mile-venue"><img src="/uploads/gallery/Cooperativa_208.jpg" alt=""></figure>
+          <span class="mile-year">1964</span>
         </div>
       </section>
 
@@ -279,6 +286,7 @@
     </main>
 
     <footer id="contacto" class="footer">
+      <span class="mile-brand-mark"><img src="/assets/logos/Copia%20de%20Logo_proposta_DEL%20AMOR%20(1000%20x%201000%20px)%20(1920%20x%201080%20px).png" alt="Familia del Amor" loading="lazy"></span>
       <div class="footer-inner footer-inner-home">
         <div class="footer-contact">
           <span data-i18n="nav_contact">Contacto</span>
@@ -290,6 +298,9 @@
         <button type="button" class="pie-enlace" data-cookies>Cookies</button>
         <a class="btn ghost" href="login.html" style="font-size:0.75rem;opacity:0.5" data-i18n="footer_staff">Acceso interno</a>
       </div>
+    <div class="mile-credit"><span class="mile-credit-label">Diseño web</span>
+  <a href="https://www.instagram.com/mileartstudio/" target="_blank" rel="noopener noreferrer"><strong>Mile Art Studio</strong><span>@mileartstudio ↗</span></a>
+</div>
     </footer>
 
     <!-- BOTÓN WHATSAPP FLOTANTE -->
@@ -300,13 +311,14 @@
     <script src="datepicker.js"></script>
     <script src="/js/content-preview.js"></script>
     <script src="/reservas-modal.js?v=local-20261126"></script>
-    <script src="app.js?v=landing-approved-20261126"></script>
+    <script src="app.js?v=20261127-mile-art"></script>
     <script src="/js/resenas-locales.js"></script>
+    <script src="/js/mile-art-locales.js?v=20261127-acciones"></script>
       <script src="/js/consentimiento.js"></script>
     <script src="/js/meta.js"></script>
   <script src="/calendar.js"></script>
     <script src="/club-profile.js"></script>
-    <script src="/club.js?v=black-friday-20261126"></script>
+    <script src="/club.js?v=20261127-mile-art"></script>
 <script>
 document.querySelectorAll('[data-reserva-local]').forEach(link=>link.addEventListener('click',()=>{const select=document.getElementById('localSelect');select.value=link.dataset.reservaLocal;select.dispatchEvent(new Event('change',{bubbles:true}));}));
 </script></body>
