@@ -57,11 +57,14 @@
     banner.append(launch);
     const header = document.querySelector('header.top, header.lot-header');
     if (header) {
+      const navigation = header.querySelector('nav');
       let scheduled = false;
       const updateHeader = () => {
-        const pinned = banner.getBoundingClientRect().top <= 0;
-        header.classList.toggle('club-header-away', pinned);
-        header.inert = pinned;
+        const menuOpen = navigation?.classList.contains('open') ?? false;
+        const hideHeader = !menuOpen && banner.getBoundingClientRect().top <= 0;
+        header.classList.toggle('club-header-menu-open', menuOpen);
+        header.classList.toggle('club-header-away', hideHeader);
+        header.inert = hideHeader;
         scheduled = false;
       };
       window.addEventListener('scroll', () => {
@@ -70,6 +73,9 @@
           requestAnimationFrame(updateHeader);
         }
       }, { passive: true });
+      if (navigation) {
+        new MutationObserver(updateHeader).observe(navigation, {attributes:true, attributeFilter:['class']});
+      }
       new ResizeObserver(updateHeader).observe(banner);
       updateHeader();
     }

@@ -43,6 +43,7 @@
   .club-banner-oferta .club-banner-copy{min-width:0;width:100%;white-space:normal}
   .club-banner-oferta .club-banner-copy:nth-child(2){display:none}
 }
+header:is(.top,.lot-header).club-header-menu-open{z-index:21}
 .top.club-header-away{transform:translateY(-100%);visibility:hidden;pointer-events:none}
 
 /* Mismo terracota que el banner; limitado al Club público. */
