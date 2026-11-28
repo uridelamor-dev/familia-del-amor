@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {listadoFacturasSQL} from '../src/modules/facturas/fecha-listado.js';
 
 const source = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
-const start = source.indexOf('app.get("/api/facturas",');
+const start = source.indexOf('async function actualizarCuadreVisibleTickets(');
 const end = source.indexOf('// Editar los campos de una factura', start);
 assert.ok(start >= 0 && end > start);
 

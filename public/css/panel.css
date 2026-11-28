@@ -2385,3 +2385,41 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
  .fac-review-modal .fac-review-data .form-grid .field:has([data-fic="proveedor"], [data-pf="proveedor"], #rev-proveedor, #hist-proveedor){grid-column:1/-1}
 }
 @media(max-width:420px){.fac-review-modal .fac-review-data .form-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* Dashboard · ocupación y actividad de caja. */
+.dash-live{margin-bottom:16px}
+.dash-live-head,.dash-live-actions,.dash-live-kpis,.dash-live-row,.dash-live-tickets li{display:flex;align-items:center;gap:12px}
+.dash-live-head,.dash-live-row,.dash-live-tickets li{justify-content:space-between}
+.dash-live-head{flex-wrap:wrap}
+.dash-live-actions{flex-wrap:wrap;font-size:13px}
+.dash-live-kpis{align-items:stretch;gap:20px;margin:8px 0 14px}
+.dash-live-kpis span,.dash-live-kpis strong{display:block}
+.dash-live-kpis span{font-size:13px;color:var(--ink3)}
+.dash-live-kpis strong{font-size:clamp(20px,3vw,30px);line-height:1.25}
+.dash-live-list{border-top:1px solid var(--border)}
+.dash-live-list>details,.dash-live-list>.dash-live-row{border-bottom:1px solid var(--border)}
+.dash-live-list>:last-child{border-bottom:0}
+.dash-live-row{padding:9px 0}
+summary.dash-live-row{cursor:pointer}
+summary.dash-live-row::marker{content:""}
+summary.dash-live-row::-webkit-details-marker{display:none}
+.dash-live-name{flex:1;font-weight:600;min-width:0;overflow-wrap:anywhere}
+summary .dash-live-name::before{content:"›";display:inline-block;width:14px}
+details[open]>summary .dash-live-name::before{transform:rotate(90deg)}
+.dash-live-count{color:var(--ink3);font-size:13px;text-align:right}
+.dash-live-amount{text-align:right;min-width:74px}
+.dash-live-detail{padding:0 0 8px 14px;font-size:13px}
+.dash-live-tickets{list-style:none;margin:4px 0;padding:0}
+.dash-live-tickets li{padding:4px 0}
+.dash-business-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.dash-business-metrics>.dash-metric{padding:12px;border:1px solid var(--border);border-radius:12px}
+.dash-business-metrics .dash-metric-value{overflow-wrap:anywhere}
+.dash-buy-detail{border-top:1px solid var(--border);padding-top:12px;margin-top:12px}
+.dash-buy-detail summary,.dash-sales-breakdown summary{cursor:pointer;font-weight:600}
+@media(max-width:650px){
+  .dash-business-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .dash-live-row{gap:6px;font-size:13px}
+  .dash-live-count{font-size:11px;max-width:8ch}
+  .dash-live-amount{min-width:62px}
+}
+.dash-live-centros{padding-bottom:8px;border-bottom:1px solid var(--border)}

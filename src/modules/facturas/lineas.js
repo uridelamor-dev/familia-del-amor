@@ -153,16 +153,28 @@ export function normalizarLineas(crudas, tipo = "factura") {
   return crudas.map((l, i) => normalizarLinea(l, i, tipo)).filter((l) => l.descripcion || l.importe != null);
 }
 
-// ¿Cuadran las líneas con la base imponible de la cabecera?
+// Cuando un ticket antiguo no conserva el indicador, solo se reconoce el IVA
+// incluido si todos los importes cuadran con el total fiscal y no con la base.
+export function referenciaTicketConIva(tipo, documento, suma, todasValoradas) {
+  if (tipo !== 'ticket' || !todasValoradas) return null;
+  const base=n(documento.base_imponible), iva=n(documento.cuota_iva), total=n(documento.total);
+  if (base == null || iva == null || total == null || Math.abs(total - base) < 0.03) return null;
+  if (Math.abs(red(base + iva) - total) > 0.01 || Math.abs(red(suma) - total) > 0.01) return null;
+  return total;
+}
+
 export function validarSuma(lineas = [], baseImponible, tipo = "factura", documento = {}) {
-  const ivaIncluido = documento.lineas_iva_incluido === true;
   const neta = n(baseImponible), cuota = n(documento.cuota_iva);
-  // Solo una confirmación explícita cambia la referencia. Recargos y retenciones
-  // no forman parte del precio con IVA; nunca se usa la diferencia para inventarlos.
-  const base = ivaIncluido ? (neta != null && cuota != null ? red(neta + cuota) : null) : neta;
-  const referencia = ivaIncluido ? "base más IVA" : "base imponible";
   const conImporte = lineas.filter((l) => l.importe != null);
-  const suma = Math.round((conImporte.reduce((s, l) => s + Number(l.importe), 0) + sumaCargosBase(documento.cargos_base,ivaIncluido)) * 100) / 100;
+  const sumaLineas = conImporte.reduce((s, l) => s + Number(l.importe), 0);
+  const ivaExplicito = documento.lineas_iva_incluido === true;
+  const suma = red(sumaLineas + sumaCargosBase(documento.cargos_base,ivaExplicito));
+  const brutoTicket = ivaExplicito ? null : referenciaTicketConIva(tipo,{...documento,base_imponible:neta},suma,
+    lineas.length > 0 && conImporte.length === lineas.length && !leerCargosBase(documento.cargos_base).length);
+  const ivaIncluido = ivaExplicito || brutoTicket != null;
+  // Los recargos y las retenciones no forman parte del precio de cada producto.
+  const base = brutoTicket ?? (ivaExplicito ? (neta != null && cuota != null ? red(neta + cuota) : null) : neta);
+  const referencia = brutoTicket != null ? "total con IVA" : ivaIncluido ? "base más IVA" : "base imponible";
 
   if (!lineas.length && !leerCargosBase(documento.cargos_base).length) return { referencia, iva_incluido: ivaIncluido, cuadra: false, motivo: "sin_lineas", suma: 0, base, diferencia: null };
   if (base == null && tipo === "albaran" && !ivaIncluido) return { referencia, iva_incluido: ivaIncluido,cuadra:true,motivo:"sin_valorar",suma:conImporte.length?suma:null,base:null,diferencia:null,dudosas:lineas.filter(l=>l.dudosa).length};

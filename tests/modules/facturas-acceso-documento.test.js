@@ -24,7 +24,8 @@ test('una factura marcada «somos nosotros» se puede abrir para corregir desde 
  const start=s.indexOf('app.get("/api/facturas/documento/:id",');
  const end=s.indexOf('\n});',start)+4;
  let handler;
- vm.runInNewContext(s.slice(start,end),{
+ const cuadre=s.slice(s.indexOf('async function actualizarCuadreVisibleTickets('),s.indexOf('app.get("/api/facturas",'));
+ vm.runInNewContext(cuadre+s.slice(start,end),{
   app:{get:(ruta,auth,fn)=>{handler=fn;}},requireAuth:()=>()=>{},
   dbGet:async()=>({...factura}),puedeAccederLocal:access,
   estadoPago:()=> 'pendiente',instanteMadrid:()=>({fecha:'2026-11-04'})

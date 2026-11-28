@@ -1349,6 +1349,42 @@ function graficoVentasDashboard(per, mensaje) {
   if(serie.length===1)return `<div class="dash-sales-trend"><b>Ventas del día</b><p>${esc(fechaCorta(serie[0].dia))} · ${eur(serie[0].ventas)}</p></div>`;
   return `<div class="dash-sales-trend"><div class="between"><b>Ventas por día</b><span class="mut">Importes en euros</span></div>${area({valores:serie.map(d=>Number(d.ventas)),etiquetas:serie.map(d=>fechaCorta(d.dia))},{h:140,fmt:eur})}<div class="between mut"><span>${esc(fechaCorta(serie[0].dia))}</span><span>${esc(fechaCorta(serie.at(-1).dia))}</span></div></div>`;
 }
+function renderLocalesAhora(datos, abiertos = new Set()) {
+  const enlace = '<a href="https://my.agorapos.com/#/occupancy" target="_blank" rel="noopener">Ver en My Ágora</a>';
+  const saldo = importe => importe == null ? 'Sin datos' : eur2(importe / 100);
+  const hora = datos?.actualizado ? new Date(datos.actualizado).toLocaleTimeString('es-ES', {
+    timeZone:'Europe/Madrid',hour:'2-digit',minute:'2-digit',
+  }) : '';
+  const c = datos?.cobertura;
+  const cobertura = (n, total) => n === total ? '' : ` · ${num(n)} de ${num(total)} locales`;
+  const titulo = (l) => `<span class="dash-live-name">${esc(nombreCortoLocal(l.local))}</span>`;
+  const zonas = [['mesas','Mesas'],['barra','Barra'],['otras','Otras ubicaciones']];
+  const ocupacion = l => l.capacidad > 0 ? l.ocupadas / l.capacidad : -1;
+  const filas = [...(datos?.porLocal || [])].sort((a,b)=>Number(b.disponible)-Number(a.disponible)
+    || ocupacion(b)-ocupacion(a) || (b.ocupadas || 0)-(a.ocupadas || 0));
+  const lista = filas.map(l=>{
+    if (!l.disponible) return `<div class="dash-live-row">${titulo(l)}<span class="mut">Sin datos del TPV</span></div>`;
+    const centros = l.porCentro?.filter(c=>c.nombre) || [];
+    const resumenCentros = centros.length > 1 ? `<ul class="dash-live-tickets dash-live-centros">${centros.map(c=>`<li>
+      <span>${esc(c.nombre)} · ${num(c.ocupadas)} ${c.ocupadas===1?'ocupada':'ocupadas'}</span><b>${saldo(c.pendienteCentimos)}</b></li>`).join('')}</ul>` : '';
+    const detalle = l.tickets.length ? `<ul class="dash-live-tickets">${l.tickets.map(t=>`<li>
+      <span>${esc([t.centro,t.ubicacion].filter(Boolean).join(' · ') || 'Sin ubicación asignada')}</span>
+      <b>${saldo(t.pendienteCentimos)}</b></li>`).join('')}</ul>` : '<p class="mut">Sin tickets abiertos.</p>';
+    return `<details data-ahora-local="${esc(l.local)}" ${abiertos.has(l.local)?'open':''}>
+      <summary class="dash-live-row">${titulo(l)}<span class="dash-live-count">${num(l.ocupadas)}${l.capacidad==null?'':` de ${num(l.capacidad)}`} ${l.ocupadas===1?'ocupada':'ocupadas'}</span>
+        <strong class="dash-live-amount tnum">${saldo(l.pendienteCentimos)}</strong></summary>
+      <div class="dash-live-detail"><p class="mut">${zonas.filter(([z])=>l.zonas[z].ocupadas || l.zonas[z].total).map(([z,etiqueta])=>`${etiqueta} ${num(l.zonas[z].ocupadas)}${l.zonas[z].total==null?'':` de ${num(l.zonas[z].total)}`}`).join(' · ')}</p>${resumenCentros}${detalle}</div></details>`;
+  }).join('');
+  return `<div class="ch dash-live-head"><div><h3 id="dash-live-title">Locales ahora</h3>
+    <span class="mut">${hora ? `Última lectura ${esc(hora)}` : datos === undefined ? 'Consultando Ágora…' : 'Sin lectura de Ágora'}</span></div>
+    <div class="dash-live-actions">${!c?.saldo || c.saldo < c.total || c.ocupacion < c.total ? enlace : ''}
+      <button type="button" class="btn sm" data-ahora-refrescar>Actualizar</button></div></div>
+  ${c?.total ? `<div class="dash-live-kpis"><div><span>Pendiente de cobrar${cobertura(c.saldo,c.total)}</span>
+    <strong class="tnum">${saldo(datos.pendienteCentimos)}</strong></div><div><span>Ubicaciones ocupadas${cobertura(c.ocupacion,c.total)}</span>
+    <strong class="tnum">${datos.ocupadas==null?'Sin datos':num(datos.ocupadas)}</strong></div></div><div class="dash-live-list">${lista}</div>` : ''}
+  ${c && !c.total ? '<p class="mut">El establecimiento seleccionado no tiene actividad de sala.</p>' : ''}`;
+}
+
 function renderDashboard(d) {
   const localName = d.scope && d.scope.local;
   if (!d.resumenPendiente) fijarPendientes(d);
@@ -1368,43 +1404,11 @@ function renderDashboard(d) {
   const hayParte = !!(d.titular || contexto);
   const fechaSeleccionada = DASH_RANGE.from === DASH_RANGE.to ? fechaLarga(DASH_RANGE.from) : fechaCorta(DASH_RANGE.from) + " – " + fechaCorta(DASH_RANGE.to);
   const header = `<div class="ph"><div><div class="eyebrow">${saludoHora()}${USER.nombre ? ", " + esc(nombreCorto(USER.nombre)) : ""}</div><h1>Dashboard ejecutivo</h1><div class="sub">${ambito}${fechaSeleccionada ? " · " + fechaSeleccionada : ""}</div></div><div class="acts">${hayParte ? `<button class="btn" data-act="dash-parte">${ic("chat", 15)} El parte de Sara</button>` : ""}</div></div>`;
-  const sara = "";
   // Ventas del día: sin sustituir datos ausentes por cero ni por reservas.
   const diario = d.diario, actual = diario?.actual;
-  const pendiente = diario === undefined ? "Consultando TPV…" : "No disponible";
-  const hora = diario?.actualizado ? new Date(diario.actualizado).toLocaleTimeString("es-ES", { timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit" }) : "";
-  const cobertura = actual?.parcial ? ` · Parcial: ${actual.localesDisponibles.length} de ${actual.totalLocales} locales` : "";
-  const marca = hora ? `Última lectura: ${esc(hora)}${diario.sinRespuesta ? " · sin conexión actual" : ""}` : pendiente;
-  const variacion = diario?.variacion;
-  const tarjetasHoy = [
-    actual?.ventas != null ? kpi({ lab: "Facturación hoy", icon: "euro", val: eur(actual.ventas), sub: marca + cobertura }) : "",
-    actual?.comensales != null ? kpi({ lab: "Comensales hoy", icon: "users", val: num(actual.comensales), sub: "Registrados en TPV" + cobertura }) : "",
-    actual?.ticketMedio != null ? kpi({ lab: "Ticket medio", icon: "receipt", val: eur(actual.ticketMedio), sub: "Por ticket · " + num(actual.tickets) + " tickets" + cobertura }) : "",
-    variacion != null ? kpi({ lab: "Vs. semana pasada", icon: "cal", val: (variacion > 0 ? "+" : "") + dec1(variacion) + " %", sub: `Mismo día · ${esc(fechaMini(diario.anterior))}<br>Día completo${cobertura}` }) : "",
-  ].filter(Boolean);
   const esHoy = DASH_RANGE.from === todayStr() && DASH_RANGE.to === todayStr();
-  const periodo = DASH_PERIODO;
-  const tarjetasPeriodo = periodo ? [
-    periodo.ventas?.disponible ? kpi({lab:(periodo.ventas.parcial ? "Facturación parcial · " : "Facturación · ") + (DASH_RANGE.label || "Periodo"), icon:"euro", val:eur(periodo.ventas.total), sub:periodo.ventas.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "Periodo seleccionado"}) : "",
-    periodo.ventas?.disponible && periodo.ventas.tickets > 0 ? kpi({lab:"Ticket medio", icon:"receipt", val:eur(periodo.ventas.ticket_medio), sub:num(periodo.ventas.tickets) + " tickets · periodo seleccionado"}) : "",
-    periodo.comparacion?.ventas != null ? kpi({lab:"Variación de facturación", icon:"cal", val:(periodo.comparacion.ventas > 0 ? "+" : "") + dec1(periodo.comparacion.ventas) + " %", sub:"Respecto a " + [periodo.comparacion.desde, periodo.comparacion.hasta].map(fecha => new Intl.DateTimeFormat("es-ES", {day:"numeric", month:"short", year:"numeric"}).format(new Date(fecha + "T12:00:00"))).join(" – ")}) : "",
-  ].filter(Boolean) : [];
-  const kpis = !esHoy ? (tarjetasPeriodo.length ? `<div class="grid g${tarjetasPeriodo.length} dash-kpis">${tarjetasPeriodo.join("")}</div>` : `<p class="mut" role="status">${DASH_PERIODO_ESTADO === "cargando" ? "Consultando el periodo seleccionado…" : "Las cifras del periodo no están disponibles."}</p>`) : tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : `<p class="mut" role="status">${diario === undefined ? "Consultando las cifras de hoy…" : "Las cifras de hoy no están disponibles en este momento."}</p>`;
-  const localesAhora = esHoy && diario?.porLocal?.length ? `<details class="card fold" style="margin-top:16px">
-    <summary><h3>Locales ahora</h3><span class="foldr"><span class="mut">${actual?.tickets != null ? num(actual.tickets) + " tickets hoy · " : ""}${marca}${esc(cobertura)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
-    <div class="tw"><table class="tbl">
-      <thead><tr><th scope="col">Local</th><th scope="col" class="r">Tickets hoy</th><th scope="col" class="r">Facturado hoy</th></tr></thead>
-      <tbody>${[...diario.porLocal].sort((a, b) => (b.tickets ?? -1) - (a.tickets ?? -1))
-        .map(fila => `<tr><th scope="row">${esc(nombreCortoLocal(fila.local))}</th>
-          <td class="r tnum">${fila.tickets == null ? "—" : num(fila.tickets)}</td>
-          <td class="r tnum">${fila.ventas == null ? "—" : eur2(fila.ventas)}</td></tr>`).join("")}</tbody>
-      <tfoot><tr><th scope="row">${actual?.parcial ? "Total disponible" : "Total"}</th>
-        <td class="r tnum">${actual?.tickets == null ? "—" : num(actual.tickets)}</td>
-        <td class="r tnum">${actual?.ventas == null ? "—" : eur2(actual.ventas)}</td></tr></tfoot>
-    </table></div>
-    <p class="mut" style="font-size:12px">Ocupación y saldo pendiente de cobro no disponibles en esta conexión con Ágora.</p>
-  </details>` : "";
-  if (d.errorResumen) return header + kpis + localesAhora + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
+  const localesAhora = `<section id="dash-locales-ahora" class="card dash-live" aria-labelledby="dash-live-title">${renderLocalesAhora(undefined)}</section>`;
+  if (d.errorResumen) return header + localesAhora + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
 
 
   // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
@@ -1413,32 +1417,35 @@ function renderDashboard(d) {
   const totalPeriodo = per && per.reservas ? per.reservas.total : null;
   const periodoMensaje = DASH_PERIODO_ESTADO === "error" ? "No se han podido cargar los datos del periodo. Vuelve a elegir el periodo para reintentar." : "Cargando datos del periodo…";
   const vOk = per && per.ventas && per.ventas.disponible;
-  const gOk = per && per.gastos && per.gastos.disponible;
   // La comparación con el periodo anterior la calcula el servidor (sabe que un mes se compara
   // con el mes anterior, no con «los 31 días de antes»). Si no la manda, no se pinta nada.
   const cmp = (per && per.comparacion) || null;
-  const contra = cmp ? `vs ${cmp.etiqueta}` : "";
-  // El rótulo va corto para que quepa dentro de la tarjeta; las fechas exactas de la
-  // comparación se ven al pasar el ratón, que es donde se miran cuando se dudan.
-  const cuando = cmp ? `Comparado con ${fechaCorta(cmp.desde)} – ${fechaCorta(cmp.hasta)}` : "";
-  const stat3 = (lab, val, col, pct, nota) => `<div class="dash-metric"><div class="dash-metric-label">${lab}</div><div class="dash-metric-value tnum"${col ? ` style="color:${col}"` : ''}>${val}</div>${pct != null ? `<div class="dash-metric-change" title="${esc(cuando)}">${deltaEl(pct, contra)}</div>` : ""}${nota ? `<div class="dash-metric-note">${esc(nota)}</div>` : ""}</div>`;
-  // Parte del gasto que no es de este local sino de toda su empresa (la gestoría, el seguro) y
-  // que se le imputa al sumar. Se dice SIEMPRE que la hay: un número repartido sin avisar se lee
-  // como un número medido, y luego nadie entiende por qué no cuadra con la lista de facturas.
-  const gEmp = gOk ? Number(per.gastos.empresa) || 0 : 0;
-  const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
-  const ventasBox = (vOk || gOk)
-    ? `<div class="dash-period-stats">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Compras facturadas", gOk ? eur2(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}</div>`
-    : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y gastos<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
+  const ventas = esHoy && actual?.ventas != null ? {
+    total:actual.ventas,tickets:actual.tickets,ticket_medio:actual.ticketMedio,parcial:actual.parcial,
+  } : vOk ? per.ventas : null;
+  const metrica = (lab, valor, nota='') => `<div class="dash-metric"><div class="dash-metric-label">${lab}</div>
+    <div class="dash-metric-value tnum">${valor}</div>${nota ? `<div class="dash-metric-note">${esc(nota)}</div>` : ''}</div>`;
+  const metricas = metrica('Facturación',ventas ? eur(ventas.total) : '—',ventas?.parcial ? 'Importe parcial' : '')
+    + metrica('Tickets cerrados',ventas?.tickets == null ? '—' : num(ventas.tickets))
+    + metrica('Ticket medio',ventas?.ticket_medio == null ? '—' : eur2(ventas.ticket_medio))
+    + metrica('Reservas',totalPeriodo == null ? '—' : num(totalPeriodo),
+      per?.reservas?.personas == null ? '' : num(per.reservas.personas) + ' comensales');
   const diferencia=vOk&&!per.ventas.parcial&&!cmp?.ventasParcial&&cmp?.totales?.ventas!=null?per.ventas.total-cmp.totales.ventas:null;
-  const comparador=`<div class="dash-comparator"><div class="dash-comparator-head"><span class="dash-metric-label">Facturación de referencia</span><button class="btn sm" data-act="dash-compare">${ic('cal',14)} ${esc(DASH_COMPARAR?.label || 'Elegir periodo')} ▾</button></div><div class="dash-comparator-values"><b class="tnum">${cmp?.totales?.ventas!=null?eur(cmp.totales.ventas):'—'}</b><span class="mut">${DASH_COMPARANDO?'Cargando comparación…':cmp?esc([cmp.desde,cmp.hasta].map(f=>new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',year:'numeric'}).format(new Date(f+'T12:00:00'))).join(' – ')):'Comparación no disponible'}</span></div>${diferencia!=null?`<div class="dash-comparator-delta"><span>Diferencia</span> ${diferencia>=0?'+':'−'}${eur(Math.abs(diferencia))}${cmp.ventas!=null?' · '+(cmp.ventas>0?'+':'')+dec1(cmp.ventas)+' %':''}</div>`:''}${DASH_COMPARAR?'<button class="link" data-act="dash-compare-auto">Volver al periodo anterior</button>':''}${cmp?.ventasParcial?'<small class="mut">Referencia parcial: faltan datos de ventas.</small>':cmp&&cmp.totales?.ventas==null?'<small class="mut">No hay una lectura de ventas disponible para estas fechas.</small>':''}${cmp?.lectura?.actualizando?'<small class="mut">Actualizando referencia…</small>':''}${DASH_COMPARACION_ERROR?'<p role="status">No se pudo actualizar la comparación. <button class="link" data-act="dash-compare-retry">Reintentar</button></p>':''}</div>`;
+  const comparador=`<div class="dash-comparator"><div class="dash-comparator-head"><span class="dash-metric-label">Facturación de referencia</span><button class="btn sm" data-act="dash-compare">${ic('cal',14)} ${esc(DASH_COMPARAR?.label || 'Elegir periodo')} ▾</button></div><div class="dash-comparator-values"><b class="tnum">${cmp?.totales?.ventas!=null?eur(cmp.totales.ventas):'—'}</b><span class="mut">${DASH_COMPARANDO?'Cargando comparación…':cmp?esc([cmp.desde,cmp.hasta].map(f=>new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',year:'numeric'}).format(new Date(f+'T12:00:00'))).join(' – ')):'Comparación no disponible'}</span></div>${diferencia!=null?`<div class="dash-comparator-delta"><span>Diferencia</span> ${diferencia>=0?'+':'−'}${eur(Math.abs(diferencia))}${cmp.ventas!=null?' · '+(cmp.ventas>0?'+':'')+dec1(cmp.ventas)+' %':''}</div>`:''}${DASH_COMPARAR?'<button class="link" data-act="dash-compare-auto">Volver a la comparación habitual</button>':''}${esHoy && cmp && !DASH_COMPARAR ? '<small class="mut">Referencia de día completo</small>' : ''}${cmp?.ventasParcial?'<small class="mut">Referencia parcial: faltan datos de ventas.</small>':cmp&&cmp.totales?.ventas==null?'<small class="mut">No hay una lectura de ventas disponible para estas fechas.</small>':''}${cmp?.lectura?.actualizando?'<small class="mut">Actualizando referencia…</small>':''}${DASH_COMPARACION_ERROR?'<p role="status">No se pudo actualizar la comparación. <button class="link" data-act="dash-compare-retry">Reintentar</button></p>':''}</div>`;
   const lecturaPeriodo=per?.lectura?`<div class="dash-reading" role="status">Datos guardados · ${esc(new Date(per.lectura.actualizado).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}))}${per.lectura.error?' · No se pudo actualizar':per.lectura.actualizando?' · Actualizando importes…':''}</div>`:'';
   const grafico = graficoVentasDashboard(per, periodoMensaje);
 
-  const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad · ventas y reservas</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="dash-activity-metrics"><div class="dash-metric"><div class="dash-metric-label">Reservas</div><div class="dash-metric-value tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="dash-metric-note">${per?.reservas?.personas != null ? num(per.reservas.personas) + " comensales" : "Comensales no disponibles"}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${!per&&DASH_AVANCE.length?`<div class="dash-sales-breakdown"><h4>Facturación por local · consultando</h4>${dashDesgloseLocales(DASH_AVANCE)}</div>`:''}<div class="dash-sales-comparison">${comparador}</div>${lecturaPeriodo}${per?.ventas?.porLocal?.length>1?`<div class="dash-sales-breakdown"><h4>Facturación por local</h4>${dashDesgloseLocales(per.ventas.porLocal)}</div>`:""}<div class="dash-activity-trend">${grafico}</div><div class="dash-activity-footer"><div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles." : per && !gOk ? " · Sin facturas registradas." : ""}</div></div></div>`;
+  const desgloseVentas = vOk && per.ventas.porLocal?.length > 1
+    ? `<details class="dash-sales-breakdown"><summary>Facturación por local</summary>${dashDesgloseLocales(per.ventas.porLocal)}</details>`
+    : !per && DASH_AVANCE.length ? '<p class="mut">Consultando la facturación por local…</p>' : '';
+  const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad del negocio</h3>
+    <span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div>
+    <div class="dash-business-metrics">${metricas}</div>${!ventas && !per ? `<p class="mut" role="status">${esc(periodoMensaje)}</p>` : ''}${comparador}${lecturaPeriodo}
+    <div class="dash-activity-trend">${grafico}</div>${desgloseVentas}</div>`;
 
   // El gasto usa el mes actual por defecto y el rango elegido al cambiar el periodo.
   const compras = DASH_GASTOS;
+  const notaGasto = compras?.importeEmpresa ? `Incluye ${eur2(compras.importeEmpresa)} de empresa` : "";
   const pendientes = compras?.albaranesPendientes;
   const entregas = compras?.gastoEntrega;
   const fechasCompras = compras
@@ -1450,13 +1457,14 @@ function renderDashboard(d) {
     ${entregas?.porLocal.length?dashDesgloseLocales(entregas.porLocal,eur2):''}
     <p class="mut">Importes con IVA. Los albaranes cuentan por fecha de entrega. Los tickets y la parte de las facturas sin entrega vinculada cuentan por fecha de emisión.${entregas?.sinImporte?' · '+num(entregas.sinImporte)+' documentos sin importe registrado':''}</p>
     ${dashCategoriasEntrega(entregas?.porCategoria)}
+    <details class="dash-buy-detail"><summary>Facturas y albaranes pendientes</summary>
     <h4>Facturas y tickets registrados</h4><div class="big tnum">${compras?eur2(compras.total):'—'}</div>
     ${compras?.porLocal.length?dashDesgloseLocales(compras.porLocal,eur2):''}
-    <p class="mut">Incluye los gastos de empresa imputados al local.</p>
+    ${notaGasto ? `<p class="mut">${esc(notaGasto)}.</p>` : ''}
     <h4>Albaranes pendientes de facturar</h4><div class="big tnum">${pendientes?eur2(pendientes.total):'—'}</div>
     ${pendientes?.porLocal.length?dashDesgloseLocales(pendientes.porLocal,eur2):''}
     ${pendientes?`<p class="mut">${num(pendientes.cantidad)} sin factura vinculada${pendientes.sinImporte?' · '+num(pendientes.sinImporte)+' sin importe registrado':''}. Las entregas ya facturadas se excluyen cuando se vinculan en Conciliaciones.</p>`:''}
-  </div>`;
+    </details></div>`;
 
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
@@ -1464,7 +1472,7 @@ function renderDashboard(d) {
 
   const row1 = `<div class="grid g12" style="margin-top:16px">${actividad}${gasto}</div>`;
   const row2 = radar.length ? `<div class="grid g12" style="margin-top:16px">${estado}</div>` : "";
-  return header + sara + kpis + localesAhora + row1 + row2;
+  return header + localesAhora + row1 + row2;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -1487,8 +1495,57 @@ async function loadDashboard() {
   }};
   let diario;
   DASH_AVANCE=[];
-  const pintar = () => { if (d && vigente()) view.innerHTML = renderDashboard(d); };
+  let ahora, actualizandoAhora = false;
+  const localesAbiertos = new Set();
+  const estadoAhora = () => {
+    const bloque = view.querySelector('#dash-locales-ahora');
+    if (!bloque) return;
+    for (const detalle of bloque.querySelectorAll('[data-ahora-local]')) {
+      if (detalle.open) localesAbiertos.add(detalle.dataset.ahoraLocal);
+      else localesAbiertos.delete(detalle.dataset.ahoraLocal);
+    }
+  };
+  const pintarAhora = () => {
+    const bloque = view.querySelector('#dash-locales-ahora');
+    if (!bloque) return;
+    const foco = document.activeElement?.closest?.('[data-ahora-local]')?.dataset.ahoraLocal;
+    const focoActualizar = bloque.contains(document.activeElement)
+      && document.activeElement.hasAttribute('data-ahora-refrescar');
+    bloque.innerHTML = renderLocalesAhora(ahora,localesAbiertos);
+    const boton = bloque.querySelector('[data-ahora-refrescar]');
+    boton.onclick = actualizarAhora;
+    if (focoActualizar) boton.focus({preventScroll:true});
+    else if (foco) [...bloque.querySelectorAll('[data-ahora-local]')]
+      .find(el=>el.dataset.ahoraLocal===foco)?.querySelector('summary')?.focus({preventScroll:true});
+  };
+  let proximaLectura;
+  async function actualizarAhora() {
+    if (!vigente() || actualizandoAhora) return;
+    clearTimeout(proximaLectura);
+    actualizandoAhora = true;
+    ahora = await apiDashboard('/api/dashboard/locales-ahora' + (q ? '?' + q : ''));
+    actualizandoAhora = false;
+    if (!vigente()) return;
+    estadoAhora();
+    pintarAhora();
+    proximaLectura = setTimeout(() => {
+      if (document.visibilityState !== 'hidden') actualizarAhora();
+      else if (vigente()) proximaLectura = setTimeout(esperarVisible,45000);
+    },45000);
+  }
+  function esperarVisible() {
+    if (!vigente()) return;
+    if (document.visibilityState !== 'hidden') actualizarAhora();
+    else proximaLectura = setTimeout(esperarVisible,45000);
+  }
+  const pintar = () => {
+    if (!d || !vigente()) return;
+    if (typeof view.querySelector === 'function') estadoAhora();
+    view.innerHTML = renderDashboard(d);
+    if (typeof view.querySelector === 'function') pintarAhora();
+  };
   pintar();
+  if (typeof view.querySelector === 'function') actualizarAhora();
   if (from === todayStr() && to === todayStr()) apiOptional("/api/dashboard/hoy" + (q ? "?" + q : "")).then((valor) => {
     if (!vigente()) return;
     diario = valor?.hoy ? valor : null;
@@ -1499,7 +1556,7 @@ async function loadDashboard() {
   const gastoHasta=mesPorDefecto?new Date(Number(todayStr().slice(0,4)),Number(todayStr().slice(5,7)),0,12).toISOString().slice(0,10):to;
   apiOptional(`/api/dashboard/gastos?from=${gastoDesde}&to=${gastoHasta}${q?'&'+q:''}`).then(g=>{if(!vigente())return;DASH_GASTOS=g&&Array.isArray(g.porLocal)?g:null;DASH_GASTOS_ESTADO=DASH_GASTOS?'listo':'error';pintar();});
   DASH_COMPARANDO=true;
-  const basePeriodo=`/api/dashboard/periodo?from=${from}&to=${to}&preset=${encodeURIComponent(PERIOD || "")}${q ? "&" + q : ""}`;
+  const basePeriodo=`/api/dashboard/periodo?from=${from}&to=${to}&preset=${encodeURIComponent(mesPorDefecto ? "hoy" : PERIOD || "")}${q ? "&" + q : ""}`;
   const centros=viendoVarios()?localesDelAmbito():localActualFE()?[localActualFE()]:localesBase();
   if(centros.length>1){
     DASH_AVANCE=centros.filter(l=>!sinPublico(l)).map(local=>({local,disponible:false,cargando:true}));
@@ -10833,12 +10890,12 @@ async function facCargarRecepciones(antes = null, navegacion = "primera") {
   const totalRecepciones=Number(pagina.total)||0;
   const numeroPagina=FAC_RECEPCIONES_HIST.length+1;
   const estados = {pendiente:'Pendiente de lectura',leyendo:'Leyendo',error:'Error de lectura',revision:'Comprobar datos',paginas:'Comprobar páginas'};
-  caja.innerHTML = `<div class="fac-reception-summary" role="status"><b>${num(totalRecepciones)} documentos en recepción</b><span>${num(errores)} necesitan revisión · Página ${num(numeroPagina)} · ${num(filas.length)} entradas visibles</span><small>Todavía sin registrar. Las propuestas de unión pueden corresponder a páginas de un mismo documento.</small><button class="btn sm" data-act="fac-recepcion-ver-espera">${FAC_RECEPCIONES_ESPERA?"Volver a la cola activa":`En espera de confirmación · ${num(pagina.enEspera||0)}`}</button></div>${(pagina.propuestas||[]).map(p=>`<div class="row fac-review-row"><div class="grow"><div class="t1">${p.estado==='unidas'?'Páginas unidas':'Posibles páginas del mismo documento'}</div><div class="t2">${esc(p.motivo||'Comprueba los originales juntos')}</div></div><button class="btn sm" data-act="fac-paginas" data-id="${esc(p.id)}">${p.estado==='unidas'?'Ver unión':'Revisar páginas'}</button></div>`).join('')}<div class="rows">${facAgruparRecepciones(filas, f => `<div class="row fac-review-row">${f.tiene_original!==false&&['pendiente','revision','error'].includes(f.estado)?`<input type="checkbox" class="fac-pagina-elegida" value="${esc(f.id)}" aria-label="Seleccionar documento ${esc(f.id)}">`:''}<div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(!f.nombre || f.nombre === "noname" ? "Adjunto sin nombre · #" + f.id : f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · <span class="pill warn">${esc(f.aprobada && ['pendiente','leyendo','error'].includes(f.estado) ? (f.estado==='error'?'Error de registro':'Confirmado · pendiente de registro') : estados[f.estado] || f.estado)}</span> · ${Number(f.intentos || 0)} intentos</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : f.aprobada ? '<div class="t2">La revisión está guardada. Falta completar el registro.</div>' : '<div class="t2">Pendiente de validar · No contabilizado todavía</div>'}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.paginas_id?`<button class="btn primary sm" data-act="fac-paginas" data-id="${esc(f.paginas_id)}">Revisar páginas</button>`:''}${f.estado==='revision' && f.tiene_original!==false ? `<button class="btn primary sm" data-act="fac-recepcion-revision" data-id="${esc(f.id)}">Revisar datos</button>` : ''}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`)}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-paginas-seleccion">Unir dos documentos como páginas</button><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div>`;
+  caja.innerHTML = `<div class="fac-reception-summary" role="status"><b>${num(totalRecepciones)} documentos en recepción</b><span>${num(errores)} necesitan revisión · Página ${num(numeroPagina)} · ${num(filas.length)} entradas visibles</span><small>Todavía sin registrar. Las propuestas de unión pueden corresponder a páginas de un mismo documento.</small><button class="btn sm" data-act="fac-recepcion-ver-espera">${FAC_RECEPCIONES_ESPERA?"Volver a la cola activa":`En espera de confirmación · ${num(pagina.enEspera||0)}`}</button></div>${(pagina.propuestas||[]).map(p=>`<div class="row fac-review-row"><div class="grow"><div class="t1">${p.estado==='unidas'?'Páginas unidas':'Posibles páginas del mismo documento'}</div><div class="t2">${esc(p.motivo||'Comprueba los originales juntos')}</div></div><button class="btn sm" data-act="fac-paginas" data-id="${esc(p.id)}">${p.estado==='unidas'?'Ver unión':'Revisar páginas'}</button></div>`).join('')}<div class="rows">${facAgruparRecepciones(filas, f => `<div class="row fac-review-row">${f.tiene_original!==false&&['pendiente','revision','error'].includes(f.estado)?`<input type="checkbox" class="fac-pagina-elegida" value="${esc(f.id)}" aria-label="Seleccionar documento ${esc(f.id)}">`:''}<div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(!f.nombre || f.nombre === "noname" ? "Adjunto sin nombre · #" + f.id : f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · <span class="pill warn">${esc(f.aprobada && ['pendiente','leyendo','error'].includes(f.estado) ? (f.estado==='error'?'Error de registro':'Confirmado · pendiente de registro') : estados[f.estado] || f.estado)}</span> · ${Number(f.intentos || 0)} intentos</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : f.aprobada ? '<div class="t2">La revisión está guardada. Falta completar el registro.</div>' : '<div class="t2">Pendiente de validar · No contabilizado todavía</div>'}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.paginas_id?`<button class="btn primary sm" data-act="fac-paginas" data-id="${esc(f.paginas_id)}">Revisar páginas</button>`:''}${['revision','paginas'].includes(f.estado) && f.tiene_original!==false ? `<button class="btn primary sm" data-act="fac-recepcion-revision" data-id="${esc(f.id)}">Revisar datos</button>` : ''}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`)}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-paginas-seleccion">Unir dos documentos como páginas</button><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div>`;
   facSeguimientosRecepcion(caja, seguimientos);
   return pagina;
 }
 async function facPaginas(id){
- try{const {abrirPaginas}=await import('./paginas.mjs');await abrirPaginas(id,{apiRaw,apiSend,modal,token,esc,toast,facVistaDocumento,actualizar:()=>facRefresh({mantenerRevision:true})});}
+ try{const {abrirPaginas}=await import('./paginas.mjs');await abrirPaginas(id,{apiRaw,apiSend,modal,token,esc,toast,facVistaDocumento,revisarDatos:facRevisionRecepcion,marcarDuplicado:(id,ov)=>facResolverRecepcion(id,ov,{duplicado:true}),actualizar:()=>facRefresh({mantenerRevision:true})});}
  catch(e){toast(e.message);}
 }
 async function facPaginasSeleccion(){
@@ -10909,7 +10966,7 @@ function facLineasRecepcion(ov,lineas=[]) {
  const leer=()=>[...lista.children].map(row=>Object.fromEntries(campos.map(([k,_label,type])=>{const v=row.querySelector(`[data-linea="${k}"]`).value;return [k,v===''?null:type==='number'?facDecimalRevision(v):v];})));
  const inicial=JSON.stringify(leer());return ()=>{const actuales=leer();return JSON.stringify(actuales)===inicial?null:actuales;};
 }
-function facResolverRecepcion(id, revision) {
+function facResolverRecepcion(id, revision, {duplicado=false}={}) {
   const ov=modal('Resolver recepción · #'+id,`<form>
     <label class="field">Acción<select id="res-accion"><option value="no_contable">No es un documento de compra</option><option value="duplicado">Duplicado de una compra</option><option value="informativo">Albarán o abono sin total documentado</option></select></label>
     <div id="res-enlace" hidden><label class="field">ID de compra registrada<input id="res-compra" inputmode="numeric"></label>
@@ -10922,6 +10979,11 @@ function facResolverRecepcion(id, revision) {
   const accion=campo('accion'), compra=campo('compra'), error=campo('error');
   let verificada=null;
   accion.onchange=()=>{campo('enlace').hidden=accion.value==='no_contable';};
+  if (duplicado) {
+    accion.value='duplicado';
+    accion.disabled=true;
+    accion.onchange();
+  }
   compra.oninput=()=>{verificada=null;campo('destino').textContent='';};
   campo('ver').onclick=async()=>{
     const idCompra=compra.value.trim();
@@ -10964,11 +11026,13 @@ async function facRevisionRecepcion(id) {
     const j=await apiRaw(`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`);
     const f=j.data;
     if(String(f?.id)!==String(id))throw new Error('El documento abierto no coincide con la recepción seleccionada. Vuelve a abrirlo.');
+    if (!['revision','paginas'].includes(f.estado)) throw new Error('El documento ya no está pendiente de revisión.');
     const d=f.resultado?.borrador?.datos || f.resultado?.datos || {}, segunda=f.resultado?.segunda || {};
-    const campos=[['titulo_documento','Título impreso en el original'],['proveedor','Proveedor'],['nif_proveedor','NIF del proveedor'],['fecha','Fecha de emisión'],['vencimiento','Vencimiento escrito en el original'],['numero_factura','Número de documento'],['base_imponible','Base imponible'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['retencion','Retención'],['recargo_equivalencia','Recargo de equivalencia'],['otros_cargos','Otros cargos'],['total','Total']];
+    const campos=[['titulo_documento','Título impreso en el original'],['proveedor','Proveedor'],['nif_proveedor','NIF del proveedor'],['nif_receptor','NIF del receptor'],['fecha','Fecha de emisión'],['vencimiento','Vencimiento escrito en el original'],['numero_factura','Número de documento'],['base_imponible','Base imponible'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['retencion','Retención'],['recargo_equivalencia','Recargo de equivalencia'],['otros_cargos','Otros cargos'],['total','Total']];
     const numericos=new Set(['base_imponible','porcentaje_iva','cuota_iva','retencion','recargo_equivalencia','otros_cargos','total']);
     const avisos=f.resultado?.avisos || [];
-    const ov=modal('Revisar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo" name="tipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${['fecha','vencimiento'].includes(k)?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='vencimiento' ? ' · Déjalo vacío si el original no indica una fecha; no la deduzcas de Efectivo o Contado.' : ''}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" id="revGuardarSalir">Guardar y revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
+    const ov=modal('Revisar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo" name="tipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${Array.isArray(f.locales) ? `<div class="field"><label for="revLocal">Establecimiento</label><select id="revLocal" name="local" required>
+      <option value="">Seleccionar establecimiento…</option>${f.locales.map(local=>`<option value="${esc(local)}" ${(d.local || f.local)===local?'selected':''}>${esc(nombreCortoLocal(local))}</option>`).join('')}</select></div>` : ''}${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${['fecha','vencimiento'].includes(k)?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='vencimiento' ? ' · Déjalo vacío si el original no indica una fecha; no la deduzcas de Efectivo o Contado.' : ''}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" id="revGuardarSalir">Guardar y revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
     facPrepararModalRevision(ov,'Pendiente de validar · No contabilizado todavía','fac-recepcion-revision',id,d,avisos);
     const pie = ov.querySelector('.fac-review-footer');
     if (pie) {
@@ -11058,6 +11122,10 @@ async function facRevisionRecepcion(id) {
     const compararDesglose = filas => JSON.stringify((Array.isArray(filas) ? filas : [])
       .map(({tipo,base,cuota,recargo}) => [tipo,base,cuota,recargo ?? null]));
     const desgloseOriginal = compararDesglose(f.resultado?.datos?.iva_desglose);
+    const seleccionLocal=()=> {
+      const local=form.querySelector('#revLocal')?.value;
+      return local && local !== f.local ? {local} : {};
+    };
     const leerDatos=()=>{
       const datos={tipo:ov.querySelector('#revTipo').value};
       if (ivaIncluido.checked !== (f.resultado?.datos?.lineas_iva_incluido === true)) {
@@ -11074,10 +11142,19 @@ async function facRevisionRecepcion(id) {
     cuadre.className = 'mut';
     cuadre.setAttribute('aria-live', 'polite');
     form.querySelector('#rev-total').closest('.field').after(cuadre);
+    const baseCabecera = form.querySelector('#rev-base_imponible');
     const actualizarCuadre = () => {
       try {
-        const datos = leerDatos();
         const filas = leerDesglose();
+        if (filas.length) {
+          baseCabecera.readOnly = true;
+          baseCabecera.value = filas.some(fila => fila.base === null) ? '' :
+            (filas.reduce((total, fila) => total + Math.round(fila.base * 100), 0) / 100).toFixed(2);
+        } else if (baseCabecera.readOnly) {
+          baseCabecera.readOnly = false;
+          baseCabecera.value = '';
+        }
+        const datos = leerDatos();
         if (filas.some(fila => [fila.tipo, fila.base, fila.cuota].includes(null))) {
           cuadre.textContent = 'Completa el tipo, la base y la cuota de cada fila de IVA.';
           return;
@@ -11120,7 +11197,7 @@ async function facRevisionRecepcion(id) {
     const guardarBorrador=async()=>{
       clearTimeout(temporizadorBorrador);
       const datos=leerDatos();
-      const guardar=()=>apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/borrador`,{datos});
+      const guardar=()=>apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/borrador`,{datos,...seleccionLocal()});
       guardadoEnCurso=guardadoEnCurso.then(guardar,guardar);
       return guardadoEnCurso;
     };
@@ -11170,7 +11247,7 @@ async function facRevisionRecepcion(id) {
         clearTimeout(temporizadorBorrador);
         const datos=leerDatos();
         await guardadoEnCurso.catch(()=>{});
-        await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`,{datos,confirmado:ov.querySelector('#revConfirmado').checked,aceptarAvisos:ov.querySelector('#revExcepcion').checked,formato:{importes:ov.querySelector('#revFormatoImportes').value,unidades:ov.querySelector('#revFormatoUnidades').value},falsoAviso:ov.querySelector('#revFalsoAviso').checked});
+        await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`,{datos,...seleccionLocal(),confirmado:ov.querySelector('#revConfirmado').checked,aceptarAvisos:ov.querySelector('#revExcepcion').checked,formato:{importes:ov.querySelector('#revFormatoImportes').value,unidades:ov.querySelector('#revFormatoUnidades').value},falsoAviso:ov.querySelector('#revFalsoAviso').checked});
         toast('Revisión confirmada. Pendiente de registro.'); await facTerminarRevision(ov);
       } catch(err){ov.querySelector('#revError').textContent=err.message;boton.disabled=false;}
     };

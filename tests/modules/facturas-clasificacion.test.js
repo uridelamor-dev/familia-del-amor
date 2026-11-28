@@ -11,6 +11,7 @@ test('excluye decoración clara, conservando documentos dudosos y evidencia de c
 test('un descarte automático termina la recepción sin reintentar ni volver a procesar',async()=>{
  let f={id:1,hash:'h',estado:'pendiente',intentos:0,proximo:0,original:Buffer.from('logo')},n=0;
  const db={get:async()=>f,run:async(sql,p)=>{
+  if(sql.includes("estado='leyendo'") && sql.includes('RETURNING id'))return {id:f.id};
   if(sql.includes('resultado=?::jsonb')){f={...f,estado:p[0],resultado:JSON.parse(p[1]),original:null};}
  }};
  const r=crearRecepcion({db,lock:async(h,fn)=>fn(),procesar:async()=>{n++;return {descartado:true};}});

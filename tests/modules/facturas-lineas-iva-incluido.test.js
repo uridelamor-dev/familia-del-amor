@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import {validarSuma,mensajeValidacion,grupoDeSQL} from '../../src/modules/facturas/lineas.js';
 import {huellaAuditoria} from '../../src/modules/facturas/auditoria-completa.js';
 const ls=(...importes)=>importes.map(importe=>({importe,dudosa:false}));
-test('coincidir con el total no activa IVA incluido automáticamente',()=>{
- assert.equal(validarSuma(ls(1.1,3.5),3.802,'ticket',{cuota_iva:.798,total:4.60}).cuadra,false);
+test('IVA incluido en tickets solo con coincidencia del detalle y del resumen fiscal',()=>{
+ assert.equal(validarSuma(ls(1.1,3.5),3.802,'ticket',{cuota_iva:.798,total:4.60}).cuadra,true);
+ assert.equal(validarSuma(ls(1.1,3.5),3.802,'ticket',{cuota_iva:.698,total:4.60}).cuadra,false);
+ assert.equal(validarSuma(ls(1.1,3.5),3.802,'factura',{cuota_iva:.798,total:4.60}).cuadra,false);
+ assert.equal(validarSuma([...ls(1.1,3.5),{importe:null}],3.802,'ticket',{cuota_iva:.798,total:4.60}).cuadra,false);
  assert.equal(validarSuma(ls(1.1,3.5),3.802,'ticket',{cuota_iva:.798,lineas_iva_incluido:'true'}).cuadra,false);
 });
 test('confirmación explícita admite Botiga y Castellmenatge sin cambiar líneas',()=>{

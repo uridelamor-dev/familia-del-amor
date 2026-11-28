@@ -75,7 +75,7 @@ test('encola con el lector ocupado y reconoce un reintento sin escribir dos vece
  const cola=crearRecepcion({
   db:{
    get:async()=>fila,
-   run:async(sql,[resultado,,id,version])=>{
+   run:async(sql,[resultado,,,id,version])=>{
     assert.match(sql,/xmin::text=\?/);
     assert.equal(version,'11');
     escrituras++;

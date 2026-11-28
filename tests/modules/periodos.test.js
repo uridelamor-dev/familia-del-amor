@@ -102,8 +102,10 @@ describe("rangoAnterior — la semana (lo que más se equivoca)", () => {
 });
 
 describe("rangoAnterior — el resto", () => {
-  test("un solo día se compara con el día anterior", () => {
+  test("Hoy compara con el mismo día de la semana pasada y un día histórico con el anterior", () => {
     assert.deepEqual(rangoAnterior("2026-08-11", "2026-08-11", "hoy"),
+      { from: "2026-08-04", to: "2026-08-04", etiqueta: "el mismo día de la semana pasada" });
+    assert.deepEqual(rangoAnterior("2026-08-11", "2026-08-11", "custom"),
       { from: "2026-08-10", to: "2026-08-10", etiqueta: "ayer" });
   });
 
