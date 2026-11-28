@@ -5,18 +5,27 @@ import {readFileSync} from 'node:fs';
 const source=readFileSync(new URL('../public/panel/app.js',import.meta.url),'utf8');
 const start=source.indexOf('async function facRevisionRecepcion(id)');
 const fn=source.slice(start,source.indexOf('async function facReintentarRecepcion',start));
-async function abrir({fallo=false}={}) {
+async function abrir({fallo=false,borrador=null}={}) {
  const elements=new Map();let html='',cerrados=0;const writes=[],errors=[];
- const get=s=>{if(!elements.has(s))elements.set(s,{style:{},classList:{add(){}},value:'',checked:false,textContent:'',append(){},insertAdjacentHTML(){}});return elements.get(s);};
+ const crearElemento=()=>({
+  style:{},classList:{add(){}},value:'',checked:false,textContent:'',children:[],
+  append(){},prepend(){},before(){},after(){},closest(){return this;},
+  addEventListener(){},insertAdjacentHTML(){},setAttribute(){},querySelector:get,
+ });
+ function get(selector){
+  if(!elements.has(selector))elements.set(selector,crearElemento());
+  return elements.get(selector);
+ }
  const pie=get('.fac-review-footer');
  const acciones=[];
  pie.append=boton=>acciones.push(boton);
  const ov={isConnected:true,querySelector:s=>s==='#revForm .toolbar'?null:get(s),insertAdjacentHTML(){}};
- const ctx=vm.createContext({document:{createElement:()=>({})},apiRaw:async()=>({data:{resultado:{datos:{tipo:'factura',proveedor:'Cerezo',fecha:'2026-10-07',vencimiento:'2026-10-07'},segunda:{vencimiento:'2026-12-06'},avisos:[{texto:'Las dos lecturas no coinciden en vencimiento.'}]}}}),
+ const ctx=vm.createContext({setTimeout,clearTimeout,document:{createElement:crearElemento},apiRaw:async()=>({data:{id:205,resultado:{borrador,datos:{tipo:'factura',proveedor:'Cerezo',fecha:'2026-10-07',vencimiento:'2026-10-07'},segunda:{vencimiento:'2026-12-06'},avisos:[{texto:'Las dos lecturas no coinciden en vencimiento.'}]}}}),
   modal:(_title,markup)=>{html=markup;for(const m of markup.matchAll(/<input id="([^"]+)"[^>]*value="([^"]*)"/g))get('#'+m[1]).value=m[2];get('#revTipo').value='factura';return ov;},
   esc:v=>String(v),facPrepararModalRevision(){},fetch:async()=>({ok:false}),token:()=>'',facSelectorProveedor(){},facLineasRecepcion:()=>()=>null,
   apiSend:async(...args)=>{writes.push(args);if(fallo)throw Error('Comprueba el vencimiento');},toast:m=>errors.push(m),facTerminarRevision:async()=>cerrados++});
- vm.runInContext(fn,ctx);await ctx.facRevisionRecepcion(205);
+ const helpers=source.slice(source.indexOf('function facDecimalRevision('),source.indexOf('function facLineasRecepcion('));
+ vm.runInContext(helpers+fn,ctx);await ctx.facRevisionRecepcion(205);
  assert.deepEqual(errors,[]);
  assert.equal(acciones[0]?.textContent,'Dejar en espera de confirmación');
  return {get,html,writes,cerrados:()=>cerrados};
@@ -44,4 +53,24 @@ test('si el servidor rechaza, conserva corrección y permite reintentar',async()
  await a.get('#revForm').onsubmit({preventDefault(){},submitter});
  assert.equal(a.get('#rev-vencimiento').value,'2026-12-06');assert.equal(a.get('#revError').textContent,'Comprueba el vencimiento');
  assert.equal(submitter.disabled,false);assert.equal(a.cerrados(),0);
+});
+
+test('recupera el borrador al abrir y guarda los cambios antes de salir',async()=>{
+ const a=await abrir({borrador:{datos:{tipo:'factura',proveedor:'Cerezo',vencimiento:'2026-12-06'}}});
+ assert.equal(a.get('#rev-vencimiento').value,'2026-12-06');
+ a.get('#rev-vencimiento').value='2026-12-07';
+ await a.get('#revGuardarSalir').onclick();
+ assert.equal(a.writes[0][1],'/api/facturas/recepciones/205/borrador');
+ assert.equal(a.writes[0][2].datos.vencimiento,'2026-12-07');
+ assert.equal(a.cerrados(),1);
+});
+
+test('si falla guardar el borrador, mantiene el formulario abierto con la edición',async()=>{
+ const a=await abrir({fallo:true});
+ a.get('#rev-numero_factura').value='2026019549';
+ await a.get('#revGuardarSalir').onclick();
+ assert.equal(a.get('#rev-numero_factura').value,'2026019549');
+ assert.equal(a.get('#revError').textContent,'Comprueba el vencimiento');
+ assert.equal(a.get('#revGuardarSalir').disabled,false);
+ assert.equal(a.cerrados(),0);
 });

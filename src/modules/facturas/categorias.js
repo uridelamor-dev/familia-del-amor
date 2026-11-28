@@ -1,3 +1,4 @@
+import { repartirImporte } from './reparto.js';
 // Facturas — de qué es cada proveedor. Lógica PURA.
 //
 // «Grau es bebidas y alcohol; Cerezo es embutidos». Sirve para contestar «cuánto me gasto en
@@ -254,12 +255,13 @@ export const soloCategorias = (pares = []) => [...new Set(pares.map((p) => p.cat
  * «Varios» crecería sin que nadie supiera si es que hay mucho gasto vario o es que falta
  * etiquetar proveedores.
  */
-export function gastoPorCategoria(filas = [], indice = new Map()) {
+export function gastoPorCategoria(filas = [], indice = new Map(), { cuadrarCentimos = false } = {}) {
   const acc = new Map();
   let sinCategoria = 0, sinCatProveedores = new Set(), repartido = 0, total = 0;
 
   for (const f of filas) {
-    const importe = Number(f.importe) || 0;
+    const bruto = Number(f.importe) || 0;
+    const importe = cuadrarCentimos ? Math.round(bruto * 100) / 100 : bruto;
     total += importe;
     const pares = categoriasDe(f.proveedor, indice);
     if (!pares.length) {
@@ -268,11 +270,15 @@ export function gastoPorCategoria(filas = [], indice = new Map()) {
       continue;
     }
     if (pares.length > 1) repartido += importe;
-    const trozo = importe / pares.length;
-    for (const par of pares) {
-      if (!acc.has(par.categoria)) acc.set(par.categoria, { categoria: par.categoria, importe: 0, proveedores: new Set(), subs: new Map() });
+    const partes = cuadrarCentimos && pares.length > 1
+      ? repartirImporte(importe, pares.map((_, local) => ({ local, peso: 1 })))
+      : null;
+    for (const [i, par] of pares.entries()) {
+      const trozo = partes ? partes[i].importe : importe / pares.length;
+      if (!acc.has(par.categoria)) acc.set(par.categoria, { categoria: par.categoria, importe: 0, estimado: 0, proveedores: new Set(), subs: new Map() });
       const g = acc.get(par.categoria);
       g.importe += trozo;
+      if (pares.length > 1) g.estimado += trozo;
       if (f.proveedor) g.proveedores.add(String(f.proveedor));
       const sk = par.subcategoria || "";
       g.subs.set(sk, (g.subs.get(sk) || 0) + trozo);
@@ -283,6 +289,7 @@ export function gastoPorCategoria(filas = [], indice = new Map()) {
   const lista = [...acc.values()].map((g) => ({
     categoria: g.categoria,
     importe: red(g.importe),
+    ...(cuadrarCentimos ? { estimado: red(g.estimado) } : {}),
     proveedores: [...g.proveedores].sort((a, b) => a.localeCompare(b, "es")),
     subs: [...g.subs.entries()]
       .map(([subcategoria, importe]) => ({ subcategoria, importe: red(importe) }))

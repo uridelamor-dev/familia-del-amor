@@ -22,6 +22,7 @@
 // `fid_integraciones` que se encuentra por su hash lleva el local escrito, y de ahí sale todo lo
 // que se guarda. Ningún local viaja jamás en el cuerpo ni en la query de una ruta externa.
 
+import { descuentoPromocionCentimos } from './descuento-promocion.js';
 import { esLocalCanonico } from "../facturas/local-canonico.js";
 import { evaluarFactura, planConsumo, planCaducidad, claveMov, caducaEn, rewardsAplicados,
          rewardVigente, importePagado } from "./puntos.js";
@@ -734,11 +735,11 @@ async function aplicarPrograma(x, { programa, extracto, conCarnet, integracion, 
     // El uso se escribe AQUÍ, dentro de la transacción. Si el COMMIT falla no queda consumido, y
     // `clave_idem` impide que un reenvío de la misma factura lo cuente dos veces.
     await x.run(
-      `INSERT INTO fid_promo_usos (promo_id, clave, qr_id, local, factura_id, clave_idem, reward_id, autor, creado_en)
-       VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
+      `INSERT INTO fid_promo_usos (promo_id, clave, qr_id, local, factura_id, clave_idem, reward_id, autor, creado_en, descuento_centimos)
+       VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_idem) DO NOTHING`,
       [promoReward.id, promoReward.clave, socio.qrId, local, facturaId,
        claveMov(idemV, local, "promo", extracto.globalId, promoReward.clave), String(promoReward.reward_id),
-       "agora", ahora]);
+       "agora", ahora, descuentoPromocionCentimos(json, promoReward)]);
   }
 
   // `promoReward` viaja para que el camino de los puntos SEPA que ese premio no es suyo: ya se ha

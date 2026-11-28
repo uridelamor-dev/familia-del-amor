@@ -47,3 +47,10 @@ test('abonos y rectificativas conservan sus controles de signo independientes',a
 test('relectura no oculta evidencia previa de proforma quitando su título',async()=>{
  await assert.rejects(leer([{...f,tipo:'otro',titulo_documento:'Presupuesto'},{...f,tipo:'otro',titulo_documento:null},{...f,tipo:'otro',titulo_documento:null}]),e=>e.revisionDocumento && e.resultado.avisos.some(a=>a.texto.includes('presupuesto')));
 });
+
+test('un título combinado no oculta las facturas independientes detectadas en la otra lectura', async()=>{
+ await assert.rejects(leer([
+  {...f,titulo_documento:'ALBARÁN / FACTURA'},
+  {...f,numeros_facturas_independientes:['A-100','A-101']},
+ ]), e=>e.revisionDocumento && e.resultado.avisos.some(a=>a.codigo==='varias_facturas'));
+});

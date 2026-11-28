@@ -120,14 +120,17 @@ describe("un albarán no es gasto: no puede sumar dos veces", () => {
     const inicio=panel.indexOf('function facKpisHtml()');
     const fin=panel.indexOf('/** Los avisos de coherencia',inicio);
     const ctx=vm.createContext({FAC_TOT:{docs:2,total:121,base:100,iva:21,albaranes:5,albaranesImporte:500},
-      facFiltrosActivos:()=>[],num:String,esc:String,eur:v=>`${v} €`});
+      FACF:{tipo:'factura'},facFiltrosActivos:()=>[],num:String,esc:String,eur2:v=>`${v} €`});
     vm.runInContext(panel.slice(inicio,fin),ctx);
     const html=vm.runInContext('facKpisHtml()',ctx);
     assert.match(html,/>2<\/b> facturas/);
     assert.match(html,/121 €/);assert.match(html,/100 €/);assert.match(html,/21 €/);
-    assert.doesNotMatch(html,/albaranes|fchips|500 €/);
+    assert.match(html,/5 albaranes aparte · importe indicado 500 €/);
+    assert.doesNotMatch(html,/fchips/);
     ctx.FAC_TOT.albaranes=100;ctx.FAC_TOT.albaranesImporte=99999;
-    assert.equal(vm.runInContext('facKpisHtml()',ctx),html,'Las entregas no inflan el resumen fiscal');
+    const nuevo=vm.runInContext('facKpisHtml()',ctx);
+    assert.match(nuevo,/total <b class="tnum">121 €<\/b>/);
+    assert.match(nuevo,/100 albaranes aparte · importe indicado 99999 €/);
   });
 
   test("el dashboard también los excluye, en TODAS sus consultas de dinero", () => {

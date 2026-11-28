@@ -23,6 +23,11 @@ test('SQL de recepción agrupa atómicamente dos fotos y permite deshacer sin pe
  assert.equal(altas,0);
  await db.run('UPDATE facturas_recepciones SET proximo=NOW()');
  await cola.reintentar();
+ const propuesta=await db.get('SELECT * FROM facturas_paginas');
+ assert.equal(propuesta.estado,'revision');
+ assert.deepEqual((await db.all('SELECT estado FROM facturas_recepciones ORDER BY id')).map(f=>f.estado),['paginas','paginas']);
+ await assert.rejects(paginas.unir(propuesta),/confirmación explícita/);
+ await paginas.unir(propuesta,'prueba');
  const filas=await db.all('SELECT * FROM facturas_recepciones ORDER BY id');
  assert.deepEqual(filas.map(f=>f.estado),['sustituido','sustituido','pendiente']);
  assert.ok(filas.every(f=>f.original));
@@ -46,7 +51,7 @@ test('completar una factura mantiene su ID y pagos, conserva los originales y re
  const {crearCompletarPaginas}=await import('../../src/modules/facturas/paginas-completar.js');
  await db.raw(`CREATE TABLE facturas(id BIGSERIAL PRIMARY KEY,file_hash TEXT,local TEXT,tipo TEXT,numero_factura TEXT,nif TEXT,fecha TEXT,
  drive_url TEXT,drive_thumb TEXT,base_imponible NUMERIC,porcentaje_iva NUMERIC,cuota_iva NUMERIC,total NUMERIC,
- iva_desglose TEXT,iva_estado TEXT,iva_aviso TEXT,lineas_estado TEXT,lineas_aviso TEXT,lineas_leidas_en TEXT,lineas_version INTEGER,sheet_synced INTEGER)`);
+ recargo_equivalencia NUMERIC,retencion NUMERIC,otros_cargos NUMERIC,iva_desglose TEXT,iva_estado TEXT,iva_aviso TEXT,lineas_estado TEXT,lineas_aviso TEXT,lineas_leidas_en TEXT,lineas_version INTEGER,sheet_synced INTEGER)`);
  await db.raw('CREATE TABLE factura_lineas(id BIGSERIAL PRIMARY KEY,factura_id BIGINT REFERENCES facturas(id),descripcion TEXT,importe NUMERIC)');
  await db.raw('CREATE TABLE pagos(id BIGSERIAL PRIMARY KEY,factura_id BIGINT REFERENCES facturas(id),importe NUMERIC)');
  await db.run("INSERT INTO facturas(file_hash,local,tipo,numero_factura,nif,fecha,drive_url,base_imponible,porcentaje_iva,cuota_iva,total,iva_estado) VALUES ('h1','Blanes','factura','F-123','B12345678','2026-10-28','original',100,21,21,121,'manual')");

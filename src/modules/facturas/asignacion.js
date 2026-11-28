@@ -1,3 +1,6 @@
+import { DIRECCIONES_RESERVA } from '../reservas/direcciones.js';
+import { canonico as localCentro } from '../locales/centros.js';
+
 // Facturas — lógica PURA de autoasignación de local para facturas pendientes.
 // Objetivo: cuando el local es "muy claro" (CIF del receptor, empresa con un único
 // local, o un proveedor que SIEMPRE se ha asignado al mismo local) proponerlo —y, con
@@ -115,4 +118,17 @@ export function sugerirLocalPendiente({ pendiente = {}, locales = [], historial 
     if (candidatos.some(c=>c.local === local)) return {local, confianza:"media", motivo:"Proveedor habitual: confirmar establecimiento"};
   }
   return nula;
+}
+
+// Solo recibe el campo transcrito de entrega, nunca el domicilio fiscal.
+export function centrosPorDireccionEntrega(direccion) {
+  const normalizar = texto => normalizarTexto(texto).replace(/[^a-z0-9]+/g, ' ').trim();
+  const texto = ` ${normalizar(direccion)} `;
+  const centros = Object.entries(DIRECCIONES_RESERVA).filter(([, ficha]) => {
+    const [via, numero] = ficha.split(',');
+    const calle = normalizar(via).replace(/^(carrer|avinguda|placa) (de (la |les )?)?/, '');
+    const portal = normalizar(numero).split(' ')[0];
+    return portal && texto.includes(` ${calle} ${portal} `);
+  }).map(([local]) => localCentro(local, 'compras'));
+  return [...new Set(centros)].sort();
 }

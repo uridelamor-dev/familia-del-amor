@@ -1,3 +1,6 @@
+import { normNif } from './emisor.js';
+import { nifComprobable } from './contraste-dirigido.js';
+
 // Facturas — detectar la misma factura subida dos veces. Lógica PURA.
 //
 // Ya se cazaban dos casos: el MISMO archivo (hash idéntico) y el mismo proveedor con el mismo
@@ -50,8 +53,8 @@ const mismoImporte = (a, b) => {
 
 export const MISMO_PROVEEDOR = (a, b) => {
   // El NIF manda: es el único dato que no depende de cómo se escriba el nombre.
-  const na = String(a.nif || "").replace(/[\s.-]/g, "").toUpperCase();
-  const nb = String(b.nif || "").replace(/[\s.-]/g, "").toUpperCase();
+  const na = normNif(a.nif);
+  const nb = normNif(b.nif);
   if (na && nb) return na === nb;
   return !!norm(a.proveedor) && norm(a.proveedor) === norm(b.proveedor);
 };
@@ -63,9 +66,10 @@ export const MISMO_PROVEEDOR = (a, b) => {
  *
  *   → { veredicto: "duplicada" | "duda" | "distinta", motivos: [...], puntos }
  */
-export function comparar(a, b, { ventanaDias = 10 } = {}) {
+export function comparar(a, b, { ventanaDias = 10, recepcion = false } = {}) {
   const motivos = [];
   if (!MISMO_PROVEEDOR(a, b)) return { veredicto: "distinta", motivos: [], puntos: 0 };
+  if (a.tipo && b.tipo && a.tipo !== b.tipo) return { veredicto: "distinta", motivos: [], puntos: 0 };
   motivos.push("mismo proveedor");
 
   const numA = soloDigitos(a.numero_factura), numB = soloDigitos(b.numero_factura);
@@ -94,12 +98,17 @@ export function comparar(a, b, { ventanaDias = 10 } = {}) {
   if (fechaIgual) puntos += 2;
   else if (fechaCerca) puntos += 1;
 
-  // CERTEZA: número, importe Y fecha. Los tres. Con dos de tres se podría afirmar casi
-  // siempre, pero «casi» aquí significa tirar una factura buena de vez en cuando, y eso no se
-  // ve: desaparece del gasto y nadie la echa en falta. Si algo no cuadra, se pregunta.
-  if (numIgual && impIgual && (fechaIgual || d == null)) {
+  const nif = normNif(a.nif);
+  const numeroLiteral = v => String(v ?? '').trim().toUpperCase();
+  const documentoIgual = !!a.tipo && a.tipo === b.tipo && !!numeroLiteral(a.numero_factura)
+    && numeroLiteral(a.numero_factura) === numeroLiteral(b.numero_factura);
+  const emisorValido = nif === normNif(b.nif) && nifComprobable(nif)
+    && !["B70799135", "46535781L", "46533801V"].includes(nif);
+  const coincide = recepcion ? documentoIgual && emisorValido && fechaIgual : numIgual && (fechaIgual || d == null);
+  if (coincide && impIgual) {
     return { veredicto: "duplicada", motivos, puntos };
   }
+  if (recepcion && documentoIgual && (fechaIgual || (d == null && impIgual))) return { veredicto: "duda", motivos, puntos };
 
   // Sin importe igual no hay sospecha que valga: dos facturas del mismo proveedor el mismo día
   // son lo más normal del mundo (una comida y una entrega). Lo que las convierte en la misma

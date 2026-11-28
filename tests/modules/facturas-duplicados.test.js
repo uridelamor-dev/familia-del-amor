@@ -177,3 +177,15 @@ test('dos documentos sin valorar no son duplicados por coincidir en cero',()=>{
  assert.equal(comparar(a,{...a,fecha:'2026-10-10'}).veredicto,'distinta');
  assert.equal(comparar(a,{...a}).veredicto,'distinta');
 });
+
+
+test('recepción: foto y PDF con la misma identidad fiscal son duplicados', () => {
+  const foto = F({tipo:'factura', nif:'B12345674', canal:'WhatsApp'});
+  const pdf = {...foto, proveedor:'Grau SL', nif:'B-12345674', canal:'Email'};
+  const opciones = {recepcion:true};
+  assert.equal(comparar(foto, pdf, opciones).veredicto, 'duplicada');
+  assert.equal(comparar(foto, {...pdf, numero_factura:'B-991'}, opciones).veredicto, 'duda');
+  assert.equal(comparar(foto, {...pdf, tipo:'albaran'}, opciones).veredicto, 'distinta');
+  assert.equal(comparar(foto, {...pdf, total:null}, opciones).veredicto, 'duda');
+  assert.equal(comparar(foto, {...pdf, nif:null, proveedor:foto.proveedor}, opciones).veredicto, 'duda');
+});

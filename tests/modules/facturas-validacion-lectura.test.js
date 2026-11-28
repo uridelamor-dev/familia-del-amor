@@ -1,7 +1,8 @@
+import sharp from 'sharp';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {controlesLectura,compararLecturas,datosRevision} from '../../src/modules/facturas/validacion-lectura.js';
-import {leerDocumentoVerificado} from '../../facturas.js';
+import {leerDocumentoVerificado, procesarFactura, procesarFacturaSinLocal} from '../../facturas.js';
 const buena={tipo:'factura',proveedor:'Proveedor de prueba',nif_proveedor:'B12345674',fecha:'2026-09-10',fecha_texto:'10/09/2026',numero_factura:'123',base_imponible:100,cuota_iva:21,porcentaje_iva:21,total:121,lineas:[]};
 test('no confunde importes ausentes con cero ni unidad ausente con documento inválido',()=>{
  assert.deepEqual(controlesLectura({...buena,lineas:[{cantidad:2,precio_unitario:50,importe:100,unidad:null}]}),[]);
@@ -57,4 +58,131 @@ test('sin transcripción ni evidencia del original, una fecha ambigua queda en r
 test('la capa PDF descubre la inversión aunque la transcripción repita el error',async()=>{
  const mal={...buena,fecha:'2026-03-11',fecha_texto:'11/03/2026',_pistasFecha:{hayTexto:true,anios:[2026],fechas:['2026-11-03']}};
  await assert.rejects(leerDocumentoVerificado(Buffer.from('prueba'),'application/pdf',{leer:async()=>structuredClone(mal)}),e=>e.revisionDocumento&&e.resultado.avisos.some(a=>a.campo==='fecha'));
+});
+
+test('P1 #2153: una página de totales numerada queda en revisión aunque los importes cuadren', async () => {
+  const parcial = {...buena, proveedor:'Transgourmet', base_imponible:549.68, cuota_iva:56.19,
+    porcentaje_iva:null, total:605.87, cobertura:{numeracion_impresa:{total:2, visibles:[2]}}};
+  let lecturas = 0;
+  await assert.rejects(leerDocumentoVerificado(Buffer.from('prueba'), 'image/jpeg', {
+    leer: async () => ++lecturas === 2 ? {...parcial, cobertura:null} : parcial,
+  }), e => e.revisionDocumento && e.resultado.avisos.some(a => a.codigo === 'paginas_ausentes'));
+  assert.equal(lecturas, 2);
+  assert.ok(!controlesLectura({...parcial, cobertura:{numeracion_impresa:{total:2, visibles:[1, 2]}}})
+    .some(a => a.codigo === 'paginas_ausentes'));
+});
+
+test('una tercera lectura que ve páginas ausentes impide validar las dos primeras', async () => {
+  const lecturas = [buena, {...buena, total:122},
+    {...buena, cobertura:{numeracion_impresa:{total:3, visibles:[1, 3]}}}];
+  await assert.rejects(leerDocumentoVerificado(Buffer.from('prueba'), 'image/jpeg', {
+    leer: async () => lecturas.shift(),
+  }), e => e.revisionDocumento && e.resultado.avisos.some(a => a.codigo === 'paginas_ausentes'));
+});
+
+
+test('P1 #2328 y #3360: una entrega en Blanes enviada desde Lloret queda en revisión', async () => {
+ for (const numero_factura of ['502083', '300532']) {
+  const datos = {...buena, tipo:'albaran', proveedor:'Maresme Tot Gel', numero_factura,
+   direccion_entrega:'Carrer de la Muralla, 21 · Blanes'};
+  await assert.rejects(procesarFactura({
+   buffer:Buffer.from(numero_factura), mimeType:'image/jpeg', local:'Lloret', canal:'WhatsApp',
+   leerDocumento:async () => datos,
+  }), e => e.revisionDocumento && e.resultado.avisos.some(a =>
+   a.campo === 'local' && a.texto.includes('Blanes') && a.texto.includes('Lloret')));
+ }
+});
+
+test('el contraste distingue un domicilio fiscal de una dirección de entrega', () => {
+ const entrega = {...buena, direccion_entrega:'Muralla, 21'};
+ assert.ok(compararLecturas(entrega, {...buena, domicilio_fiscal:'Muralla, 21'})
+  .some(a => a.campo === 'local'));
+ assert.ok(!compararLecturas(entrega, {...buena, direccion_entrega:'Carrer de la Muralla, 28'})
+  .some(a => a.campo === 'local'));
+});
+
+
+test('email sin local: la entrega en Blanes resuelve un NIF compartido', async () => {
+ const fin = new Error('Entrada al registro con local');
+ let consultasHash = 0;
+ await assert.rejects(procesarFacturaSinLocal({
+  buffer:Buffer.from('email con entrega'), mimeType:'application/pdf', origen:'email',
+  leerDocumento:async () => ({...buena, nif_receptor:'B70799135', direccion_entrega:'Muralla, 21'}),
+  dbAll:async sql => sql.includes('REPLACE(REPLACE(UPPER(cif)')
+   ? [{local:'La Tapeta - Blanes', empresa:'Del Amor Uriel'}, {local:'La Tapeta - Lloret', empresa:'Del Amor Uriel'}]
+   : [],
+  dbGet:async sql => {
+   if (sql.includes('FROM facturas WHERE file_hash') && ++consultasHash === 2) throw fin;
+   return null;
+  },
+ }), error => error === fin);
+});
+
+test('email sin local: una dirección incompatible con el NIF receptor requiere revisión', async () => {
+ await assert.rejects(procesarFacturaSinLocal({
+  buffer:Buffer.from('email con entrega contradictoria'), mimeType:'application/pdf', origen:'email',
+  leerDocumento:async () => ({...buena, nif_receptor:'B70799135', direccion_entrega:'Muralla, 21'}),
+  dbAll:async sql => sql.includes('REPLACE(REPLACE(UPPER(cif)')
+   ? [{local:'La Tapeta - Lloret', empresa:'Del Amor Uriel'}]
+   : [],
+  dbGet:async () => null,
+ }), error => error.revisionDocumento && error.resultado.avisos.some(a =>
+  a.campo === 'local' && a.texto.includes('NIF receptor')));
+});
+
+
+test('P1 #2899: una foto sin EXIF girada se contrasta dos veces tras orientar la copia', async () => {
+ const foto = await sharp({create:{width:80,height:120,channels:3,background:'white'}}).png().toBuffer();
+ const lecturaCorregida = [];
+ const salida = await leerDocumentoVerificado(foto,'image/png',{
+  leer:async imagen => {
+   if (imagen === foto) return {...buena,orientacion_texto:{giro_horario:90,confianza:'alta'}};
+   const {width,height} = await sharp(imagen).metadata();
+   lecturaCorregida.push([width,height]);
+   return {...buena};
+  },
+ });
+ assert.deepEqual(lecturaCorregida,[[120,80],[120,80]]);
+ assert.equal(salida._contraste.estado,'lectura_validada');
+});
+
+test('P1: un extracto, certificado o voucher corroborado conserva el original en revisión', async () => {
+ for (const clase_adjunto of ['voucher_datafono','certificado_seguro','extracto_cuenta']) {
+  const informativo={tipo:'otro',clase_adjunto,es_documento_compra:false,
+   confianza_clasificacion:'alta',calidad_imagen:'legible',lineas:[]};
+  await assert.rejects(leerDocumentoVerificado(Buffer.from(clase_adjunto),'application/pdf',{
+   leer:async () => ({...informativo}),
+  }), error => error.revisionDocumento && error.resultado.avisos.some(a => a.codigo === 'informativo'));
+ }
+});
+
+test('P2: el desglose aprobado suma base, IVA y recargo y conserva los tipos mixtos', async () => {
+ const {validarIva} = await import('../../src/modules/facturas/iva.js');
+ const iva_desglose = [
+  {tipo:4,base:50,cuota:2,recargo:0.25},
+  {tipo:21,base:100,cuota:21,recargo:5.2},
+ ];
+ const d = datosRevision(buena,{iva_desglose,total:178.45,lineas_iva_incluido:true});
+ assert.deepEqual([d.base_imponible,d.cuota_iva,d.recargo_equivalencia,d.porcentaje_iva],[150,23,5.45,null]);
+ assert.equal(d.lineas_iva_incluido,true);
+ assert.deepEqual(validarIva(d.iva_desglose,d).partes,iva_desglose);
+ assert.throws(() => datosRevision(buena,{iva_desglose:[{tipo:4,base:null,cuota:2}]}));
+});
+
+test('P2: bultos y descuento en euros se guardan separados de la cantidad y del IVA', async () => {
+ const {normalizarLinea} = await import('../../src/modules/facturas/lineas.js');
+ const d = datosRevision(buena,{lineas:[{descripcion:'Producto',cantidad:10,bultos:2,
+  precio_unitario:4,importe:40,importe_neto:36,descuento_euros:4}]});
+ const l = normalizarLinea(d.lineas[0]);
+ assert.deepEqual([l.cantidad,l.bultos,l.descuento_euros,l.importe,l.dudosa],[10,2,4,36,false]);
+ assert.equal(normalizarLinea({...d.lineas[0],importe_neto:34}).dudosa,true);
+});
+
+test('P3: la pauta de DDI requiere un NIF coincidente y la de Cerezo conserva el IVA ausente', async () => {
+ const {instruccionesPlantillaProveedor} = await import('../../src/modules/facturas/memoria-formato.js');
+ const ddi = {...buena,nif_proveedor:'B67210948'};
+ assert.match(instruccionesPlantillaProveedor([ddi,{...ddi,nif_proveedor:'ES-B67210948'}]),/Dto en euros/);
+ assert.equal(instruccionesPlantillaProveedor([ddi,buena]),'');
+ const cerezo = {...buena,nif_proveedor:'B60599461'};
+ assert.match(instruccionesPlantillaProveedor([cerezo,cerezo]),/Si el IVA no está impreso/);
 });

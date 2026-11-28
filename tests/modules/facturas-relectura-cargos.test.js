@@ -19,7 +19,7 @@ test('guardar OCR que reintroduce S.L. no duplica ni elimina el cargo confirmado
 test('lectura normal sin cargos conserva funcionamiento y cálculo',async()=>{
  for(const valor of [undefined,null,[], '[]']){
   const writes=[];await guardarLineas(async(sql,p)=>writes.push({sql,p}),1,{tipo:'factura',base_imponible:10,cargos_base:valor,lineas:[{descripcion:'Producto',cantidad:1,precio_unitario:10,importe:10}]},'2026-11-16');
-  assert.equal(writes.length,2);assert.equal(writes[1].p[0],'ok');assert.equal(writes[1].p[1],null);
+  assert.equal(writes.length,2);assert.deepEqual(writes[1].p.slice(0,3),[false,'ok',null]);
  }
 });
 function escenario(cambio,falloInsert=false){
@@ -30,7 +30,7 @@ function escenario(cambio,falloInsert=false){
   try{return await fn({get:async()=>structuredClone(f),all:async()=>structuredClone(ls),run:async(sql,p)=>{
    writes++;if(sql.startsWith('DELETE'))ls=[];
    if(sql.startsWith('INSERT')){if(falloInsert)throw new Error('fallo escritura');ls.push({descripcion:p[2]});}
-   if(sql.startsWith('UPDATE facturas SET lineas_iva'))f.lineas_estado=p[0];
+   if(sql.startsWith('UPDATE facturas SET lineas_iva'))f.lineas_estado=p[1];
   }});}catch(e){[f,ls]=antes;throw e;}
  }};
  return {deps,estado:()=>({f,ls,writes})};

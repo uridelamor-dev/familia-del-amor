@@ -56,6 +56,7 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
   const cantidad = n(cruda.cantidad);
   const precioBruto = n(cruda.precio_unitario);
   const dto = n(cruda.descuento_pct);
+  const dtoEuros = n(cruda.descuento_euros);
   let bruto = n(cruda.importe);
   let neto = n(cruda.importe_neto);
 
@@ -75,6 +76,10 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
   // Si falta el importe pero están cantidad y precio, se deriva: es aritmética, no adivinar.
   if (bruto == null && cantidad != null && precioBruto != null) bruto = red(cantidad * precioBruto);
 
+  // En un abono el descuento reduce la magnitud del bruto, igual que en una compra.
+  const netoDescuento = bruto != null && dtoEuros != null
+    ? red(bruto - Math.sign(bruto) * Math.abs(dtoEuros)) : null;
+  if (neto == null && netoDescuento != null) neto = netoDescuento;
   // El neto: el que venga en la factura manda; si no, se calcula del descuento.
   if (neto == null && bruto != null && dto != null && dto > 0 && dto <= 100) neto = red(bruto * (1 - dto / 100));
   if (neto == null) neto = bruto;
@@ -105,6 +110,8 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
     && Math.abs(red(bruto * (1 - dto / 100)) - neto) > 0.02;
   const incoherente = (bruto != null && neto != null && Math.abs(neto) > Math.abs(bruto) + 0.01)
     || (bruto != null && neto != null && bruto * neto < 0)
+    || (netoDescuento != null && Math.abs(netoDescuento - neto) > 0.02)
+    || (bruto != null && dtoEuros != null && Math.abs(dtoEuros) > Math.abs(bruto))
     || descuadreCantidad || descuadreDescuento || (dto != null && (dto < 0 || dto > 100));
 
   // Cero no equivale a ilegible cuando el propio detalle identifica una entrega
@@ -116,6 +123,8 @@ export function normalizarLinea(cruda = {}, orden = 0, tipo = "factura") {
     orden,
     descripcion,
     cantidad: cantidadFinal,
+    bultos: n(cruda.bultos),
+    descuento_euros: dtoEuros,
     // Al deshacer el paquete, la unidad de la factura («PACK») deja de valer: eran 3 packs,
     // ahora son 450 unidades. Decir «450 PACK» sería peor que no decir nada.
     unidad: factor ? "ud" : (String(cruda.unidad ?? "").trim().slice(0, 20) || null),

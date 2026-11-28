@@ -15,7 +15,7 @@ import { procesarFactura } from "../facturas.js";
 const LOCAL = "La Tapeta - Blanes";
 const DATOS = {
   tipo: "factura", fecha: "2026-08-20", vencimiento: null, numero_factura: "2026/00418",
-  proveedor: "Distribucions Prova SL", nif_proveedor: "B12345678",
+  proveedor: "Distribucions Prova SL", nif_proveedor: "B12345674",
   nombre_receptor: "Mateu del Amor SL", nif_receptor: "B99999999", local_receptor: null,
   concepto: "Bebidas", base_imponible: 100, porcentaje_iva: 21, cuota_iva: 21, total: 121,
   lineas: [{ descripcion: "Agua 1,5L", cantidad: 10, unidad: "ud", precio_unitario: 6, importe: 60, descuento_pct: null, importe_neto: null },

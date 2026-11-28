@@ -88,9 +88,10 @@ for (const caso of [
       ventasRecientes, completarVentasRecientes, normalizarVentasRango, agruparDesglose,
       _ventasVivoCache:{ts:Date.now(),data:{hoy:fecha,locales:[{local:'Blanes',dias:filas.filter(f=>f.dia>=inicioReciente)}]}},
       dbAll: async () => [], dbGet: async () => ({ n: 0, total: 0, base: 0 }),
-      SIN_ALBARANES: 'TRUE', resultadoRegistrado: () => null,
+      SIN_DUDAS: 'TRUE', resultadoRegistrado: () => null,
     });
     vm.runInContext(source.slice(source.indexOf('async function ventasRangoLive(local, from, to)'), source.indexOf('// Ejecuta un informe de Ágora')), ctx);
+    vm.runInContext(source.match(/^const FACTURADO_DASHBOARD = .+$/m)[0],ctx);
     vm.runInContext(source.slice(source.indexOf('async function periodoDeLocal('), source.indexOf('// Estado de la integración por local (NUNCA expone el token).')), ctx);
     const mes = await ctx.periodoDeLocal({ from: inicio, to: hasta }, null);
     assert.equal(mes.ventas.total, filas.reduce((s, f) => s + f.ventas, 0));
@@ -146,8 +147,9 @@ test('historico sin ventas confirmado queda completo; respaldo con huecos queda 
  const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
  const ctx=vm.createContext({hoyISO:()=>hoy,addDaysISO:(s,n)=>{const d=new Date(s+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);},
  INV_LOCALES:['A'],LOCALES_SIN_PUBLICO:new Set(),fuentesVentas:l=>[l],normalizarVentasRango,agruparDesglose,
- ventasRangoLive:async()=>[],dbAll:async()=>[],dbGet:async()=>({n:0,total:0,base:0}),SIN_ALBARANES:'TRUE',resultadoRegistrado:()=>null});
- vm.runInContext(source.slice(source.indexOf('async function periodoDeLocal('),source.indexOf('// Estado de la integración por local (NUNCA expone el token).')),ctx);
+ ventasRangoLive:async()=>[],dbAll:async()=>[],dbGet:async()=>({n:0,total:0,base:0}),SIN_DUDAS:'TRUE',resultadoRegistrado:()=>null});
+ vm.runInContext(source.match(/^const FACTURADO_DASHBOARD = .+$/m)[0],ctx);
+    vm.runInContext(source.slice(source.indexOf('async function periodoDeLocal('),source.indexOf('// Estado de la integración por local (NUNCA expone el token).')),ctx);
  const q={from:'2026-09-01',to:'2026-09-03'};
  const completo=await ctx.periodoDeLocal(q,null);
  assert.equal(completo.ventas.disponible,true);assert.equal(completo.ventas.parcial,false);assert.equal(completo.ventas.total,0);
@@ -177,8 +179,9 @@ test('el histórico empieza mientras la lectura reciente sigue pendiente',async(
  const ctx=vm.createContext({hoyISO:()=>hoy,addDaysISO:(s,n)=>{const d=new Date(s+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);},
  INV_LOCALES:['A'],LOCALES_SIN_PUBLICO:new Set(),fuentesVentas:l=>[l],normalizarVentasRango,agruparDesglose,ventasRecientes,completarVentasRecientes,
  _ventasVivoCache:{ts:0},ventasRangoLive:async(l,from)=>{pedidos.push(from);if(from!=='2026-09-01')await puerta;return [];},
- dbAll:async()=>[],dbGet:async()=>({n:0,total:0,base:0}),SIN_ALBARANES:'TRUE',resultadoRegistrado:()=>null});
- vm.runInContext(source.slice(source.indexOf('async function periodoDeLocal('),source.indexOf('// Estado de la integración por local (NUNCA expone el token).')),ctx);
+ dbAll:async()=>[],dbGet:async()=>({n:0,total:0,base:0}),SIN_DUDAS:'TRUE',resultadoRegistrado:()=>null});
+ vm.runInContext(source.match(/^const FACTURADO_DASHBOARD = .+$/m)[0],ctx);
+    vm.runInContext(source.slice(source.indexOf('async function periodoDeLocal('),source.indexOf('// Estado de la integración por local (NUNCA expone el token).')),ctx);
  const tarea=ctx.periodoDeLocal({from:'2026-09-01',to:hoy},null);
  await new Promise(r=>setImmediate(r));assert.equal(pedidos.length,2);assert.ok(pedidos.includes('2026-09-01'));
  soltar();const per=await tarea;assert.equal(per.ventas.parcial,false);

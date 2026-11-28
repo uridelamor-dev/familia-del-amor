@@ -38,10 +38,13 @@ function entorno({estado='pendiente',comparar=async()=>prueba(),fallar=false}={}
  const servicio=crearPaginas({db,transaccion:fn=>fn(db),comparar,combinar:async()=>{if(fallar)throw Error('PDF no disponible');return Buffer.from('pdf');},completar:async()=>{completar++;return {ok:true};}});
  return {a,b,db,servicio,cambios,get propuesta(){return p;},get completadas(){return completar;}};
 }
-test('reúne fotos ya guardadas aunque la segunda aún esté esperando; preserva originales y un solo alta',async()=>{
+test('las fotos compatibles esperan una acción explícita antes de unir',async()=>{
  const e=entorno();assert.equal(await e.servicio.antes(e.a),true);
+ assert.equal(e.propuesta.estado,'revision');
+ await assert.rejects(e.servicio.unir(e.propuesta),/confirmación explícita/);
+ assert.ok(!e.cambios.some(x=>x.sql.startsWith('INSERT INTO facturas_recepciones')));
+ await e.servicio.unir(e.propuesta,'Contabilidad');
  assert.equal(e.cambios.filter(x=>x.sql.startsWith('INSERT INTO facturas_recepciones')).length,1);
- assert.ok(e.cambios.some(x=>x.sql.includes("estado='sustituido'")));
  assert.ok(!e.cambios.some(x=>/DELETE|original=NULL/.test(x.sql)));
 });
 test('sin numeración propone revisión y no crea un documento unido',async()=>{
@@ -56,10 +59,11 @@ test('una factura registrada exige revisión; no se vuelve a contabilizar',async
  const e=entorno({estado:'registrado'});e.db.all=async()=>[e.a];await e.servicio.antes(e.b);
  assert.equal(e.propuesta.estado,'revision');assert.equal(e.completadas,0);
 });
-test('si falla el PDF no se retiran originales; la propuesta automática puede retomarse',async()=>{
- const e=entorno({fallar:true});await assert.rejects(e.servicio.antes(e.a),/PDF/);
- assert.equal(e.propuesta.estado,'automatica');assert.ok(!e.cambios.some(x=>x.sql.includes("estado='sustituido'")));
- await assert.rejects(e.servicio.antes(e.a),/PDF/);
+test('si falla el PDF en una unión manual, se conservan originales y propuesta',async()=>{
+ const e=entorno({fallar:true});await e.servicio.antes(e.a);
+ await assert.rejects(e.servicio.unir(e.propuesta,'Contabilidad'),/PDF/);
+ assert.equal(e.propuesta.estado,'revision');
+ assert.ok(!e.cambios.some(x=>x.sql.includes("estado='sustituido'")));
 });
 test('completar conserva identidad y no cambia un total ya registrado',()=>{
  const f={tipo:'factura',numero_factura:'F1',nif:'B123',fecha:'2026-10-28',total:121,base_imponible:100,cuota_iva:21};

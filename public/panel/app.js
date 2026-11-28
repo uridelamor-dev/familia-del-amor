@@ -1326,10 +1326,20 @@ function openEstabMenu() {
 window.addEventListener('resize',()=>{if(document.getElementById('drawer')?.classList.contains('estab-popover'))closeDrawer();});
 
 // ════════════════════════ VISTA: DASHBOARD (ejecutivo) ════════════════════════
-function dashDesgloseLocales(filas){
+function dashDesgloseLocales(filas,formato=eur){
  const pal=['var(--info)','var(--warning)','#8A5A9B','var(--brand)','var(--success)','#B5713A','#5B8A72'];
  const positivas=filas.reduce((s,r)=>s+Math.max(0,Number(r.total)||0),0);
- return `<div class="dash-local-breakdown">${positivas?`<div class="mbar" aria-hidden="true">${filas.map((r,i)=>`<span style="width:${Math.max(0,Number(r.total)||0)/positivas*100}%;background:${pal[i%pal.length]}"></span>`).join('')}</div>`:''}<div class="rows">${filas.map((r,i)=>`<div class="row"><span class="sdot" style="background:${pal[i%pal.length]}"></span><div class="grow"><span>${esc(nombreCortoLocal(r.local))}</span>${r.parcial&&r.disponible?'<small class="mut">Lectura parcial</small>':''}</div><b class="tnum">${r.cargando?'Consultando…':r.disponible===false?'No disponible':eur(r.total)}</b></div>`).join('')}</div></div>`;
+ return `<div class="dash-local-breakdown">${positivas?`<div class="mbar" aria-hidden="true">${filas.map((r,i)=>`<span style="width:${Math.max(0,Number(r.total)||0)/positivas*100}%;background:${pal[i%pal.length]}"></span>`).join('')}</div>`:''}<div class="rows">${filas.map((r,i)=>`<div class="row"><span class="sdot" style="background:${pal[i%pal.length]}"></span><div class="grow"><span>${esc(nombreCortoLocal(r.local))}</span>${r.parcial&&r.disponible?'<small class="mut">Lectura parcial</small>':''}</div><b class="tnum">${r.cargando?'Consultando…':r.disponible===false?'No disponible':formato(r.total)}</b></div>`).join('')}</div></div>`;
+}
+function dashCategoriasEntrega(desglose){
+  if(!desglose)return '';
+  const filas=[...desglose.categorias,{categoria:'Sin clasificar',...desglose.sinClasificar}];
+  const porcentaje=n=>n==null?'—':dec1(n)+' %';
+  return `<div class="dash-local-breakdown">
+    <h4>En qué se va el dinero</h4>
+    <div class="rows">${filas.map(r=>`<div class="row"><div class="grow">${esc(r.categoria)}${r.estimado?`<div class="mut" style="font-size:12px">${eur2(r.estimado)} estimados</div>`: ""}</div><b class="tnum">${eur2(r.importe)}</b><span class="tnum mut">${porcentaje(r.porcentaje)}</span></div>`).join('')}</div>
+    <p class="mut">Clasificación por proveedor. Importe estimado por reparto entre varias categorías: <b>${eur2(desglose.estimado)}</b>.</p>
+  </div>`;
 }
 function graficoVentasDashboard(per, mensaje) {
   const ventas=per?.ventas;
@@ -1380,7 +1390,21 @@ function renderDashboard(d) {
     periodo.comparacion?.ventas != null ? kpi({lab:"Variación de facturación", icon:"cal", val:(periodo.comparacion.ventas > 0 ? "+" : "") + dec1(periodo.comparacion.ventas) + " %", sub:"Respecto a " + [periodo.comparacion.desde, periodo.comparacion.hasta].map(fecha => new Intl.DateTimeFormat("es-ES", {day:"numeric", month:"short", year:"numeric"}).format(new Date(fecha + "T12:00:00"))).join(" – ")}) : "",
   ].filter(Boolean) : [];
   const kpis = !esHoy ? (tarjetasPeriodo.length ? `<div class="grid g${tarjetasPeriodo.length} dash-kpis">${tarjetasPeriodo.join("")}</div>` : `<p class="mut" role="status">${DASH_PERIODO_ESTADO === "cargando" ? "Consultando el periodo seleccionado…" : "Las cifras del periodo no están disponibles."}</p>`) : tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : `<p class="mut" role="status">${diario === undefined ? "Consultando las cifras de hoy…" : "Las cifras de hoy no están disponibles en este momento."}</p>`;
-  if (d.errorResumen) return header + kpis + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
+  const localesAhora = esHoy && diario?.porLocal?.length ? `<details class="card fold" style="margin-top:16px">
+    <summary><h3>Locales ahora</h3><span class="foldr"><span class="mut">${actual?.tickets != null ? num(actual.tickets) + " tickets hoy · " : ""}${marca}${esc(cobertura)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <div class="tw"><table class="tbl">
+      <thead><tr><th scope="col">Local</th><th scope="col" class="r">Tickets hoy</th><th scope="col" class="r">Facturado hoy</th></tr></thead>
+      <tbody>${[...diario.porLocal].sort((a, b) => (b.tickets ?? -1) - (a.tickets ?? -1))
+        .map(fila => `<tr><th scope="row">${esc(nombreCortoLocal(fila.local))}</th>
+          <td class="r tnum">${fila.tickets == null ? "—" : num(fila.tickets)}</td>
+          <td class="r tnum">${fila.ventas == null ? "—" : eur2(fila.ventas)}</td></tr>`).join("")}</tbody>
+      <tfoot><tr><th scope="row">${actual?.parcial ? "Total disponible" : "Total"}</th>
+        <td class="r tnum">${actual?.tickets == null ? "—" : num(actual.tickets)}</td>
+        <td class="r tnum">${actual?.ventas == null ? "—" : eur2(actual.ventas)}</td></tr></tfoot>
+    </table></div>
+    <p class="mut" style="font-size:12px">Ocupación y saldo pendiente de cobro no disponibles en esta conexión con Ágora.</p>
+  </details>` : "";
+  if (d.errorResumen) return header + kpis + localesAhora + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
 
 
   // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
@@ -1404,7 +1428,7 @@ function renderDashboard(d) {
   const gEmp = gOk ? Number(per.gastos.empresa) || 0 : 0;
   const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
   const ventasBox = (vOk || gOk)
-    ? `<div class="dash-period-stats">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}</div>`
+    ? `<div class="dash-period-stats">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Compras facturadas", gOk ? eur2(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}</div>`
     : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y gastos<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
   const diferencia=vOk&&!per.ventas.parcial&&!cmp?.ventasParcial&&cmp?.totales?.ventas!=null?per.ventas.total-cmp.totales.ventas:null;
   const comparador=`<div class="dash-comparator"><div class="dash-comparator-head"><span class="dash-metric-label">Facturación de referencia</span><button class="btn sm" data-act="dash-compare">${ic('cal',14)} ${esc(DASH_COMPARAR?.label || 'Elegir periodo')} ▾</button></div><div class="dash-comparator-values"><b class="tnum">${cmp?.totales?.ventas!=null?eur(cmp.totales.ventas):'—'}</b><span class="mut">${DASH_COMPARANDO?'Cargando comparación…':cmp?esc([cmp.desde,cmp.hasta].map(f=>new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',year:'numeric'}).format(new Date(f+'T12:00:00'))).join(' – ')):'Comparación no disponible'}</span></div>${diferencia!=null?`<div class="dash-comparator-delta"><span>Diferencia</span> ${diferencia>=0?'+':'−'}${eur(Math.abs(diferencia))}${cmp.ventas!=null?' · '+(cmp.ventas>0?'+':'')+dec1(cmp.ventas)+' %':''}</div>`:''}${DASH_COMPARAR?'<button class="link" data-act="dash-compare-auto">Volver al periodo anterior</button>':''}${cmp?.ventasParcial?'<small class="mut">Referencia parcial: faltan datos de ventas.</small>':cmp&&cmp.totales?.ventas==null?'<small class="mut">No hay una lectura de ventas disponible para estas fechas.</small>':''}${cmp?.lectura?.actualizando?'<small class="mut">Actualizando referencia…</small>':''}${DASH_COMPARACION_ERROR?'<p role="status">No se pudo actualizar la comparación. <button class="link" data-act="dash-compare-retry">Reintentar</button></p>':''}</div>`;
@@ -1414,16 +1438,33 @@ function renderDashboard(d) {
   const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad · ventas y reservas</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="dash-activity-metrics"><div class="dash-metric"><div class="dash-metric-label">Reservas</div><div class="dash-metric-value tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="dash-metric-note">${per?.reservas?.personas != null ? num(per.reservas.personas) + " comensales" : "Comensales no disponibles"}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${!per&&DASH_AVANCE.length?`<div class="dash-sales-breakdown"><h4>Facturación por local · consultando</h4>${dashDesgloseLocales(DASH_AVANCE)}</div>`:''}<div class="dash-sales-comparison">${comparador}</div>${lecturaPeriodo}${per?.ventas?.porLocal?.length>1?`<div class="dash-sales-breakdown"><h4>Facturación por local</h4>${dashDesgloseLocales(per.ventas.porLocal)}</div>`:""}<div class="dash-activity-trend">${grafico}</div><div class="dash-activity-footer"><div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles." : per && !gOk ? " · Sin facturas registradas." : ""}</div></div></div>`;
 
   // El gasto usa el mes actual por defecto y el rango elegido al cambiar el periodo.
-  const gl = DASH_GASTOS?.porLocal || [], gtot=DASH_GASTOS?.total;
-  const gasto = `<div class="card c4"><div class="ch"><h3>${esHoy?'Gasto del mes':'Gasto del periodo'}</h3></div><div class="big tnum">${gtot==null?'—':eur(gtot)}</div><p class="mut" style="font-size:12px">${DASH_GASTOS?esc(fechaCorta(DASH_GASTOS.from))+' – '+esc(fechaCorta(DASH_GASTOS.to)):DASH_GASTOS_ESTADO==='error'?'No se pudo cargar el gasto.':'Consultando gasto…'}</p>${gl.length?dashDesgloseLocales(gl):DASH_GASTOS?'<p class="mut">Sin gasto registrado en este periodo.</p>':''}<div class="mut" style="font-size:11px;margin-top:16px">Facturas del periodo, incluido el gasto de empresa repartido. No incluye coste de personal.</div></div>`;
+  const compras = DASH_GASTOS;
+  const pendientes = compras?.albaranesPendientes;
+  const entregas = compras?.gastoEntrega;
+  const fechasCompras = compras
+    ? esc(fechaCorta(compras.from))+' – '+esc(fechaCorta(compras.to))
+    : DASH_GASTOS_ESTADO==='error'?'No se pudieron cargar las compras.':'Consultando compras…';
+  const gasto = `<div class="card c4"><div class="ch"><h3>${esHoy?'Compras del mes':'Compras del periodo'}</h3></div>
+    <p class="mut">${fechasCompras}</p>
+    <h4>Gasto por fecha de entrega</h4><div class="big tnum">${entregas?eur2(entregas.total):'—'}</div>
+    ${entregas?.porLocal.length?dashDesgloseLocales(entregas.porLocal,eur2):''}
+    <p class="mut">Importes con IVA. Los albaranes cuentan por fecha de entrega. Los tickets y la parte de las facturas sin entrega vinculada cuentan por fecha de emisión.${entregas?.sinImporte?' · '+num(entregas.sinImporte)+' documentos sin importe registrado':''}</p>
+    ${dashCategoriasEntrega(entregas?.porCategoria)}
+    <h4>Facturas y tickets registrados</h4><div class="big tnum">${compras?eur2(compras.total):'—'}</div>
+    ${compras?.porLocal.length?dashDesgloseLocales(compras.porLocal,eur2):''}
+    <p class="mut">Incluye los gastos de empresa imputados al local.</p>
+    <h4>Albaranes pendientes de facturar</h4><div class="big tnum">${pendientes?eur2(pendientes.total):'—'}</div>
+    ${pendientes?.porLocal.length?dashDesgloseLocales(pendientes.porLocal,eur2):''}
+    ${pendientes?`<p class="mut">${num(pendientes.cantidad)} sin factura vinculada${pendientes.sinImporte?' · '+num(pendientes.sinImporte)+' sin importe registrado':''}. Las entregas ya facturadas se excluyen cuando se vinculan en Conciliaciones.</p>`:''}
+  </div>`;
 
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
-  const estado = `<details class="card fold c12 p0"><summary style="padding:18px 18px 14px"><h3>Estado por establecimiento</h3><span class="foldr"><span class="mut">${radar.length ? num(radar.length) : "—"}</span><span class="car">${ic("chev", 16)}</span></span></summary>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur(e.gastoMes)}</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</details>`;
+  const estado = `<details class="card fold c12 p0"><summary style="padding:18px 18px 14px"><h3>Estado por establecimiento</h3><span class="foldr"><span class="mut">${radar.length ? num(radar.length) : "—"}</span><span class="car">${ic("chev", 16)}</span></span></summary>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur2(e.gastoMes)} en compras registradas</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</details>`;
 
   const row1 = `<div class="grid g12" style="margin-top:16px">${actividad}${gasto}</div>`;
   const row2 = radar.length ? `<div class="grid g12" style="margin-top:16px">${estado}</div>` : "";
-  return header + sara + kpis + row1 + row2;
+  return header + sara + kpis + localesAhora + row1 + row2;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();
@@ -10000,15 +10041,59 @@ async function facSelExport() {
 /** El documento de una factura, en grande, dentro de su ficha. */
 function facVistaDocumento(caja,url,mime) {
  if(!caja)return;
- if(!mime.startsWith('image/')&&mime!=='application/pdf'){caja.textContent='Vista previa no disponible. Descarga el original para revisarlo.';return;}
+ if(!mime.startsWith('image/')&&mime!=='application/pdf'){globalThis.URL?.revokeObjectURL(url);caja.textContent='Vista previa no disponible. Descarga el original para revisarlo.';return;}
  caja.classList.remove('fic-ph');caja.classList.add('fac-viewer');
- caja.innerHTML=`<div class="fac-viewer-tools" role="group" aria-label="Tamaño de la vista previa"><button type="button" class="btn sm" data-zoom="menos" aria-label="Reducir documento">−</button><output aria-live="polite">100 %</output><button type="button" class="btn sm" data-zoom="mas" aria-label="Ampliar documento">+</button><button type="button" class="btn sm" data-zoom="normal">100 %</button><button type="button" class="btn sm" data-zoom="ajustar">Ajustar</button></div><div class="fac-viewer-scroll" tabindex="0" aria-label="Documento; desplázate para ver las zonas ampliadas"><div class="fac-viewer-space"><div class="fac-viewer-page">${mime.startsWith('image/')?`<img src="${url}" alt="Original de la compra">`:`<iframe src="${url}#view=FitH" title="Original de la compra"></iframe>`}</div></div></div>`;
+ caja.innerHTML=`<div class="fac-viewer-tools" role="group" aria-label="Tamaño de la vista previa"><button type="button" class="btn sm" data-zoom="menos" aria-label="Reducir documento">−</button><output aria-live="polite">100 %</output><button type="button" class="btn sm" data-zoom="mas" aria-label="Ampliar documento">+</button><button type="button" class="btn sm" data-zoom="normal">100 %</button><button type="button" class="btn sm" data-zoom="ajustar">Ajustar</button></div><div class="fac-viewer-scroll" tabindex="0" aria-label="Documento; desplázate para ver las zonas ampliadas"><div class="fac-viewer-space"><div class="fac-viewer-page">${mime.startsWith('image/')?`<img src="${url}" alt="Original de la compra">`:`<div class="fac-pdf-original" aria-label="Original de la compra">Cargando PDF…</div>`}</div></div></div>`;
  const scroll=caja.querySelector('.fac-viewer-scroll'),space=caja.querySelector('.fac-viewer-space'),page=caja.querySelector('.fac-viewer-page'),media=page.firstElementChild;
- let zoom=1;
- const dibujar=()=>{const w=scroll.clientWidth;if(!w)return;page.style.width=w+'px';media.style.height=media.tagName==='IMG'?'auto':'520px';page.style.transform=`scale(${zoom})`;space.style.width=w*zoom+'px';space.style.height=page.offsetHeight*zoom+'px';caja.querySelector('output').textContent=Math.round(zoom*100)+' %';caja.querySelector('[data-zoom=menos]').disabled=zoom<=.5;caja.querySelector('[data-zoom=mas]').disabled=zoom>=3;};
+ let zoom=1,visor,giro=0;
+ const dibujar=()=>{
+  const w=scroll.clientWidth;
+  if(!w)return;
+  page.style.width=w+'px';
+  if (mime.startsWith('image/') && media.naturalWidth && media.naturalHeight) {
+   const vertical = giro % 180 !== 0;
+   const alto = w * (vertical ? media.naturalWidth / media.naturalHeight : media.naturalHeight / media.naturalWidth);
+   page.style.height=alto+'px';
+   media.style.width=(vertical ? alto : w)+'px';
+   media.style.transformOrigin='top left';
+   media.style.transform=[
+    '', `translateX(${w}px) rotate(90deg)`,
+    `translate(${w}px,${alto}px) rotate(180deg)`,
+    `translateY(${alto}px) rotate(270deg)`,
+   ][giro/90];
+  }
+  page.style.transform=`scale(${zoom})`;
+  space.style.width=w*zoom+'px';
+  space.style.height=page.offsetHeight*zoom+'px';
+  caja.querySelector('output').textContent=Math.round(zoom*100)+' %';
+  caja.querySelector('[data-zoom=menos]').disabled=zoom<=.5;
+  caja.querySelector('[data-zoom=mas]').disabled=zoom>=3;
+ };
+ if (mime.startsWith('image/')) {
+  const rotar = document.createElement('button');
+  rotar.type='button';
+  rotar.className='btn sm';
+  rotar.textContent='Girar foto';
+  rotar.onclick=()=>{giro=(giro+90)%360;dibujar();};
+  caja.querySelector('.fac-viewer-tools').append(rotar);
+ }
  caja.querySelector('.fac-viewer-tools').onclick=e=>{const b=e.target.closest('[data-zoom]');if(!b)return;zoom=b.dataset.zoom==='mas'?Math.min(3,zoom+.25):b.dataset.zoom==='menos'?Math.max(.5,zoom-.25):1;dibujar();if(['normal','ajustar'].includes(b.dataset.zoom))scroll.scrollTo(0,0);};
- media.addEventListener('load',dibujar);const resize=new ResizeObserver(dibujar);resize.observe(scroll);dibujar();
- const cleanup=new MutationObserver(()=>{if(!caja.isConnected){resize.disconnect();cleanup.disconnect();URL.revokeObjectURL(url);}});cleanup.observe(document.body,{childList:true,subtree:true});
+ media.addEventListener('load',dibujar);const resize=new ResizeObserver(dibujar);resize.observe(scroll);resize.observe(page);dibujar();
+ const cleanup=new MutationObserver(()=>{if(!caja.isConnected){resize.disconnect();cleanup.disconnect();visor?.destroy();URL.revokeObjectURL(url);}});cleanup.observe(document.body,{childList:true,subtree:true});
+ if(mime==='application/pdf'){
+  const abrir=document.createElement('a');abrir.className='btn sm';abrir.href=url;abrir.target='_blank';abrir.rel='noopener';abrir.textContent='Abrir PDF ↗';
+  const descargar=document.createElement('a');descargar.className='btn sm';descargar.href=url;descargar.download='original.pdf';descargar.textContent='Descargar PDF';
+  caja.querySelector('.fac-viewer-tools').append(abrir,descargar);
+  (async()=>{
+   try{
+    const [{visorPdf},respuesta]=await Promise.all([import('/panel/pdf-firma.js'),fetch(url)]);
+    const bytes=await respuesta.arrayBuffer();
+    if(!caja.isConnected)return;
+    visor=await visorPdf(media,bytes);
+    if(!caja.isConnected)visor.destroy();
+   }catch{if(caja.isConnected)media.textContent='No se pudo mostrar el PDF. Ábrelo en otra pestaña o descarga el original.';}
+  })();
+ }
 }
 async function facPintarPapel(caja, id) {
  if(!caja?.isConnected)return;
@@ -10659,7 +10744,7 @@ async function facRepasoDocumento(item,volver){
   try{await apiSend('POST',ruta,{decision,campos:valores,esperado:actual,confirmado:ov.querySelector('#histConfirmado').checked,excepcion:ov.querySelector('#histExcepcion')?.checked===true});ov.remove();await volver();}
   catch(err){ov.querySelector('#histGuardarError').textContent=err.message;botones.forEach(b=>b.disabled=false);}
  };
- const archivo=item.origen==='factura'?`/api/facturas/${item.documento_id}/archivo`:item.origen==='pendiente'?`/api/facturas/pendientes/${item.documento_id}/archivo`:`/api/facturas/recepciones/${item.documento_id}/original`;
+ const archivo=item.origen==='factura'?`/api/facturas/${item.documento_id}/archivo`:item.origen==='pendiente'?`/api/facturas/pendientes/${item.documento_id}/archivo`:`/api/facturas/recepciones/${item.documento_id}/original?ver=1`;
  fetch(archivo,{headers:{Authorization:'Bearer '+token()}}).then(async r=>{
   if(!r.ok)throw new Error('Original no disponible. No confirmes datos que no has podido comprobar.');
   const blob=await r.blob();if(!ov.isConnected)return;
@@ -10683,6 +10768,48 @@ let FAC_RECEPCIONES_ANTES = null;
 let FAC_RECEPCIONES_HIST = [];
 let FAC_RECEPCIONES_CARGA = 0;
 let FAC_RECEPCIONES_ESPERA = false;
+function facSeguimientosRecepcion(caja, tareas) {
+  if (!tareas.length) return;
+  const lista = document.createElement('details');
+  lista.className = 'fac-review-reasons';
+  lista.innerHTML = `<summary>Anotaciones pendientes · ${num(tareas[0].total)}</summary>
+    ${tareas.map(t => `<div class="row fac-review-row"><div class="grow">
+      <div class="t1">${esc(t.nombre || 'Recepción #' + t.id)}</div>
+      <div class="t2">${esc(t.local || 'Por asignar')} · ${esc(t.nota)}</div>
+    </div><button class="btn sm" type="button" data-seguimiento="${esc(t.id)}">Revisar tarea</button></div>`).join('')}`;
+  caja.prepend(lista);
+  lista.addEventListener('click', evento => {
+    const boton = evento.target.closest('[data-seguimiento]');
+    if (!boton) return;
+    const tarea = tareas.find(t => String(t.id) === boton.dataset.seguimiento);
+    const ov = modal('Seguimiento · #' + tarea.id, `<p>${esc(tarea.nota)}</p>
+      ${tarea.tiene_original ? '<button class="btn sm" type="button" data-original>Ver original</button>'
+        : tarea.compra_id ? '<div data-original-compra></div>' : ''}
+      <form><label class="field">Cómo se resolvió<textarea required maxlength="1000" name="motivo"></textarea></label>
+      <p role="alert"></p><button class="btn primary" type="submit">Marcar como resuelta</button></form>`);
+    if (tarea.tiene_original) {
+      ov.querySelector('[data-original]').onclick = () => facOriginalRecepcion(tarea.id,tarea.nombre);
+    } else if (tarea.compra_id) {
+      facPintarPapel(ov.querySelector('[data-original-compra]'),tarea.compra_id);
+    }
+    ov.querySelector('form').onsubmit = async evento => {
+      evento.preventDefault();
+      const form = evento.currentTarget;
+      const guardar = form.querySelector('button');
+      guardar.disabled = true;
+      try {
+        await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(tarea.id)}/seguimiento`,
+          {motivo:form.elements.motivo.value});
+        ov.querySelector('[data-close]')?.click();
+        await facCargarRecepciones(FAC_RECEPCIONES_ANTES,'actualizar');
+      } catch (error) {
+        form.querySelector('[role="alert"]').textContent = error.message;
+        guardar.disabled = false;
+      }
+    };
+  });
+}
+
 async function facCargarRecepciones(antes = null, navegacion = "primera") {
   const caja = document.getElementById("facRecepciones");
   if (!caja || !["direccion", "contabilidad"].includes(USER.rol)) return;
@@ -10694,22 +10821,24 @@ async function facCargarRecepciones(antes = null, navegacion = "primera") {
   try { pagina = await apiRaw("/api/facturas/recepciones?"+consulta); }
   catch { pagina = null; }
   const filas = pagina?.data;
+  const seguimientos = pagina?.seguimientos || [];
   if (!caja.isConnected || carga !== FAC_RECEPCIONES_CARGA || consulta!==facRevisionQS(filtros)) return;
   if (!Array.isArray(filas)) { caja.innerHTML = '<p class="mut">No se ha podido consultar la recepción de documentos.</p>'; return; }
   if (navegacion === "next" && antes !== FAC_RECEPCIONES_ANTES) FAC_RECEPCIONES_HIST.push(FAC_RECEPCIONES_ANTES);
   if (navegacion === "prev") FAC_RECEPCIONES_HIST.pop();
   if (navegacion === "primera") FAC_RECEPCIONES_HIST = [];
   FAC_RECEPCIONES_ANTES = antes;
-  if (!filas.length && !antes && !pagina.propuestas?.length && !pagina.enEspera && !FAC_RECEPCIONES_ESPERA) { caja.innerHTML = ""; return pagina; }
+  if (!filas.length && !antes && !pagina.propuestas?.length && !seguimientos.length && !pagina.enEspera && !FAC_RECEPCIONES_ESPERA) { caja.innerHTML = ""; return pagina; }
   const errores = Number(pagina.errores) || 0;
   const totalRecepciones=Number(pagina.total)||0;
   const numeroPagina=FAC_RECEPCIONES_HIST.length+1;
   const estados = {pendiente:'Pendiente de lectura',leyendo:'Leyendo',error:'Error de lectura',revision:'Comprobar datos',paginas:'Comprobar páginas'};
-  caja.innerHTML = `<div class="fac-reception-summary" role="status"><b>${num(totalRecepciones)} documentos en recepción</b><span>${num(errores)} necesitan revisión · Página ${num(numeroPagina)} · ${num(filas.length)} entradas visibles</span><small>Todavía sin registrar. Las propuestas de unión pueden corresponder a páginas de un mismo documento.</small><button class="btn sm" data-act="fac-recepcion-ver-espera">${FAC_RECEPCIONES_ESPERA?"Volver a la cola activa":`En espera de confirmación · ${num(pagina.enEspera||0)}`}</button></div>${(pagina.propuestas||[]).map(p=>`<div class="row fac-review-row"><div class="grow"><div class="t1">${p.estado==='unidas'?'Páginas unidas':'Posibles páginas del mismo documento'}</div><div class="t2">${esc(p.motivo||'Comprueba los originales juntos')}</div></div><button class="btn sm" data-act="fac-paginas" data-id="${esc(p.id)}">${p.estado==='unidas'?'Ver unión':'Revisar páginas'}</button></div>`).join('')}<div class="rows">${facAgruparRecepciones(filas, f => `<div class="row fac-review-row">${f.tiene_original!==false&&['pendiente','revision','error'].includes(f.estado)?`<input type="checkbox" class="fac-pagina-elegida" value="${esc(f.id)}" aria-label="Seleccionar documento ${esc(f.id)}">`:''}<div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(!f.nombre || f.nombre === "noname" ? "Adjunto sin nombre · #" + f.id : f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · <span class="pill warn">${esc(estados[f.estado] || f.estado)}</span> · ${Number(f.intentos || 0)} intentos</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : '<div class="t2">Pendiente de validar · No contabilizado todavía</div>'}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.paginas_id?`<button class="btn primary sm" data-act="fac-paginas" data-id="${esc(f.paginas_id)}">Revisar páginas</button>`:''}${f.estado==='revision' && f.tiene_original!==false ? `<button class="btn primary sm" data-act="fac-recepcion-revision" data-id="${esc(f.id)}">Revisar datos</button>` : ''}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`)}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-paginas-seleccion">Unir dos documentos como páginas</button><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div>`;
+  caja.innerHTML = `<div class="fac-reception-summary" role="status"><b>${num(totalRecepciones)} documentos en recepción</b><span>${num(errores)} necesitan revisión · Página ${num(numeroPagina)} · ${num(filas.length)} entradas visibles</span><small>Todavía sin registrar. Las propuestas de unión pueden corresponder a páginas de un mismo documento.</small><button class="btn sm" data-act="fac-recepcion-ver-espera">${FAC_RECEPCIONES_ESPERA?"Volver a la cola activa":`En espera de confirmación · ${num(pagina.enEspera||0)}`}</button></div>${(pagina.propuestas||[]).map(p=>`<div class="row fac-review-row"><div class="grow"><div class="t1">${p.estado==='unidas'?'Páginas unidas':'Posibles páginas del mismo documento'}</div><div class="t2">${esc(p.motivo||'Comprueba los originales juntos')}</div></div><button class="btn sm" data-act="fac-paginas" data-id="${esc(p.id)}">${p.estado==='unidas'?'Ver unión':'Revisar páginas'}</button></div>`).join('')}<div class="rows">${facAgruparRecepciones(filas, f => `<div class="row fac-review-row">${f.tiene_original!==false&&['pendiente','revision','error'].includes(f.estado)?`<input type="checkbox" class="fac-pagina-elegida" value="${esc(f.id)}" aria-label="Seleccionar documento ${esc(f.id)}">`:''}<div class="grow" style="min-width:0;overflow-wrap:anywhere"><div class="t1">${esc(!f.nombre || f.nombre === "noname" ? "Adjunto sin nombre · #" + f.id : f.nombre)}</div><div class="t2">${esc(f.canal)} · ${esc(f.local || 'Por asignar')} · <span class="pill warn">${esc(f.aprobada && ['pendiente','leyendo','error'].includes(f.estado) ? (f.estado==='error'?'Error de registro':'Confirmado · pendiente de registro') : estados[f.estado] || f.estado)}</span> · ${Number(f.intentos || 0)} intentos</div>${f.error ? `<div class="t2">${esc(f.error)}</div>` : f.aprobada ? '<div class="t2">La revisión está guardada. Falta completar el registro.</div>' : '<div class="t2">Pendiente de validar · No contabilizado todavía</div>'}</div><div style="display:flex;flex-wrap:wrap;gap:6px;max-width:120px">${f.tiene_original === false ? '<span class="mut">Sube un archivo válido para continuar.</span>' : `<button class="btn sm" data-act="fac-recepcion-original" data-id="${esc(f.id)}" data-nombre="${esc(f.nombre)}">Original</button>`}${f.paginas_id?`<button class="btn primary sm" data-act="fac-paginas" data-id="${esc(f.paginas_id)}">Revisar páginas</button>`:''}${f.estado==='revision' && f.tiene_original!==false ? `<button class="btn primary sm" data-act="fac-recepcion-revision" data-id="${esc(f.id)}">Revisar datos</button>` : ''}${f.tiene_original !== false && f.estado==='error' ? `<button class="btn sm" data-act="fac-recepcion-reintentar" data-id="${esc(f.id)}">Reintentar</button>` : ''}</div></div>`)}</div><div class="toolbar" style="padding:16px"><button class="btn sm" data-act="fac-paginas-seleccion">Unir dos documentos como páginas</button><button class="btn sm" data-act="fac-recepcion-primera">Actualizar · primera página</button>${antes ? '<button class="btn sm" data-act="fac-recepcion-anterior">Anterior</button>' : ''}${pagina.siguiente ? `<button class="btn sm" data-act="fac-recepcion-siguiente" data-cursor="${esc(pagina.siguiente)}">Siguiente</button>` : ''}</div>`;
+  facSeguimientosRecepcion(caja, seguimientos);
   return pagina;
 }
 async function facPaginas(id){
- try{const {abrirPaginas}=await import('./paginas.mjs');await abrirPaginas(id,{apiRaw,apiSend,modal,token,esc,toast,actualizar:()=>facRefresh({mantenerRevision:true})});}
+ try{const {abrirPaginas}=await import('./paginas.mjs');await abrirPaginas(id,{apiRaw,apiSend,modal,token,esc,toast,facVistaDocumento,actualizar:()=>facRefresh({mantenerRevision:true})});}
  catch(e){toast(e.message);}
 }
 async function facPaginasSeleccion(){
@@ -10717,41 +10846,155 @@ async function facPaginasSeleccion(){
  if(ids.length!==2)return toast('Selecciona dos documentos para comprobar sus páginas');
  try{const j=await apiSend('POST','/api/facturas/paginas',{ids});await facRefresh({mantenerRevision:true});await facPaginas(j.id);}catch(e){toast(e.message);}
 }
-async function facOriginalRecepcion(id,nombre) {
+async function facOriginalRecepcion(id,nombre,{descargar=false,paginas}={}) {
   try {
-    const r = await fetch(`/api/facturas/recepciones/${encodeURIComponent(id)}/original`, {headers:{Authorization:'Bearer '+token()}});
-    if (!r.ok) throw new Error('No se pudo descargar el original; puede haberse archivado ya con la factura.');
-    const url = URL.createObjectURL(await r.blob()), a = document.createElement('a');
+    const r = await fetch(`/api/facturas/recepciones/${encodeURIComponent(id)}/original${paginas ? "?" + new URLSearchParams(paginas) : descargar ? "" : "?ver=1"}`, {headers:{Authorization:'Bearer '+token()}});
+    if (!r.ok) {
+      const problema = paginas ? await r.json().catch(() => null) : null;
+      throw new Error(problema?.error || 'No se pudo descargar el original; puede haberse archivado ya con la factura.');
+    }
+    const blob=await r.blob();
+    const mime=blob.type.split(';')[0];
+    if(!descargar && (mime==='application/pdf' || mime.startsWith('image/'))){
+      const ov=modal(nombre||'Original de la compra','<div data-original-compra></div>');
+      facVistaDocumento(ov.querySelector('[data-original-compra]'),URL.createObjectURL(blob),mime);
+      return;
+    }
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
     a.href=url; a.download=nombre || 'documento'; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),60000);
   } catch(e) { toast(e.message); }
 }
+function facDecimalRevision(valor) {
+  const texto = valor.trim();
+  if (!texto) return null;
+  if (!/^[+-]?(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)$/.test(texto)) {
+    throw new Error('Escribe un número válido, sin separador de miles.');
+  }
+  const numero = Number(texto.replace(',', '.'));
+  if (!Number.isFinite(numero)) throw new Error('Importe o cantidad no válido.');
+  return numero;
+}
+
+function facDesgloseRevision(form, filas) {
+  const seccion = document.createElement('details');
+  seccion.open = filas.length > 0;
+  seccion.innerHTML = '<summary>Desglose de IVA</summary><div data-filas-iva></div><button class="btn sm" type="button" data-anadir-iva>Añadir tipo de IVA</button>';
+  form.querySelector('#rev-porcentaje_iva').closest('.field').before(seccion);
+  const lista = seccion.querySelector('[data-filas-iva]');
+  const campos = [['tipo','IVA (%)'],['base','Base (€)'],['cuota','Cuota (€)'],['recargo','Recargo (€)']];
+  const cambiar = () => form.dispatchEvent(new Event('change', {bubbles:true}));
+  const agregar = (fila = {}) => {
+    const elemento = document.createElement('div');
+    elemento.className = 'grid g2';
+    elemento.innerHTML = campos.map(([k, etiqueta]) => `<label>${etiqueta}<input type="text" inputmode="decimal" data-iva="${k}" value="${esc(fila[k] ?? '')}"></label>`).join('')
+      + '<button class="btn sm" type="button" data-quitar-iva>Quitar fila</button>';
+    elemento.querySelector('[data-quitar-iva]').onclick = () => { elemento.remove(); cambiar(); };
+    lista.append(elemento);
+  };
+  filas.forEach(agregar);
+  seccion.querySelector('[data-anadir-iva]').onclick = () => { agregar(); cambiar(); };
+  return () => [...lista.children].map(elemento => Object.fromEntries(campos.map(([k]) =>
+    [k, facDecimalRevision(elemento.querySelector(`[data-iva="${k}"]`).value)])));
+}
+
 function facLineasRecepcion(ov,lineas=[]) {
- const campos=[['descripcion','Producto','text'],['cantidad','Cantidad','number'],['unidad','Unidad','text'],['precio_unitario','Precio de tarifa','number'],['importe','Importe impreso','number'],['descuento_pct','Descuento %','number'],['importe_neto','Neto impreso (si existe)','number'],['formato_literal','Contenido por envase (texto literal)','text']];
+ const campos=[['descripcion','Producto','text'],['cantidad','Cantidad facturada','number'],['bultos','Bultos','number'],['unidad','Unidad','text'],['precio_unitario','Precio de tarifa','number'],['importe','Importe impreso','number'],['descuento_pct','Descuento %','number'],['descuento_euros','Descuento €','number'],['importe_neto','Neto impreso (si existe)','number'],['formato_literal','Contenido por envase (texto literal)','text']];
  const seccion=document.createElement('details');seccion.className='fac-review-secondary';
  seccion.innerHTML='<summary>Productos y descuentos · '+lineas.length+' líneas</summary><p class="mut">Copia lo impreso. Deja vacío lo que no consta; un albarán puede no tener precios. No añadas subtotales como productos.</p><div class="rev-lineas"></div><button type="button" class="btn sm" id="revLineaNueva">Añadir línea</button>';
  ov.querySelector('#revConfirmado').closest('label').before(seccion);
  const lista=seccion.querySelector('.rev-lineas');
- const agregar=l=>{const row=document.createElement('div');row.className='card';row.style.cssText='padding:12px;margin-bottom:10px';row.innerHTML=`<div class="grid g2">${campos.map(([k,label,type])=>`<label>${esc(label)}<input data-linea="${k}" type="${type}" ${type==='number'?'step="any"':''} ${k==='descripcion'?'required':''} value="${esc(l[k]??'')}" style="width:100%"></label>`).join('')}</div><button type="button" class="btn sm rev-quitar">Quitar esta línea</button>`;row.querySelector('.rev-quitar').onclick=()=>row.remove();lista.append(row);};
- lineas.forEach(agregar);seccion.querySelector('#revLineaNueva').onclick=()=>agregar({});
- const leer=()=>[...lista.children].map(row=>Object.fromEntries(campos.map(([k,_label,type])=>{const v=row.querySelector(`[data-linea="${k}"]`).value;return [k,v===''?null:type==='number'?Number(v):v];})));
+ const agregar=l=>{const row=document.createElement('div');row.className='card';row.style.cssText='padding:12px;margin-bottom:10px';row.innerHTML=`<div class="grid g2">${campos.map(([k,label,type])=>`<label>${esc(label)}<input data-linea="${k}" type="text" ${type==='number'?'inputmode="decimal"':''} ${k==='descripcion'?'required':''} value="${esc(l[k]??'')}" style="width:100%"></label>`).join('')}</div><button type="button" class="btn sm rev-quitar">Quitar esta línea</button>`;row.querySelector('.rev-quitar').onclick=()=>{row.remove();lista.dispatchEvent(new Event('change',{bubbles:true}));};lista.append(row);};
+ lineas.forEach(agregar);seccion.querySelector('#revLineaNueva').onclick=()=>{agregar({});lista.dispatchEvent(new Event('change',{bubbles:true}));};
+ const leer=()=>[...lista.children].map(row=>Object.fromEntries(campos.map(([k,_label,type])=>{const v=row.querySelector(`[data-linea="${k}"]`).value;return [k,v===''?null:type==='number'?facDecimalRevision(v):v];})));
  const inicial=JSON.stringify(leer());return ()=>{const actuales=leer();return JSON.stringify(actuales)===inicial?null:actuales;};
 }
+function facResolverRecepcion(id, revision) {
+  const ov=modal('Resolver recepción · #'+id,`<form>
+    <label class="field">Acción<select id="res-accion"><option value="no_contable">No es un documento de compra</option><option value="duplicado">Duplicado de una compra</option><option value="informativo">Albarán o abono sin total documentado</option></select></label>
+    <div id="res-enlace" hidden><label class="field">ID de compra registrada<input id="res-compra" inputmode="numeric"></label>
+    <button class="btn" type="button" id="res-ver">Comprobar compra</button><p id="res-destino" role="status"></p></div>
+    <label class="field">Motivo<textarea id="res-motivo" required maxlength="2000"></textarea></label>
+    <p class="mut">El original quedará guardado en recepción. Esta acción no añade ningún importe a Compras.</p>
+    <p id="res-error" role="alert"></p><div class="toolbar"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Confirmar resolución</button></div>
+  </form>`);
+  const campo=(nombre)=>ov.querySelector('#res-'+nombre);
+  const accion=campo('accion'), compra=campo('compra'), error=campo('error');
+  let verificada=null;
+  accion.onchange=()=>{campo('enlace').hidden=accion.value==='no_contable';};
+  compra.oninput=()=>{verificada=null;campo('destino').textContent='';};
+  campo('ver').onclick=async()=>{
+    const idCompra=compra.value.trim();
+    error.textContent='';
+    verificada=null;
+    campo('destino').textContent='';
+    if (!/^[1-9][0-9]{0,17}$/.test(idCompra)) {
+      error.textContent='Introduce el ID de la compra.';
+      return;
+    }
+    try {
+      const r=await apiRaw('/api/facturas/documento/'+encodeURIComponent(idCompra));
+      if(compra.value.trim()!==idCompra) return;
+      const f=r.data;
+      campo('destino').textContent=[f.proveedor,f.numero_factura,f.local,f.fecha,f.total==null?'Importe no indicado':eur2(f.total)].filter(Boolean).join(' · ');
+      verificada=idCompra;
+    } catch(e) { error.textContent=e.message; }
+  };
+  ov.querySelector('form').onsubmit=async e=>{
+    e.preventDefault();
+    const tipo=accion.value;
+    if (tipo!=='no_contable' && (!verificada || verificada!==compra.value.trim())) {
+      error.textContent='Comprueba la compra antes de vincularla.';
+      return;
+    }
+    e.submitter.disabled=true;
+    try {
+      await apiSend('POST','/api/facturas/recepciones/'+encodeURIComponent(id)+'/resolver',
+        {accion:tipo,motivo:campo('motivo').value,facturaId:verificada});
+      ov.remove();
+      toast('Recepción resuelta');
+      await facTerminarRevision(revision);
+    } catch(e) { error.textContent=e.message; }
+    finally { e.submitter.disabled=false; }
+  };
+}
+
 async function facRevisionRecepcion(id) {
   try {
     const j=await apiRaw(`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`);
-    const f=j.data, d=f.resultado?.datos || {}, segunda=f.resultado?.segunda || {};
-    const campos=[['proveedor','Proveedor'],['nif_proveedor','NIF del proveedor'],['fecha','Fecha de emisión'],['vencimiento','Vencimiento escrito en el original'],['numero_factura','Número de documento'],['base_imponible','Base imponible'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['retencion','Retención'],['recargo_equivalencia','Recargo de equivalencia'],['otros_cargos','Otros cargos'],['total','Total']];
+    const f=j.data;
+    if(String(f?.id)!==String(id))throw new Error('El documento abierto no coincide con la recepción seleccionada. Vuelve a abrirlo.');
+    const d=f.resultado?.borrador?.datos || f.resultado?.datos || {}, segunda=f.resultado?.segunda || {};
+    const campos=[['titulo_documento','Título impreso en el original'],['proveedor','Proveedor'],['nif_proveedor','NIF del proveedor'],['fecha','Fecha de emisión'],['vencimiento','Vencimiento escrito en el original'],['numero_factura','Número de documento'],['base_imponible','Base imponible'],['porcentaje_iva','IVA (%)'],['cuota_iva','Cuota IVA'],['retencion','Retención'],['recargo_equivalencia','Recargo de equivalencia'],['otros_cargos','Otros cargos'],['total','Total']];
     const numericos=new Set(['base_imponible','porcentaje_iva','cuota_iva','retencion','recargo_equivalencia','otros_cargos','total']);
     const avisos=f.resultado?.avisos || [];
-    const ov=modal('Revisar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo" name="tipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${['fecha','vencimiento'].includes(k)?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='vencimiento' ? ' · Déjalo vacío si el original no indica una fecha; no la deduzcas de Efectivo o Contado.' : ''}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" data-close>Revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
+    const ov=modal('Revisar documento · #'+id, `<p>Compara los datos con el original. Hasta que confirmes, este documento no entra en los totales.</p><div class="grid g2"><div><div id="revOriginal" style="min-height:180px">Cargando original…</div><button type="button" class="btn sm" id="revDescargar">Descargar original</button><p><button type="button" class="btn sm" id="revPedirFoto">El original no se lee: pedir otra foto</button></p><p id="revFotoEstado" role="status">${esc(f.aviso_grupo?.resumen_error || (f.aviso_grupo?.solicitud_estado ? "Solicitud de foto: " + f.aviso_grupo.solicitud_estado : ""))}</p></div><form id="revForm"><div class="alert" style="overflow-wrap:anywhere">${[...new Set(avisos.map(a=>a.texto))].map(t=>`<p>${esc(t)}</p>`).join('')}</div><div class="field"><label for="revTipo">Tipo de documento</label><select id="revTipo" name="tipo">${['factura','ticket','albaran','otro'].map(t=>`<option ${d.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div>${campos.map(([k,label])=>`<div class="field"><label for="rev-${k}">${label}</label><input id="rev-${k}" name="${k}" type="${['fecha','vencimiento'].includes(k)?'date':numericos.has(k)?'number':'text'}" ${numericos.has(k)?'step="any"':''} value="${esc(d[k]??'')}" ${['proveedor','fecha'].includes(k)?'required':''}><small class="mut">Segunda lectura: ${esc(segunda[k]??'No leído')}${k==='vencimiento' ? ' · Déjalo vacío si el original no indica una fecha; no la deduzcas de Efectivo o Contado.' : ''}${k==='nif_proveedor' && d._origenNif ? ' · ' + esc(d._origenNif) : ''}</small></div>`).join('')}<label><input id="revConfirmado" type="checkbox" required> He comprobado los datos con el original, incluido el detalle de productos.</label><p><label><input id="revExcepcion" type="checkbox"> Si persiste algún aviso, he comprobado que es una excepción válida.</label></p><p id="revError" role="alert"></p><div class="toolbar"><button type="button" class="btn" id="revGuardarSalir">Guardar y revisar más tarde</button><button class="btn primary" type="submit">Confirmar y registrar</button></div></form></div>`);
     facPrepararModalRevision(ov,'Pendiente de validar · No contabilizado todavía','fac-recepcion-revision',id,d,avisos);
+    const pie = ov.querySelector('.fac-review-footer');
+    if (pie) {
+      const error = ov.querySelector('#revError');
+      error.style.flexBasis = '100%';
+      pie.prepend(error);
+    }
     ov.querySelector('.modal').style.width='min(1050px, 96vw)';
     ov.querySelector('.modal').style.maxWidth='1050px';
     ov.querySelector('.grid').classList.add('fac-revision-grid');
     ov.insertAdjacentHTML('beforeend','<style>.fac-revision-grid .field{width:100%;margin-bottom:12px}.fac-revision-grid .field input,.fac-revision-grid .field textarea,.fac-revision-grid .field select{width:100%}@media(max-width:700px){.fac-revision-grid{grid-template-columns:1fr!important}}</style>');
     ov.querySelector('#revForm').insertAdjacentHTML('beforeend',`<details class="fac-review-reasons"><summary>Mejorar futuras lecturas (opcional)</summary><p class="mut">Solo se recordará con NIF confirmado y sin avisos pendientes. Es una pista de formato, nunca un precio ni un tamaño de envase.</p><label>Columna importe <select id="revFormatoImportes"><option value="sin_indicacion">Sin indicación</option><option value="neto">Ya incluye el descuento</option><option value="bruto">Bruto y neto separados</option></select></label><label>Unidades <select id="revFormatoUnidades"><option value="sin_indicacion">Sin indicación</option><option value="peso_unidad">Distingue peso y unidades</option><option value="envases">Factura cajas o envases</option></select></label><p><label><input type="checkbox" id="revFalsoAviso"> Los datos leídos ya eran correctos; era un falso aviso (sin cambios).</label></p></details>`);
-    ov.querySelector('#revDescargar').onclick=()=>facOriginalRecepcion(id,f.nombre);
+    ov.querySelector('#revDescargar').onclick=()=>facOriginalRecepcion(id,f.nombre,{descargar:true});
+    if (avisos.some(a => a.codigo === 'varias_facturas')) {
+      ov.querySelector('#revForm [type="submit"]')?.setAttribute('disabled', '');
+      if (f.mime === 'application/pdf') {
+        const separar = document.createElement('form');
+        separar.innerHTML = '<p>Elige las páginas de una factura, guarda una copia y súbela por separado a Compras.</p><label>Desde <input name="desde" type="number" min="1" step="1" required></label> <label>Hasta <input name="hasta" type="number" min="1" step="1" required></label> <button class="btn sm">Descargar páginas</button>';
+        ov.querySelector('#revDescargar').after(separar);
+        separar.onsubmit = e => {
+          e.preventDefault();
+          const paginas = Object.fromEntries(new FormData(separar));
+          facOriginalRecepcion(id,`recepcion-${id}-paginas-${paginas.desde}-${paginas.hasta}.pdf`,{descargar:true,paginas});
+        };
+      }
+    }
     const espera=!!f.resultado?.esperaConfirmacion;
     const reservar=document.createElement('button');
     reservar.type='button';reservar.className='btn';
@@ -10760,6 +11003,7 @@ async function facRevisionRecepcion(id) {
     reservar.onclick=async()=>{
       reservar.disabled=true;
       try {
+        if (!espera) await guardarBorrador();
         await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/espera`,{espera:!espera});
         toast(espera?'Documento devuelto a la cola activa':'Documento en espera de confirmación');
         await facTerminarRevision(ov);
@@ -10769,14 +11013,165 @@ async function facRevisionRecepcion(id) {
     ov.querySelector('#revPedirFoto').onclick=async e=>{e.target.disabled=true;try{await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/pedir-foto`,{});ov.querySelector('#revFotoEstado').textContent='Solicitud preparada: se citará la foto en el grupo cuando termine la tanda.';}catch(err){ov.querySelector('#revFotoEstado').textContent=err.message;e.target.disabled=false;}};
     const leerLineas=facLineasRecepcion(ov,d.lineas||[]);
     facSelectorProveedor(ov,'#rev-proveedor');
+    const fichaProveedor = document.createElement('details');
+    fichaProveedor.innerHTML = '<summary>Guardar proveedor en el maestro</summary><label><input type="checkbox"> He comprobado el nombre fiscal y el NIF en el original.</label><button type="button" class="btn sm">Guardar proveedor</button><p role="status"></p>';
+    ov.querySelector('#rev-nif_proveedor').closest('.field').after(fichaProveedor);
+    const botonProveedor = fichaProveedor.querySelector('button');
+    botonProveedor.onclick = async () => {
+      const estado = fichaProveedor.querySelector('[role="status"]');
+      if (!fichaProveedor.querySelector('input').checked) {
+        estado.textContent = 'Marca la confirmación después de comprobar el original.';
+        return;
+      }
+      botonProveedor.disabled = true;
+      try {
+        await apiSend('POST', `/api/facturas/recepciones/${encodeURIComponent(id)}/proveedor`, {
+          proveedor:ov.querySelector('#rev-proveedor').value,
+          nif:ov.querySelector('#rev-nif_proveedor').value,
+          confirmado:true,
+        });
+        estado.textContent = 'Proveedor guardado en el maestro.';
+        fichaProveedor.querySelector('input').checked = false;
+      } catch (error) {
+        estado.textContent = error.message;
+      } finally {
+        botonProveedor.disabled = false;
+      }
+    };
+
+    const form = ov.querySelector('#revForm');
+    for (const campo of numericos) {
+      const entrada = form.querySelector('#rev-' + campo);
+      entrada.type = 'text';
+      entrada.inputMode = 'decimal';
+    }
+    const modoIva = document.createElement('label');
+    modoIva.innerHTML = '<input type="checkbox"> Los precios de las líneas incluyen IVA';
+    const ivaIncluido = modoIva.querySelector('input');
+    ivaIncluido.checked = d.lineas_iva_incluido === true;
+    form.querySelector('.fac-review-secondary').before(modoIva);
+    const calculadora = document.createElement('div');
+    calculadora.innerHTML = '<label>IRPF impreso (%) <input type="text" inputmode="decimal" data-irpf></label> <button type="button" class="btn sm">Calcular retención sobre la base</button>';
+    const retencion = form.querySelector('#rev-retencion');
+    retencion.closest('.field').after(calculadora);
+    const leerDesglose = facDesgloseRevision(form, Array.isArray(d.iva_desglose) ? d.iva_desglose : []);
+    const compararDesglose = filas => JSON.stringify((Array.isArray(filas) ? filas : [])
+      .map(({tipo,base,cuota,recargo}) => [tipo,base,cuota,recargo ?? null]));
+    const desgloseOriginal = compararDesglose(f.resultado?.datos?.iva_desglose);
+    const leerDatos=()=>{
+      const datos={tipo:ov.querySelector('#revTipo').value};
+      if (ivaIncluido.checked !== (f.resultado?.datos?.lineas_iva_incluido === true)) {
+        datos.lineas_iva_incluido = ivaIncluido.checked;
+      }
+      const lineasCorregidas=leerLineas();if(lineasCorregidas!==null)datos.lineas=lineasCorregidas;
+      else if(f.resultado?.borrador && Array.isArray(d.lineas))datos.lineas=d.lineas;
+      for(const [k] of campos){const v=ov.querySelector('#rev-'+k).value;datos[k]=v===''?null:numericos.has(k)?facDecimalRevision(v):v;}
+      const desglose = leerDesglose();
+      if (compararDesglose(desglose) !== desgloseOriginal) datos.iva_desglose = desglose;
+      return datos;
+    };
+    const cuadre = document.createElement('output');
+    cuadre.className = 'mut';
+    cuadre.setAttribute('aria-live', 'polite');
+    form.querySelector('#rev-total').closest('.field').after(cuadre);
+    const actualizarCuadre = () => {
+      try {
+        const datos = leerDatos();
+        const filas = leerDesglose();
+        if (filas.some(fila => [fila.tipo, fila.base, fila.cuota].includes(null))) {
+          cuadre.textContent = 'Completa el tipo, la base y la cuota de cada fila de IVA.';
+          return;
+        }
+        const sumar = campo => filas.reduce((total, fila) => total + Math.round((fila[campo] ?? 0) * 100), 0) / 100;
+        const base = filas.length ? sumar('base') : datos.base_imponible;
+        const cuota = filas.length ? sumar('cuota') : datos.cuota_iva;
+        const recargo = filas.some(fila => fila.recargo !== null) ? sumar('recargo') : datos.recargo_equivalencia;
+        if ([base, cuota, datos.total].includes(null)) {
+          cuadre.textContent = '';
+          return;
+        }
+        const diferencia = Math.round((base + cuota + (recargo ?? 0) + (datos.otros_cargos ?? 0)
+          - (datos.retencion ?? 0) - datos.total) * 100) / 100;
+        cuadre.textContent = `Base ${base.toFixed(2)} € · IVA ${cuota.toFixed(2)} € · ${diferencia === 0 ? 'El total cuadra' : 'Diferencia con el total: ' + diferencia.toFixed(2) + ' €'}`;
+      } catch (error) {
+        cuadre.textContent = error.message;
+      }
+    };
+    calculadora.querySelector('button').onclick = () => {
+      try {
+        const porcentaje = facDecimalRevision(calculadora.querySelector('[data-irpf]').value);
+        const filas = leerDesglose();
+        const base = filas.length && filas.every(fila => fila.base !== null)
+          ? filas.reduce((total, fila) => total + fila.base, 0)
+          : facDecimalRevision(form.querySelector('#rev-base_imponible').value);
+        if (base === null || porcentaje === null || porcentaje < 0 || porcentaje > 100) {
+          throw new Error('Indica la base de retención y un porcentaje entre 0 y 100.');
+        }
+        retencion.value = (Math.sign(base) * Math.round(Math.abs(base) * porcentaje) / 100).toFixed(2);
+        retencion.dispatchEvent(new Event('input', {bubbles:true}));
+      } catch (error) {
+        cuadre.textContent = error.message;
+      }
+    };
+    form.addEventListener('input', actualizarCuadre);
+    form.addEventListener('change', actualizarCuadre);
+    actualizarCuadre();
+    let temporizadorBorrador, guardadoEnCurso=Promise.resolve();
+    const guardarBorrador=async()=>{
+      clearTimeout(temporizadorBorrador);
+      const datos=leerDatos();
+      const guardar=()=>apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/borrador`,{datos});
+      guardadoEnCurso=guardadoEnCurso.then(guardar,guardar);
+      return guardadoEnCurso;
+    };
+    const programarBorrador=()=>{
+      clearTimeout(temporizadorBorrador);
+      temporizadorBorrador=setTimeout(async()=>{
+        if (!ov.isConnected) return;
+        try { await guardarBorrador(); }
+        catch(err) { ov.querySelector('#revError').textContent='Borrador sin guardar. '+err.message; }
+      },900);
+    };
+    ov.querySelector('#revForm').addEventListener('input',programarBorrador);
+    ov.querySelector('#revForm').addEventListener('change',programarBorrador);
+    const borrador=document.createElement('button');
+    borrador.type='button';
+    borrador.className='btn';
+    borrador.textContent='Guardar borrador';
+    pie?.append(borrador);
+    borrador.onclick=async()=>{
+      borrador.disabled=true;
+      try {
+        await guardarBorrador();
+        toast('Borrador guardado');
+      } catch(err){ov.querySelector('#revError').textContent=err.message;}
+      finally {borrador.disabled=false;}
+    };
+    const resolver=document.createElement('button');
+    resolver.type='button';
+    resolver.className='btn';
+    resolver.textContent='Otras resoluciones';
+    resolver.onclick=()=>facResolverRecepcion(id,ov);
+    pie?.append(resolver);
+    const guardarSalir=ov.querySelector('#revGuardarSalir');
+    guardarSalir.onclick=async()=>{
+      guardarSalir.disabled=true;
+      try {
+        await guardarBorrador();
+        await facTerminarRevision(ov);
+      } catch(err){
+        ov.querySelector('#revError').textContent=err.message;
+        guardarSalir.disabled=false;
+      }
+    };
     ov.querySelector('#revForm').onsubmit=async e=>{
       e.preventDefault(); const boton=e.submitter; boton.disabled=true;
-      const datos={tipo:ov.querySelector('#revTipo').value};
-      const lineasCorregidas=leerLineas();if(lineasCorregidas!==null)datos.lineas=lineasCorregidas;
-      for(const [k] of campos){const v=ov.querySelector('#rev-'+k).value;datos[k]=v===''?null:numericos.has(k)?Number(v):v;}
       try {
+        clearTimeout(temporizadorBorrador);
+        const datos=leerDatos();
+        await guardadoEnCurso.catch(()=>{});
         await apiSend('POST',`/api/facturas/recepciones/${encodeURIComponent(id)}/revision`,{datos,confirmado:ov.querySelector('#revConfirmado').checked,aceptarAvisos:ov.querySelector('#revExcepcion').checked,formato:{importes:ov.querySelector('#revFormatoImportes').value,unidades:ov.querySelector('#revFormatoUnidades').value},falsoAviso:ov.querySelector('#revFalsoAviso').checked});
-        toast('Revisión guardada. El documento se registrará desde la cola.'); await facTerminarRevision(ov);
+        toast('Revisión confirmada. Pendiente de registro.'); await facTerminarRevision(ov);
       } catch(err){ov.querySelector('#revError').textContent=err.message;boton.disabled=false;}
     };
     const caja=ov.querySelector('#revOriginal');

@@ -18,8 +18,9 @@
 
 import { claveProveedor } from "./categorias.js";
 import { distancia } from "./duplicados.js";
+import { normNif } from "./emisor.js";
 
-const limpiaNif = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const limpiaNif = (s) => normNif(s);
 
 /** Un NIF español válido de forma: letra o dígito + 7-8 caracteres. No valida la letra. */
 export function nifUtil(nif) {
@@ -63,7 +64,7 @@ export function gruposDuplicados(filas = [], { minimo = MINIMO_NOMBRE, nuestrosC
   // empresas que no tienen nada que ver compartiendo NIF, y esta pantalla las proponía para
   // UNIR con un botón que habría fusionado treinta y una facturas ajenas en una sola ficha.
   // Que dos proveedores compartan NUESTRO CIF no dice nada de ellos: dice que la lectura falló.
-  const mios = new Set((nuestrosCif || []).map((c) => nifUtil(c)).filter(Boolean));
+  const mios = new Set((["B70799135", "46535781L", "46533801V", ...(nuestrosCif || [])]).map((c) => nifUtil(c)).filter(Boolean));
   const items = (filas || [])
     .filter((f) => f && f.proveedor)
     .map((f) => {
@@ -90,7 +91,16 @@ export function gruposDuplicados(filas = [], { minimo = MINIMO_NOMBRE, nuestrosC
   // Unión-búsqueda: si A va con B y B con C, los tres son el mismo grupo.
   const padre = new Map(unicos.map((u) => [u.clave, u.clave]));
   const raiz = (k) => { while (padre.get(k) !== k) k = padre.get(k); return k; };
-  const unir = (a, b) => { const ra = raiz(a), rb = raiz(b); if (ra !== rb) padre.set(ra, rb); };
+  const nifsRaiz = new Map(unicos.map(u => [u.clave,u.nif]));
+  const unir = (a, b) => {
+    const ra = raiz(a), rb = raiz(b);
+    if (ra === rb) return false;
+    const na = nifsRaiz.get(ra), nb = nifsRaiz.get(rb);
+    if (na && nb && na !== nb) return false;
+    padre.set(ra, rb);
+    nifsRaiz.set(rb, nb || na);
+    return true;
+  };
 
   const motivos = new Map();
   const anota = (a, b, motivo) => { motivos.set(`${a}|${b}`, motivo); motivos.set(`${b}|${a}`, motivo); };
@@ -117,7 +127,7 @@ export function gruposDuplicados(filas = [], { minimo = MINIMO_NOMBRE, nuestrosC
       if (a.nif && b.nif && a.nif !== b.nif) continue;
       if (raiz(a.clave) === raiz(b.clave)) continue;
       if (parecidoNombre(a.proveedor, b.proveedor) < minimo) continue;
-      unir(a.clave, b.clave);
+      if (!unir(a.clave, b.clave)) continue;
       anota(a.clave, b.clave, "se escriben casi igual");
     }
   }
