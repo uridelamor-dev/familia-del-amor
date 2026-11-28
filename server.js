@@ -19,7 +19,7 @@ import {crearCompletarPaginas} from './src/modules/facturas/paginas-completar.js
 import {referenciasAlbaran,estadoAlbaran} from './src/modules/facturas/albaranes.js';
 import {filtrosLineas} from './src/modules/facturas/filtros-lineas.js';
 import { crearCachePeriodo } from './src/modules/dashboard/cache-periodo.js';
-import {agruparDesglose,gastoDesglosado} from './src/modules/dashboard/desglose.js';
+import {agruparDesglose,gastoDesglosado,categoriasGastoEntrega} from './src/modules/dashboard/desglose.js';
 import {AVISOS_SCHEMA,registrarBandeja} from './src/modules/avisos/bandeja.js';
 import {cargarAvisosFuente} from './src/modules/avisos/fuentes.js';
 import {cargarProgresoFichajes} from './src/modules/horarios/progreso-fichajes.js';
@@ -8926,14 +8926,61 @@ const addDaysISO = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUT
 
 // Métricas del dashboard por RANGO de fechas [from,to] (reservas + ventas). Las ventas se consultan
 // EN VIVO a Ágora (cualquier rango, sin tope de histórico); si el TPV está cerrado, usa ventas_diarias.
+const FACTURADO_DASHBOARD = `COALESCE(tipo,'factura') IN ('factura','ticket') AND ${SIN_DUDAS}`;
 app.get('/api/dashboard/gastos',requireAuth(['direccion','encargado','contabilidad']),async(req,res)=>{
  try{
   const {from,to}=req.query;
   if(!/^\d{4}-\d{2}-\d{2}$/.test(from||'')||!/^\d{4}-\d{2}-\d{2}$/.test(to||'')||from>to)return res.status(400).json({error:'Rango inválido'});
   const locales=localesScope(req),barras=[...new Set(locales.flatMap(l=>barrasDelCentro(l,'compras')))];
-  const base=await dbAll(`SELECT local,COALESCE(SUM(total),0)::float total FROM facturas WHERE ${SIN_ALBARANES} AND COALESCE(reparto,'') <> 'empresa' AND fecha >= ? AND fecha <= ?${barras.length?' AND local = ANY(?)':''} GROUP BY local`,[from,to,...(barras.length?[barras]:[])]);
-  const empresa=await gastoDeEmpresaPorLocal(from,to,{estricto:true});
-  res.json({ok:true,data:{from,to,...gastoDesglosado(base,empresa,locales)}});
+  const ambito=barras.length?' AND local = ANY(?)':'';
+  const params=[from,to,...(barras.length?[barras]:[])];
+  const [base,albaranes,empresa,entregas,etiquetas]=await Promise.all([
+   dbAll(`SELECT local,COALESCE(SUM(total),0)::float total FROM facturas
+    WHERE ${FACTURADO_DASHBOARD} AND COALESCE(reparto,'') <> 'empresa' AND fecha >= ? AND fecha <= ?${ambito} GROUP BY local`,params),
+   dbAll(`SELECT local,COALESCE(SUM(total),0)::float total,COUNT(*)::int cantidad,
+      COUNT(*) FILTER (WHERE total IS NULL)::int sin_importe
+    FROM facturas a
+    WHERE ${SIN_DUDAS} AND tipo='albaran' AND fecha >= ? AND fecha <= ?${ambito}
+      AND NOT EXISTS (
+       SELECT 1 FROM facturas f WHERE f.id::text=a.conciliado_con
+        AND COALESCE(f.tipo,'factura')='factura' AND COALESCE(f.dup_estado,'') <> 'duda'
+      )
+    GROUP BY local`,params),
+   gastoDeEmpresaPorLocal(from,to,{estricto:true}),
+   dbAll(`WITH importes_entregados AS (
+     SELECT conciliado_con,SUM(total) AS total
+     FROM facturas WHERE ${SIN_DUDAS} AND tipo='albaran'
+       AND fecha ~ '^\\d{4}-\\d{2}-\\d{2}$' AND conciliado_con IS NOT NULL
+     GROUP BY conciliado_con
+    ), movimientos AS (
+     SELECT local,fecha,proveedor,NULL::text AS reparto,NULL::text AS empresa,total
+     FROM facturas WHERE ${SIN_DUDAS} AND tipo='albaran'
+     UNION ALL
+     SELECT f.local,f.fecha,f.proveedor,f.reparto,f.empresa,f.total-COALESCE(a.total,0)
+     FROM facturas f LEFT JOIN importes_entregados a
+       ON COALESCE(f.tipo,'factura')='factura' AND a.conciliado_con=f.id::text
+     WHERE ${FACTURADO_DASHBOARD}
+    )
+    SELECT local,reparto,empresa,proveedor,ROUND(COALESCE(SUM(total),0),2)::float total,
+      COUNT(*) FILTER (WHERE total IS NULL)::int sin_importe
+    FROM movimientos WHERE fecha >= ? AND fecha <= ?
+      ${barras.length?"AND (reparto='empresa' OR local = ANY(?))":""}
+    GROUP BY local,reparto,empresa,proveedor`,params),
+   dbAll("SELECT prov_clave AS proveedor,categoria,subcategoria FROM facturas_proveedor_cats"),
+  ]);
+  const pendientes=gastoDesglosado(albaranes,null,locales);
+  const cantidad=albaranes.reduce((s,r)=>s+r.cantidad,0);
+  const sinImporte=albaranes.reduce((s,r)=>s+r.sin_importe,0);
+  const directas=entregas.filter(r=>r.reparto!=='empresa');
+  const comunes=entregas.filter(r=>r.reparto==='empresa');
+  const imputadas=comunes.length?await repartirEntregasDashboard(comunes,from,to):[];
+  const movimientos=[...directas,...imputadas];
+  const gastoEntrega={
+   ...gastoDesglosado(movimientos,null,locales),
+   sinImporte:directas.reduce((s,r)=>s+r.sin_importe,0),
+   porCategoria:categoriasGastoEntrega(movimientos,indiceCategorias(etiquetas),locales),
+  };
+  res.json({ok:true,data:{from,to,...gastoDesglosado(base,empresa,locales),albaranesPendientes:{...pendientes,cantidad,sinImporte},gastoEntrega}});
  }catch(e){res.status(500).json({error:'No se pudo cargar el gasto del periodo'});}
 });
 
@@ -9009,20 +9056,38 @@ app.get("/api/dashboard/periodo", requireAuth(["direccion", "encargado", "contab
 async function gastoDeEmpresaPorLocal(from, to, {estricto=false} = {}) {
   const deEmpresa = await dbAll(
     `SELECT empresa, COALESCE(SUM(total),0)::float AS total FROM facturas
-      WHERE ${SIN_ALBARANES} AND reparto = 'empresa' AND fecha >= ? AND fecha <= ? GROUP BY empresa`,
+      WHERE ${FACTURADO_DASHBOARD} AND reparto = 'empresa' AND fecha >= ? AND fecha <= ? GROUP BY empresa`,
     [from, to]).catch(e => {if(estricto)throw e;return [];});
+  return repartirGastoDashboard(deEmpresa,from,to,{estricto});
+}
+async function repartirGastoDashboard(deEmpresa,from,to,{estricto=false}={}) {
   if (!deEmpresa.length) return null;
-  const [locEmp, ventas] = await Promise.all([
-    dbAll(`SELECT local, empresa FROM facturas_locales`).catch(e => {if(estricto)throw e;return [];}),
-    dbAll(`SELECT local, COALESCE(SUM(ventas),0)::float AS ventas FROM ventas_diarias
-            WHERE dia >= ? AND dia <= ? GROUP BY local`, [from, to]).catch(e => {if(estricto)throw e;return [];}),
-  ]);
+  const {locEmp,ventas}=await contextoRepartoDashboard(from,to,{estricto});
   const r = imputarGastoEmpresa({ base: [], deEmpresa, locEmp, ventas });
   return {
     porLocal: new Map(r.porLocal.map((x) => [x.local, x.total])),
     texto: (r.repartos[0] || {}).texto || "",
     sinRepartir: r.sinRepartir,
   };
+}
+
+async function contextoRepartoDashboard(from,to,{estricto}) {
+  const [locEmp, ventas] = await Promise.all([
+    dbAll(`SELECT local, empresa FROM facturas_locales`).catch(e => {if(estricto)throw e;return [];}),
+    dbAll(`SELECT local, COALESCE(SUM(ventas),0)::float AS ventas FROM ventas_diarias
+            WHERE dia >= ? AND dia <= ? GROUP BY local`, [from, to]).catch(e => {if(estricto)throw e;return [];}),
+  ]);
+  return {locEmp,ventas};
+}
+async function repartirEntregasDashboard(filas,from,to) {
+  const contexto=await contextoRepartoDashboard(from,to,{estricto:true});
+  return filas.flatMap(({empresa,total,proveedor})=>{
+    const reparto=imputarGastoEmpresa({...contexto,deEmpresa:[{empresa,total}]});
+    return [
+      ...reparto.porLocal.map(r=>({local:r.local,total:r.total,proveedor})),
+      ...reparto.sinRepartir.map(r=>({local:'Sin reparto de empresa',total:r.total,proveedor})),
+    ];
+  });
 }
 
 // El cuerpo de arriba, por local, para poder pedirlo una vez por establecimiento.
@@ -9084,7 +9149,7 @@ async function periodoDeLocal(query, local, empresaPartes = null) {
     //
     // Y lo que es de toda la EMPRESA sale de aquí cuando se mira un local, porque se le imputa
     // abajo solo su parte. Sin filtro de local no hace falta: se cuenta entero una vez.
-    const gasRow = await dbGet(`SELECT COUNT(*)::int n, COALESCE(SUM(total),0)::float total, COALESCE(SUM(base_imponible),0)::float base FROM facturas WHERE ${SIN_ALBARANES} AND fecha >= ? AND fecha <= ?${local ? " AND COALESCE(reparto,'') <> 'empresa'" : ""}${lf}`, [from, to, ...lp]);
+    const gasRow = await dbGet(`SELECT COUNT(*)::int n, COALESCE(SUM(total),0)::float total, COALESCE(SUM(base_imponible),0)::float base FROM facturas WHERE ${FACTURADO_DASHBOARD} AND fecha >= ? AND fecha <= ?${local ? " AND COALESCE(reparto,'') <> 'empresa'" : ""}${lf}`, [from, to, ...lp]);
     const parteEmpresa = (local && empresaPartes) ? (empresaPartes.porLocal.get(local) || 0) : 0;
     const gastosTotal = (gasRow ? gasRow.total : 0) + parteEmpresa;
     const reservasTotal = resRows.reduce((s, r) => s + r.n, 0);

@@ -1326,10 +1326,20 @@ function openEstabMenu() {
 window.addEventListener('resize',()=>{if(document.getElementById('drawer')?.classList.contains('estab-popover'))closeDrawer();});
 
 // ════════════════════════ VISTA: DASHBOARD (ejecutivo) ════════════════════════
-function dashDesgloseLocales(filas){
+function dashDesgloseLocales(filas,formato=eur){
  const pal=['var(--info)','var(--warning)','#8A5A9B','var(--brand)','var(--success)','#B5713A','#5B8A72'];
  const positivas=filas.reduce((s,r)=>s+Math.max(0,Number(r.total)||0),0);
- return `<div class="dash-local-breakdown">${positivas?`<div class="mbar" aria-hidden="true">${filas.map((r,i)=>`<span style="width:${Math.max(0,Number(r.total)||0)/positivas*100}%;background:${pal[i%pal.length]}"></span>`).join('')}</div>`:''}<div class="rows">${filas.map((r,i)=>`<div class="row"><span class="sdot" style="background:${pal[i%pal.length]}"></span><div class="grow"><span>${esc(nombreCortoLocal(r.local))}</span>${r.parcial&&r.disponible?'<small class="mut">Lectura parcial</small>':''}</div><b class="tnum">${r.cargando?'Consultando…':r.disponible===false?'No disponible':eur(r.total)}</b></div>`).join('')}</div></div>`;
+ return `<div class="dash-local-breakdown">${positivas?`<div class="mbar" aria-hidden="true">${filas.map((r,i)=>`<span style="width:${Math.max(0,Number(r.total)||0)/positivas*100}%;background:${pal[i%pal.length]}"></span>`).join('')}</div>`:''}<div class="rows">${filas.map((r,i)=>`<div class="row"><span class="sdot" style="background:${pal[i%pal.length]}"></span><div class="grow"><span>${esc(nombreCortoLocal(r.local))}</span>${r.parcial&&r.disponible?'<small class="mut">Lectura parcial</small>':''}</div><b class="tnum">${r.cargando?'Consultando…':r.disponible===false?'No disponible':formato(r.total)}</b></div>`).join('')}</div></div>`;
+}
+function dashCategoriasEntrega(desglose){
+  if(!desglose)return '';
+  const filas=[...desglose.categorias,{categoria:'Sin clasificar',...desglose.sinClasificar}];
+  const porcentaje=n=>n==null?'—':dec1(n)+' %';
+  return `<div class="dash-local-breakdown">
+    <h4>En qué se va el dinero</h4>
+    <div class="rows">${filas.map(r=>`<div class="row"><div class="grow">${esc(r.categoria)}${r.estimado?`<div class="mut" style="font-size:12px">${eur2(r.estimado)} estimados</div>`: ""}</div><b class="tnum">${eur2(r.importe)}</b><span class="tnum mut">${porcentaje(r.porcentaje)}</span></div>`).join('')}</div>
+    <p class="mut">Clasificación por proveedor. Importe estimado por reparto entre varias categorías: <b>${eur2(desglose.estimado)}</b>.</p>
+  </div>`;
 }
 function graficoVentasDashboard(per, mensaje) {
   const ventas=per?.ventas;
@@ -1380,7 +1390,21 @@ function renderDashboard(d) {
     periodo.comparacion?.ventas != null ? kpi({lab:"Variación de facturación", icon:"cal", val:(periodo.comparacion.ventas > 0 ? "+" : "") + dec1(periodo.comparacion.ventas) + " %", sub:"Respecto a " + [periodo.comparacion.desde, periodo.comparacion.hasta].map(fecha => new Intl.DateTimeFormat("es-ES", {day:"numeric", month:"short", year:"numeric"}).format(new Date(fecha + "T12:00:00"))).join(" – ")}) : "",
   ].filter(Boolean) : [];
   const kpis = !esHoy ? (tarjetasPeriodo.length ? `<div class="grid g${tarjetasPeriodo.length} dash-kpis">${tarjetasPeriodo.join("")}</div>` : `<p class="mut" role="status">${DASH_PERIODO_ESTADO === "cargando" ? "Consultando el periodo seleccionado…" : "Las cifras del periodo no están disponibles."}</p>`) : tarjetasHoy.length ? `<div class="grid g${tarjetasHoy.length} dash-kpis">${tarjetasHoy.join("")}</div>` : `<p class="mut" role="status">${diario === undefined ? "Consultando las cifras de hoy…" : "Las cifras de hoy no están disponibles en este momento."}</p>`;
-  if (d.errorResumen) return header + kpis + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
+  const localesAhora = esHoy && diario?.porLocal?.length ? `<details class="card fold" style="margin-top:16px">
+    <summary><h3>Locales ahora</h3><span class="foldr"><span class="mut">${actual?.tickets != null ? num(actual.tickets) + " tickets hoy · " : ""}${marca}${esc(cobertura)}</span><span class="car">${ic("chev", 16)}</span></span></summary>
+    <div class="tw"><table class="tbl">
+      <thead><tr><th scope="col">Local</th><th scope="col" class="r">Tickets hoy</th><th scope="col" class="r">Facturado hoy</th></tr></thead>
+      <tbody>${[...diario.porLocal].sort((a, b) => (b.tickets ?? -1) - (a.tickets ?? -1))
+        .map(fila => `<tr><th scope="row">${esc(nombreCortoLocal(fila.local))}</th>
+          <td class="r tnum">${fila.tickets == null ? "—" : num(fila.tickets)}</td>
+          <td class="r tnum">${fila.ventas == null ? "—" : eur2(fila.ventas)}</td></tr>`).join("")}</tbody>
+      <tfoot><tr><th scope="row">${actual?.parcial ? "Total disponible" : "Total"}</th>
+        <td class="r tnum">${actual?.tickets == null ? "—" : num(actual.tickets)}</td>
+        <td class="r tnum">${actual?.ventas == null ? "—" : eur2(actual.ventas)}</td></tr></tfoot>
+    </table></div>
+    <p class="mut" style="font-size:12px">Ocupación y saldo pendiente de cobro no disponibles en esta conexión con Ágora.</p>
+  </details>` : "";
+  if (d.errorResumen) return header + kpis + localesAhora + errorCard("No se ha podido cargar el resto del resumen. Puedes reintentarlo.");
 
 
   // ── Actividad (reservas + ventas del PERIODO seleccionado) ──
@@ -1404,7 +1428,7 @@ function renderDashboard(d) {
   const gEmp = gOk ? Number(per.gastos.empresa) || 0 : 0;
   const notaGasto = gEmp ? `incl. ${eur(gEmp)} de empresa` : "";
   const ventasBox = (vOk || gOk)
-    ? `<div class="dash-period-stats">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Gastos", gOk ? eur(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}</div>`
+    ? `<div class="dash-period-stats">${stat3("Ventas", vOk ? eur(per.ventas.total) : "—", null, vOk && !per.ventas?.parcial && cmp ? cmp.ventas : null, per.ventas?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : "")}${stat3("Compras facturadas", gOk ? eur2(per.gastos.total) : "—", null, gOk && !per.gastos?.parcial && cmp ? cmp.gastos : null, per.gastos?.parcial ? "Importe parcial: faltan días o TPV por confirmar" : notaGasto)}</div>`
     : `<div class="mut" style="font-size:12px;text-align:right;line-height:1.5">Ventas y gastos<br><span class="hl">${per ? "Sin datos de ventas y gastos en este periodo" : esc(periodoMensaje)}</span></div>`;
   const diferencia=vOk&&!per.ventas.parcial&&!cmp?.ventasParcial&&cmp?.totales?.ventas!=null?per.ventas.total-cmp.totales.ventas:null;
   const comparador=`<div class="dash-comparator"><div class="dash-comparator-head"><span class="dash-metric-label">Facturación de referencia</span><button class="btn sm" data-act="dash-compare">${ic('cal',14)} ${esc(DASH_COMPARAR?.label || 'Elegir periodo')} ▾</button></div><div class="dash-comparator-values"><b class="tnum">${cmp?.totales?.ventas!=null?eur(cmp.totales.ventas):'—'}</b><span class="mut">${DASH_COMPARANDO?'Cargando comparación…':cmp?esc([cmp.desde,cmp.hasta].map(f=>new Intl.DateTimeFormat('es-ES',{day:'numeric',month:'short',year:'numeric'}).format(new Date(f+'T12:00:00'))).join(' – ')):'Comparación no disponible'}</span></div>${diferencia!=null?`<div class="dash-comparator-delta"><span>Diferencia</span> ${diferencia>=0?'+':'−'}${eur(Math.abs(diferencia))}${cmp.ventas!=null?' · '+(cmp.ventas>0?'+':'')+dec1(cmp.ventas)+' %':''}</div>`:''}${DASH_COMPARAR?'<button class="link" data-act="dash-compare-auto">Volver al periodo anterior</button>':''}${cmp?.ventasParcial?'<small class="mut">Referencia parcial: faltan datos de ventas.</small>':cmp&&cmp.totales?.ventas==null?'<small class="mut">No hay una lectura de ventas disponible para estas fechas.</small>':''}${cmp?.lectura?.actualizando?'<small class="mut">Actualizando referencia…</small>':''}${DASH_COMPARACION_ERROR?'<p role="status">No se pudo actualizar la comparación. <button class="link" data-act="dash-compare-retry">Reintentar</button></p>':''}</div>`;
@@ -1414,16 +1438,33 @@ function renderDashboard(d) {
   const actividad = `<div class="card c8 dash-activity"><div class="ch"><h3>Actividad · ventas y reservas</h3><span class="pill" style="text-transform:capitalize">${esc(winLbl)}</span></div><div class="dash-activity-metrics"><div class="dash-metric"><div class="dash-metric-label">Reservas</div><div class="dash-metric-value tnum">${totalPeriodo == null ? "—" : num(totalPeriodo)}</div><div class="dash-metric-note">${per?.reservas?.personas != null ? num(per.reservas.personas) + " comensales" : "Comensales no disponibles"}</div>${cmp && cmp.reservas != null ? `<div style="margin-top:4px" title="${esc(cuando)}">${deltaEl(cmp.reservas, contra)}</div>` : ""}</div>${ventasBox}</div>${!per&&DASH_AVANCE.length?`<div class="dash-sales-breakdown"><h4>Facturación por local · consultando</h4>${dashDesgloseLocales(DASH_AVANCE)}</div>`:''}<div class="dash-sales-comparison">${comparador}</div>${lecturaPeriodo}${per?.ventas?.porLocal?.length>1?`<div class="dash-sales-breakdown"><h4>Facturación por local</h4>${dashDesgloseLocales(per.ventas.porLocal)}</div>`:""}<div class="dash-activity-trend">${grafico}</div><div class="dash-activity-footer"><div class="mut" style="font-size:12px;margin-top:8px">${esc(fechaCorta(DASH_RANGE.from))} – ${esc(fechaCorta(DASH_RANGE.to))}${per && !vOk ? " · Ventas no disponibles." : per && !gOk ? " · Sin facturas registradas." : ""}</div></div></div>`;
 
   // El gasto usa el mes actual por defecto y el rango elegido al cambiar el periodo.
-  const gl = DASH_GASTOS?.porLocal || [], gtot=DASH_GASTOS?.total;
-  const gasto = `<div class="card c4"><div class="ch"><h3>${esHoy?'Gasto del mes':'Gasto del periodo'}</h3></div><div class="big tnum">${gtot==null?'—':eur(gtot)}</div><p class="mut" style="font-size:12px">${DASH_GASTOS?esc(fechaCorta(DASH_GASTOS.from))+' – '+esc(fechaCorta(DASH_GASTOS.to)):DASH_GASTOS_ESTADO==='error'?'No se pudo cargar el gasto.':'Consultando gasto…'}</p>${gl.length?dashDesgloseLocales(gl):DASH_GASTOS?'<p class="mut">Sin gasto registrado en este periodo.</p>':''}<div class="mut" style="font-size:11px;margin-top:16px">Facturas del periodo, incluido el gasto de empresa repartido. No incluye coste de personal.</div></div>`;
+  const compras = DASH_GASTOS;
+  const pendientes = compras?.albaranesPendientes;
+  const entregas = compras?.gastoEntrega;
+  const fechasCompras = compras
+    ? esc(fechaCorta(compras.from))+' – '+esc(fechaCorta(compras.to))
+    : DASH_GASTOS_ESTADO==='error'?'No se pudieron cargar las compras.':'Consultando compras…';
+  const gasto = `<div class="card c4"><div class="ch"><h3>${esHoy?'Compras del mes':'Compras del periodo'}</h3></div>
+    <p class="mut">${fechasCompras}</p>
+    <h4>Gasto por fecha de entrega</h4><div class="big tnum">${entregas?eur2(entregas.total):'—'}</div>
+    ${entregas?.porLocal.length?dashDesgloseLocales(entregas.porLocal,eur2):''}
+    <p class="mut">Importes con IVA. Los albaranes cuentan por fecha de entrega. Los tickets y la parte de las facturas sin entrega vinculada cuentan por fecha de emisión.${entregas?.sinImporte?' · '+num(entregas.sinImporte)+' documentos sin importe registrado':''}</p>
+    ${dashCategoriasEntrega(entregas?.porCategoria)}
+    <h4>Facturas y tickets registrados</h4><div class="big tnum">${compras?eur2(compras.total):'—'}</div>
+    ${compras?.porLocal.length?dashDesgloseLocales(compras.porLocal,eur2):''}
+    <p class="mut">Incluye los gastos de empresa imputados al local.</p>
+    <h4>Albaranes pendientes de facturar</h4><div class="big tnum">${pendientes?eur2(pendientes.total):'—'}</div>
+    ${pendientes?.porLocal.length?dashDesgloseLocales(pendientes.porLocal,eur2):''}
+    ${pendientes?`<p class="mut">${num(pendientes.cantidad)} sin factura vinculada${pendientes.sinImporte?' · '+num(pendientes.sinImporte)+' sin importe registrado':''}. Las entregas ya facturadas se excluyen cuando se vinculan en Conciliaciones.</p>`:''}
+  </div>`;
 
   // ── Estado por establecimiento (radar real) ──
   const radar = d.radarLocales || [];
-  const estado = `<details class="card fold c12 p0"><summary style="padding:18px 18px 14px"><h3>Estado por establecimiento</h3><span class="foldr"><span class="mut">${radar.length ? num(radar.length) : "—"}</span><span class="car">${ic("chev", 16)}</span></span></summary>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur(e.gastoMes)}</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</details>`;
+  const estado = `<details class="card fold c12 p0"><summary style="padding:18px 18px 14px"><h3>Estado por establecimiento</h3><span class="foldr"><span class="mut">${radar.length ? num(radar.length) : "—"}</span><span class="car">${ic("chev", 16)}</span></span></summary>${radar.length ? `<div class="rows">${radar.map((e) => { const st = estadoState(e); return `<button class="row" data-act="estab-pick" data-local="${esc(e.local)}" style="width:100%;text-align:left"><span class="sdot st-${st.k}"></span><div class="grow"><div class="t1">${esc(nombreCortoLocal(e.local))}</div><div class="t2">${num(e.hoyPersonas)} comensales · ${e.incidenciasAbiertas} incid. · ${eur2(e.gastoMes)} en compras registradas</div></div><span class="pill ${st.k === "crit" ? "bad" : st.k === "warn" ? "warn" : st.k === "off" ? "" : "ok"}">${st.t}</span></button>`; }).join("")}</div>` : `<div style="padding:18px" class="mut">${localName ? "Estás viendo un solo establecimiento. Vuelve a «Todos» para comparar." : "Sin datos por establecimiento."}</div>`}</details>`;
 
   const row1 = `<div class="grid g12" style="margin-top:16px">${actividad}${gasto}</div>`;
   const row2 = radar.length ? `<div class="grid g12" style="margin-top:16px">${estado}</div>` : "";
-  return header + sara + kpis + row1 + row2;
+  return header + sara + kpis + localesAhora + row1 + row2;
 }
 async function loadDashboard() {
   const view = document.getElementById("view"); view.innerHTML = skeleton();

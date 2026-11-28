@@ -33,7 +33,8 @@ describe("el gasto de empresa se imputa por local en todas las pantallas", () =>
     const bloque = server.slice(i, i + 1400);
     const q = bloque.match(/const gasRow = await dbGet\(`[^`]*`/);
     assert.ok(q, "se encuentra la consulta");
-    assert.match(q[0], /\$\{SIN_ALBARANES\}/, "los albaranes no son un gasto aparte");
+    assert.match(q[0], /\$\{FACTURADO_DASHBOARD\}/);
+    assert.match(server, /const FACTURADO_DASHBOARD = `COALESCE\(tipo,'factura'\) IN \('factura','ticket'\) AND \$\{SIN_DUDAS\}`/);
     assert.match(q[0], /COALESCE\(reparto,''\) <> 'empresa'/);
   });
 

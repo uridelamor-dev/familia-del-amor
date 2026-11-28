@@ -42,3 +42,13 @@ test('la comparación no mezcla locales distintos entre hoy y la semana pasada',
   assert.equal(r.previo,null);
   assert.equal(r.variacion,null);
 });
+
+
+test('Locales ahora conserva cero real, omite ventas de ayer y distingue un local sin datos',()=>{
+ const datos={hoy,locales:[{local:'A',dias:[fila(hoy,0,0)]},vivo.locales[1]]};
+ const espera=[{local:'A',tickets:0,ventas:0},{local:'B',tickets:3,ventas:300},
+  {local:'C',tickets:null,ventas:null}];
+ assert.deepEqual(resumenHoy(datos,{hoy,locales:['A','B','C']}).porLocal,espera);
+ assert.deepEqual(resumenHoy({...datos,hoy:anterior},{hoy,locales:['A']}).porLocal,
+  [{local:'A',tickets:null,ventas:null}]);
+});

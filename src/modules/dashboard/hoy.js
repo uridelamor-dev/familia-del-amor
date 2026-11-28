@@ -21,9 +21,13 @@ export function resumenHoy(vivo, { hoy, locales = [] }) {
   };
   // Una caché de ayer no puede aparecer como ventas de hoy.
   const actual = vivo?.hoy === hoy ? sumar(hoy) : null;
+  const porLocal = nombres.map((local, i) => {
+    const datos = vivo?.hoy === hoy ? sumar(hoy, [fuentes[i]]) : null;
+    return { local, tickets: datos?.tickets ?? null, ventas: datos?.ventas ?? null };
+  });
   // Comparar exactamente los mismos locales que aportan ventas de hoy.
   const previo = actual ? sumar(anterior, fuentes.filter(l => actual.localesDisponibles.includes(l?.local)), true) : null;
-  return { hoy, anterior, actual, previo,
+  return { hoy, anterior, actual, previo, porLocal,
     variacion: actual && previo && previo.ventas > 0 ? red((actual.ventas - previo.ventas) / previo.ventas * 100) : null,
     actualizado: vivo?.guardadoEn || vivo?.generado || null, sinRespuesta: !!vivo?.sinRespuesta };
 }
