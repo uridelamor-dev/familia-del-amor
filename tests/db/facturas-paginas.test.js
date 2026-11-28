@@ -75,3 +75,51 @@ test('completar una factura mantiene su ID y pagos, conserva los originales y re
  assert.equal((await db.get('SELECT descripcion FROM factura_lineas')).descripcion,'Primera página');
  assert.deepEqual((await db.all('SELECT estado FROM facturas_recepciones ORDER BY id')).map(f=>f.estado),['registrado','pendiente','sustituido']);
 }));
+
+test('réplica del grupo 1326 y recepción 2971: separar sin OCR y conservar la decisión',async t=>preparar(t,async(db,transaccion)=>{
+ const {rutasPaginas}=await import('../../src/modules/facturas/paginas-rutas.js');
+ const original=Buffer.from('original de prueba');
+ const datos={tipo:'factura',proveedor:'Proveedor de prueba',nif_proveedor:'A80280845',
+  fecha:'2026-11-25',numero_factura:'F-2971',base_imponible:100,cuota_iva:21,total:121};
+ for(const [id,estado,resultado] of [[2966,'paginas',null],[2971,'paginas',{datos}],[2969,'registrado',{facturaId:42}],
+    [2972,'pendiente',{aprobacion:{autor:'prueba'}}]]) {
+  await db.run(`INSERT INTO facturas_recepciones(id,clave,hash,local,canal,nombre,mime,original,estado,contexto,resultado)
+    VALUES (?,?,?,?,?,?,?,?,?,?::jsonb,?::jsonb)`,
+  [id,'c'+id,'h'+id,'Blanes','WhatsApp','original.jpg','image/jpeg',original,estado,
+   JSON.stringify({grupo:'g',remitente:'r'}),resultado?JSON.stringify(resultado):null]);
+ }
+ await db.run("INSERT INTO facturas_paginas(id,primera,segunda,estado,pruebas) VALUES(1326,2966,2971,'revision','{}')");
+ const paginas=crearPaginas({db,transaccion,comparar:async()=>assert.fail('No se debe volver a comparar ninguno de estos candidatos')});
+ const rutas=new Map();
+ rutasPaginas({get(){},post(ruta,_auth,fn){rutas.set(ruta,fn);}},{
+  auth:null,db,transaccion,puedeAccederLocal:()=>true,paginas,
+  conBloqueo:async()=>assert.fail('El lector ya está ocupado'),
+ });
+ const responder=async (ruta,params,body={})=>{
+  const res={status(n){this.codigo=n;return this;},json(r){this.resultado=r;}};
+  await rutas.get(ruta)({params,body,user:{id:'prueba'}},res);
+  return res;
+ };
+ const fila=id=>db.get('SELECT * FROM facturas_recepciones WHERE id=?',[id]);
+ const cola=crearRecepcion({db,lock:async()=>assert.fail('No se necesita al lector para aprobar'),procesar:async()=>{}});
+ for(let intento=0;intento<2;intento++){
+  const r=await responder('/api/facturas/paginas/:id/:accion',{id:'1326',accion:'separar'});
+  assert.equal(r.resultado.ok,true);
+ }
+ const estado=await db.get('SELECT estado,autor FROM facturas_paginas WHERE id=1326');
+ assert.deepEqual(estado,{estado:'separadas',autor:'prueba'});
+ assert.equal((await fila(2966)).estado,'pendiente');
+ assert.equal((await fila(2969)).estado,'registrado');
+ assert.equal((await fila(2971)).estado,'revision');
+ assert.equal(await paginas.antes(await fila(2966)),false);
+ const recr=await responder('/api/facturas/paginas',{}, {ids:[2966,2971]});
+ assert.equal(recr.codigo,400);
+ assert.match(recr.resultado.error,/Ya se tomó una decisión/);
+ // Reproduce además la recepción 2971 todavía en estado «paginas» al abrir su ficha.
+ await db.run("UPDATE facturas_recepciones SET estado='paginas' WHERE id=2971");
+ const revisar={confirmado:true,aceptarAvisos:true,autor:'prueba',local:'Girona'};
+ await cola.aprobar(2971,{},revisar);
+ assert.equal((await fila(2971)).local,'Girona');
+ assert.equal((await fila(2971)).resultado.aprobacion.localAnterior,'Blanes');
+ for(const id of [2966,2971,2969,2972])assert.deepEqual((await fila(id)).original,original);
+}));

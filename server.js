@@ -13,7 +13,7 @@ import { criterioFechaCompras, listadoFacturasSQL } from './src/modules/facturas
 import { completarIva } from './src/modules/facturas/iva-inferido.js';
 import { recuperarCarnet } from './src/modules/messaging/sara-carnet.js';
 import {rutasPaginas} from './src/modules/facturas/paginas-rutas.js';
-import {PAGINAS_SCHEMA,crearPaginas} from './src/modules/facturas/paginas.js';
+import {PAGINAS_SCHEMA,PAGINAS_ELEGIBLES_SQL,crearPaginas} from './src/modules/facturas/paginas.js';
 import {compararFotos} from './src/modules/facturas/paginas-clasificacion.js';
 import {crearCompletarPaginas} from './src/modules/facturas/paginas-completar.js';
 import {referenciasAlbaran,estadoAlbaran} from './src/modules/facturas/albaranes.js';
@@ -121,6 +121,7 @@ import { normalizarEstado, ABIERTOS as MANT_ABIERTOS } from "./src/modules/mante
 import { getDashboard } from "./src/modules/dashboard/dashboard.service.js";
 import { guardarHorasFicha } from "./src/modules/rrhh/horas-ficha.js";
 import { ventasRecientes, completarVentasRecientes, normalizarVentasRango } from "./src/modules/dashboard/ventas-recientes.js";
+import { crearLecturaOcupacion } from './src/integrations/agora/ocupacion.js';
 import { resumenHoy } from "./src/modules/dashboard/hoy.js";
 import { fusionarDashboards, fusionarPeriodo } from "./src/modules/dashboard/fusion.js";
 import { resultadoRegistrado } from "./src/modules/dashboard/resultado.js";
@@ -347,7 +348,7 @@ import { construirCsv, nombreFicheroRegistro } from "./src/modules/fichajes/expo
 import * as DUP from "./src/modules/clientes/duplicados.js";
 import { colaDeTrabajo, cobertura } from "./src/modules/facturas/diccionario.js";
 import { gruposDuplicados } from "./src/modules/facturas/proveedores-duplicados.js";
-import { grupoDeSQL, claveProducto, validarSuma, mensajeValidacion } from "./src/modules/facturas/lineas.js";
+import { grupoDeSQL, claveProducto, validarSuma, referenciaTicketConIva, mensajeValidacion } from "./src/modules/facturas/lineas.js";
 import { redondearImporte } from './src/modules/facturas/redondeo.js';
 import { agregarLineaManual } from './src/modules/facturas/alta-linea.js';
 import { buscarParecida, resumenMotivos } from "./src/modules/facturas/duplicados.js";
@@ -3224,6 +3225,21 @@ function actualizarPagosEmpresa() {
   if(!actualizacionPagosEmpresa) actualizacionPagosEmpresa=aplicarPagosEmpresa({dbAll,dbRun},instanteMadrid(new Date()).fecha).finally(()=>{actualizacionPagosEmpresa=null;});
   return actualizacionPagosEmpresa;
 }
+async function actualizarCuadreVisibleTickets(filas) {
+  const tickets=filas.filter(f=>f.tipo==='ticket' && f.lineas_estado==='descuadre' && !leerCargosBase(f.cargos_base).length);
+  if (!tickets.length) return;
+  const sumas=await dbAll(`SELECT factura_id,SUM(importe) AS suma,COUNT(importe)=COUNT(*) AS completas,
+    BOOL_OR(dudosa) AS dudosas FROM factura_lineas WHERE factura_id=ANY(?::bigint[]) GROUP BY factura_id`,[tickets.map(f=>f.id)]);
+  const porId=new Map(sumas.map(s=>[String(s.factura_id),s]));
+  for (const f of tickets) {
+    const r=porId.get(String(f.id));
+    if (r && referenciaTicketConIva(f.tipo,f,Number(r.suma),r.completas) !== null) {
+      f.lineas_iva_incluido=true;
+      f.lineas_estado=r.dudosas?'dudas':'ok';
+      f.lineas_aviso=null;
+    }
+  }
+}
 app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req, res) => {
   try {
     await actualizarPagosEmpresa();
@@ -3236,7 +3252,7 @@ app.get("/api/facturas", requireAuth(["direccion", "contabilidad"]), async (req,
     // La lista no se entrega hasta comprobar también la vigencia de sus distintivos.
     const filasCarga = dbAll(listadoFacturasSQL({where,orden:criterioFechaCompras(query).orden,limite:LIMITE}), params).then(async rows => {
       for (const r of rows) { delete r.drive_thumb; r.estado_pago = estadoPago(r, hoyMad); }
-      await cargarDistintivos(rows,dbAll);
+      await Promise.all([cargarDistintivos(rows,dbAll),actualizarCuadreVisibleTickets(rows)]);
       return rows;
     });
     // Los totales se calculan sobre el MISMO filtro y SIN el tope: sumar solo las filas que se
@@ -3791,7 +3807,7 @@ app.post('/api/facturas/repaso-unico/documento/:origen/:id',requireAuth(["direcc
  }catch(e){res.status(e.status||500).json({ok:false,error:e.status?e.message:'No se pudo guardar la revisión; vuelve a consultar el documento.'});}
 });
 rutasPaginas(app,{auth:requireAuth(["direccion","contabilidad"]),db:{get:dbGet,all:dbAll,run:dbRun},puedeAccederLocal,
- conBloqueo:fn=>recepcionFacturas.conBloqueo(fn),paginas:paginasFacturas});
+ transaccion:transaccionPaginas,conBloqueo:fn=>recepcionFacturas.conBloqueo(fn),paginas:paginasFacturas});
 registrarCalidadLectura(app,{auth:requireAuth(["direccion","contabilidad"]),db:{get:dbGet,all:dbAll},transaccion:transaccionPaginas,
  ambito:(req,columnas)=>filtroRevision({locales:localesScope(req),empresa:req.query.empresa,tipo:req.query.tipo},columnas),puedeAcceder:puedeAccederLocal});
 app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
@@ -3799,14 +3815,18 @@ app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]),
     const antes = /^\d+$/.test(String(req.query.antes || '')) ? String(req.query.antes) : null;
     const ambito=filtroRevision({locales:localesScope(req),empresa:req.query.empresa,tipo:req.query.tipo},{tipo:"resultado->'datos'->>'tipo'",local:"local",empresa:"COALESCE(resultado->'datos'->>'empresa',resultado->'datos'->>'empresa_detectada')"});
     const filtro=ambito.sql; const params=ambito.params;
-    const enEspera="(estado='revision' AND resultado->'esperaConfirmacion' IS NOT NULL)";
+    const enEspera="(estado IN ('revision','paginas') AND resultado->'esperaConfirmacion' IS NOT NULL)";
     const verEspera=req.query.espera==='1';
     const filtroCola=verEspera ? enEspera : `NOT ${enEspera}`;
-    const filas = await dbAll(`SELECT id,canal,local,nombre,mime,resultado,estado,intentos,error,creado,original IS NOT NULL AS tiene_original,(SELECT p.id FROM facturas_paginas p WHERE p.estado='revision' AND facturas_recepciones.id IN (p.primera,p.segunda) ORDER BY p.id DESC LIMIT 1) AS paginas_id FROM facturas_recepciones
+    const parejaVigente = `EXISTS (SELECT 1 FROM facturas_recepciones a JOIN facturas_recepciones b ON a.local=b.local
+      WHERE a.id=p.primera AND b.id=p.segunda
+      AND a.id IN (SELECT id FROM facturas_recepciones WHERE ${PAGINAS_ELEGIBLES_SQL})
+      AND b.id IN (SELECT id FROM facturas_recepciones WHERE ${PAGINAS_ELEGIBLES_SQL}))`;
+    const filas = await dbAll(`SELECT id,canal,local,nombre,mime,resultado,estado,intentos,error,creado,original IS NOT NULL AS tiene_original,(SELECT p.id FROM facturas_paginas p WHERE p.estado='revision' AND ${parejaVigente} AND facturas_recepciones.id IN (p.primera,p.segunda) ORDER BY p.id DESC LIMIT 1) AS paginas_id FROM facturas_recepciones
       WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro} AND ${filtroCola} ${antes ? 'AND id < ?' : ''} ORDER BY id DESC LIMIT 51`, [...params,...(antes ? [antes] : [])]);
     const conteo = await dbGet(`SELECT COUNT(*) FILTER (WHERE ${filtroCola}) AS total, COUNT(*) FILTER (WHERE ${filtroCola} AND estado IN ('error','revision','paginas')) AS errores, COUNT(*) FILTER (WHERE ${enEspera}) AS en_espera FROM facturas_recepciones WHERE estado NOT IN ('registrado','duplicado','descartado','sustituido') ${filtro}`,params);
     const propuestas=verEspera ? [] : await dbAll(`SELECT p.id,p.estado,p.pruebas->>'motivo' AS motivo FROM facturas_paginas p
-      WHERE (p.estado='revision' OR (p.estado='unidas' AND p.creado>NOW()-INTERVAL '7 days'))
+      WHERE ((p.estado='revision' AND ${parejaVigente}) OR (p.estado='unidas' AND p.creado>NOW()-INTERVAL '7 days'))
       AND EXISTS(SELECT 1 FROM facturas_recepciones WHERE id IN (p.primera,p.segunda) ${filtro}) ORDER BY (p.estado='revision') DESC,p.id DESC LIMIT 50`,params);
     const seguimientos = await dbAll(`SELECT id, local, nombre, original IS NOT NULL AS tiene_original,
        seguimiento_nota AS nota, COALESCE(resultado->>'facturaId', resultado->'resolucion'->>'compraId') AS compra_id,
@@ -3835,6 +3855,14 @@ app.post("/api/facturas/recepciones/:id/seguimiento", requireAuth(["direccion","
     res.json({ok:true});
   } catch(error) { next(error); }
 });
+function localRevisionRecepcion(req) {
+  if (!Object.hasOwn(req.body || {},'local')) return undefined;
+  const valor=req.body.local;
+  if (typeof valor!=='string' || !localesAccesibles(req).includes(valor)) {
+    throw new Error('Selecciona un establecimiento al que tengas acceso.');
+  }
+  return valor;
+}
 app.post("/api/facturas/recepciones/:id/resolver", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
     const f=await dbGet("SELECT local,estado,xmin::text AS version FROM facturas_recepciones WHERE id=?", [req.params.id]);
@@ -3844,7 +3872,7 @@ app.post("/api/facturas/recepciones/:id/resolver", requireAuth(["direccion", "co
         typeof motivo!=='string' || !motivo.trim() || motivo.length>2000) {
       return res.status(400).json({ok:false,error:'Selecciona una acción e indica el motivo.'});
     }
-    if (f.estado!=='revision') return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión.'});
+    if (!['revision','paginas'].includes(f.estado)) return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión.'});
     let compra=null;
     if (accion!=='no_contable') {
       if (!/^[1-9][0-9]{0,17}$/.test(String(facturaId || ''))) {
@@ -3861,7 +3889,7 @@ app.post("/api/facturas/recepciones/:id/resolver", requireAuth(["direccion", "co
     });
     const guardada=await dbRun(`UPDATE facturas_recepciones SET estado=?,
       resultado=jsonb_set(COALESCE(resultado,'{}'::jsonb),'{resolucion}',?::jsonb),error=NULL,actualizado=NOW()
-      WHERE id=? AND estado='revision' AND xmin::text=? AND original IS NOT NULL RETURNING id`,
+      WHERE id=? AND estado IN ('revision','paginas') AND xmin::text=? AND original IS NOT NULL RETURNING id`,
     [accion==='duplicado'?'duplicado':'descartado',resolucion,req.params.id,f.version]);
     if (!guardada?.id) return res.status(409).json({ok:false,error:'El documento cambió. Vuelve a abrirlo.'});
     res.json({ok:true});
@@ -3871,18 +3899,22 @@ app.post("/api/facturas/recepciones/:id/borrador", requireAuth(["direccion", "co
   try {
     const f=await dbGet("SELECT local,estado,resultado,xmin::text AS version FROM facturas_recepciones WHERE id=?", [req.params.id]);
     if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
-    if(f.estado!=='revision' || !f.resultado?.datos) return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión.'});
+    if(!['revision','paginas'].includes(f.estado)) return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión.'});
     const cambios=req.body?.datos;
     if(!cambios || typeof cambios!=='object' || Array.isArray(cambios)) return res.status(400).json({ok:false,error:'Datos del borrador no válidos.'});
     let datos;
-    try { datos=datosRevision(f.resultado.datos,cambios); }
+    try {
+      const local=localRevisionRecepcion(req);
+      datos=datosRevision(f.resultado?.datos,cambios);
+      if(local !== undefined) datos.local = local;
+    }
     catch(e) { return res.status(400).json({ok:false,error:e.message}); }
     const borrador=JSON.stringify({
       datos, autor:String(req.user.id || req.user.username || req.user.rol), fecha:new Date().toISOString()
     });
     const actualizado=await dbRun(`UPDATE facturas_recepciones
-      SET resultado=jsonb_set(resultado,'{borrador}',?::jsonb),actualizado=NOW()
-      WHERE id=? AND estado='revision' AND xmin::text=? RETURNING id`,[borrador,req.params.id,f.version]);
+      SET resultado=jsonb_set(COALESCE(resultado,'{}'::jsonb),'{borrador}',?::jsonb),actualizado=NOW()
+      WHERE id=? AND estado IN ('revision','paginas') AND xmin::text=? RETURNING id`,[borrador,req.params.id,f.version]);
     if(!actualizado?.id) return res.status(409).json({ok:false,error:'El documento cambió mientras guardabas. Vuelve a abrirlo.'});
     res.json({ok:true});
   } catch(e) {next(e);}
@@ -3893,8 +3925,8 @@ app.post("/api/facturas/recepciones/:id/espera", requireAuth(["direccion", "cont
     if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
     if(typeof req.body?.espera!=='boolean') return res.status(400).json({ok:false,error:'Indica si el documento espera confirmación.'});
     const marca=JSON.stringify({autor:String(req.user.id || req.user.username || req.user.rol),fecha:new Date().toISOString()});
-    const actualizado=await dbRun(`UPDATE facturas_recepciones SET resultado=CASE WHEN ? THEN jsonb_set(resultado,'{esperaConfirmacion}',?::jsonb) ELSE resultado-'esperaConfirmacion' END,actualizado=NOW()
-      WHERE id=? AND estado='revision' AND resultado IS NOT NULL RETURNING id`,[req.body.espera,marca,req.params.id]);
+    const actualizado=await dbRun(`UPDATE facturas_recepciones SET resultado=CASE WHEN ? THEN jsonb_set(COALESCE(resultado,'{}'::jsonb),'{esperaConfirmacion}',?::jsonb) ELSE resultado-'esperaConfirmacion' END,actualizado=NOW()
+      WHERE id=? AND estado IN ('revision','paginas') RETURNING id`,[req.body.espera,marca,req.params.id]);
     if(!actualizado?.id) return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión.'});
     res.json({ok:true});
   }catch(e){next(e);}
@@ -3910,7 +3942,7 @@ app.get("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "con
         f.resultado.avisos=(f.resultado.avisos || []).filter(a=>(a.campo || a.clave)!=='porcentaje_iva');
       }
     }
-    res.setHeader('Cache-Control','no-store'); res.json({ok:true,data:{...f,nombre:nombreRecepcion(f)}});
+    res.setHeader('Cache-Control','no-store'); res.json({ok:true,data:{...f,nombre:nombreRecepcion(f),locales:localesAccesibles(req)}});
   } catch(e) {next(e);}
 });
 app.post("/api/facturas/recepciones/:id/pedir-foto", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
@@ -3954,7 +3986,7 @@ app.post("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "co
   try {
     const f=await dbGet('SELECT local FROM facturas_recepciones WHERE id=?',[req.params.id]);
     if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
-    await recepcionFacturas.aprobar(req.params.id,req.body.datos || {},{autor:String(req.user?.id || req.user?.username || req.user?.nombre || req.user?.rol || 'usuario'),motivo:req.body.motivo,confirmado:req.body.confirmado,aceptarAvisos:req.body.aceptarAvisos,formato:req.body.formato,falsoAviso:req.body.falsoAviso});
+    await recepcionFacturas.aprobar(req.params.id,req.body.datos || {},{local:localRevisionRecepcion(req),autor:String(req.user?.id || req.user?.username || req.user?.nombre || req.user?.rol || 'usuario'),motivo:req.body.motivo,confirmado:req.body.confirmado,aceptarAvisos:req.body.aceptarAvisos,formato:req.body.formato,falsoAviso:req.body.falsoAviso});
     res.json({ok:true});
   } catch(e) {res.status(400).json({ok:false,error:e.recibido ? 'Hay otra lectura en curso. Vuelve a confirmar en un momento.' : e.message});}
 });
@@ -4005,6 +4037,7 @@ app.get("/api/facturas/documento/:id", requireAuth(["direccion", "contabilidad"]
     const row=await dbGet("SELECT * FROM facturas WHERE id=?",[req.params.id]);
     if(!row)return res.status(404).json({ok:false,error:"El documento ya no está disponible"});
     if(!puedeAccederLocal(req,row.local))return res.status(403).json({ok:false,error:"Sin acceso a este documento"});
+    await actualizarCuadreVisibleTickets([row]);
     delete row.drive_thumb;
     row.estado_pago=estadoPago(row,instanteMadrid(new Date()).fecha);
     res.json({ok:true,data:row});
@@ -7540,7 +7573,7 @@ app.post("/api/facturas/lineas/recuadrar", requireAuth(["direccion", "contabilid
 async function recalcularCuadre(facturaId, baseImponible, deps = {dbAll,dbGet,dbRun}) {
   const {dbAll:leerTodas,dbGet:leerUna,dbRun:escribir}=deps;
   const lineas = await leerTodas(`SELECT importe::float AS importe, dudosa FROM factura_lineas WHERE factura_id = ?`, [facturaId]);
-  const documento=await leerUna("SELECT tipo,cuota_iva,lineas_iva_incluido,cargos_base FROM facturas WHERE id=?",[facturaId]);
+  const documento=await leerUna("SELECT tipo,cuota_iva,total,lineas_iva_incluido,cargos_base FROM facturas WHERE id=?",[facturaId]);
   const v = validarSuma(lineas, baseImponible,documento?.tipo,documento);
   await escribir(`UPDATE facturas SET lineas_estado = ?, lineas_aviso = ? WHERE id = ?`,
     [v.motivo === "sin_valorar" ? "sin_valorar" : v.cuadra ? (v.dudosas ? "dudas" : "ok") : "descuadre", mensajeValidacion(v), facturaId]);
@@ -8785,6 +8818,17 @@ app.get("/api/agora/ventas-vivo", requireAuth(["direccion", "contabilidad"]), as
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+const leerOcupacionDashboard = crearLecturaOcupacion();
+app.get('/api/dashboard/locales-ahora', requireAuth(['direccion','encargado','contabilidad']), async (req,res,next) => {
+  try {
+    const scope = localesScope(req);
+    const centros = scope.length ? scope : localesAccesibles(req);
+    const locales = [...new Set(centros.filter(l=>!LOCALES_SIN_PUBLICO.has(l)).flatMap(l=>fuentesVentas(l)))];
+    res.setHeader('Cache-Control','no-store');
+    res.json({ok:true,data:await leerOcupacionDashboard(locales,await loadAgoraConfigsActive())});
+  } catch (error) { next(error); }
+});
+
 // Resumen diario independiente del periodo elegido en los gráficos.
 app.get("/api/dashboard/hoy", requireAuth(["direccion", "encargado", "contabilidad"]), async (req, res, next) => {
   try {
@@ -8980,7 +9024,7 @@ app.get('/api/dashboard/gastos',requireAuth(['direccion','encargado','contabilid
    sinImporte:directas.reduce((s,r)=>s+r.sin_importe,0),
    porCategoria:categoriasGastoEntrega(movimientos,indiceCategorias(etiquetas),locales),
   };
-  res.json({ok:true,data:{from,to,...gastoDesglosado(base,empresa,locales),albaranesPendientes:{...pendientes,cantidad,sinImporte},gastoEntrega}});
+  res.json({ok:true,data:{from,to,...gastoDesglosado(base,empresa,locales),importeEmpresa:gastoDesglosado([],empresa,locales).total,albaranesPendientes:{...pendientes,cantidad,sinImporte},gastoEntrega}});
  }catch(e){res.status(500).json({error:'No se pudo cargar el gasto del periodo'});}
 });
 

@@ -23,10 +23,10 @@ test('P0: borrador, descarte y enlace de duplicado preservan originales e import
    [id,'clave-'+id,'hash-'+id,foto,JSON.stringify({datos})]);
 
   const routes=new Map();
-  const script=source.slice(source.indexOf('app.post("/api/facturas/recepciones/:id/resolver"'),
+  const script=source.slice(source.indexOf('function localRevisionRecepcion('),
    source.indexOf('app.post("/api/facturas/recepciones/:id/espera"'));
   vm.runInNewContext(script,{app:{post:(path,_auth,handler)=>routes.set(path.split('/').at(-1),handler)},
-   requireAuth:()=>null,dbGet:db.get,dbRun:db.run,datosRevision,puedeAccederLocal:(_req,local)=>local==='Lloret'});
+   requireAuth:()=>null,localesAccesibles:()=>['Lloret','Girona'],dbGet:db.get,dbRun:db.run,datosRevision,puedeAccederLocal:(_req,local)=>local==='Lloret'});
   const post=async (path,id,body)=>{
    const res={code:200,status(n){this.code=n;return this;},json(payload){this.payload=payload;}};
    await routes.get(path)({params:{id},body,user:{id:'contabilidad'}},res,e=>{throw e;});
@@ -64,5 +64,41 @@ test('P0: borrador, descarte y enlace de duplicado preservan originales e import
   }
   assert.equal(Number((await db.get('SELECT SUM(total) AS total FROM facturas')).total),95.18);
   assert.equal(await post('borrador',2319,{datos:cambios}),409);
+ }finally{await db.fin();}
+});
+
+test('réplica de #2521 y #3234: corregir el receptor conserva la defensa sobre el emisor',async t=>{
+ if(!await disponible())return t.skip(motivoSalto());
+ const {comprobarRevisionHumana}=await import('../../facturas.js');
+ const db=await conEsquema();
+ try{
+  await db.raw(RECEPCION_SCHEMA);
+  const proveedor='MRM 2, S.A.';
+  const datos={titulo_documento:'ALBARÁN / FACTURA',tipo:'factura',proveedor,
+   nif_proveedor:'A80280845',nif_receptor:'A80280845',fecha:'2026-11-25',numero_factura:'MRM-2',
+   base_imponible:100,porcentaje_iva:21,cuota_iva:21,total:121};
+  const original=Buffer.from('original simulado');
+  for(const id of [2521,3234])await db.run(
+   `INSERT INTO facturas_recepciones(id,clave,hash,local,canal,nombre,mime,original,estado,resultado)
+    VALUES (?, ?, ?, 'Blanes','Email','original.pdf','application/pdf',?,'revision',?::jsonb)`,
+   [id,'c'+id,'h'+id,original,JSON.stringify({datos})]);
+  const dbAll=async sql=>sql.includes('facturas_locales')
+    ? [{empresa:'Família de l’Amor',cif:'B70799135'}]
+    : [{proveedor,nif:'A80280845'}];
+  const cola=crearRecepcion({db,lock:async()=>assert.fail('Lector ocupado'),procesar:async()=>{},
+   validarRevision:d=>comprobarRevisionHumana(d,{dbAll})});
+  const opts={confirmado:true,aceptarAvisos:true,autor:'prueba'};
+  await assert.rejects(cola.aprobar(2521,{},opts),/mismo NIF/);
+  await assert.rejects(cola.aprobar(2521,{nif_proveedor:'B70799135',nif_receptor:'B70799135'},opts),/emisor/i);
+  await assert.rejects(cola.aprobar(2521,{proveedor:'Nombre inventado',nif_receptor:'B70799135'},opts),/contradice la memoria/);
+  for(const id of [2521,3234]){
+   await cola.aprobar(id,{nif_receptor:'B-70799135'},opts);
+   const f=await db.get('SELECT * FROM facturas_recepciones WHERE id=?',[id]);
+   assert.equal(f.estado,'pendiente');
+   assert.equal(f.resultado.datos.nif_proveedor,'A80280845');
+   assert.equal(f.resultado.datos.nif_receptor,'B70799135');
+   assert.equal(f.resultado.datos.tipo,'factura');
+   assert.deepEqual(f.original,original);
+  }
  }finally{await db.fin();}
 });

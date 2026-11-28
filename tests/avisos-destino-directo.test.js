@@ -38,7 +38,8 @@ test('la lectura individual de factura comprueba ámbito y rol',async()=>{
   app:{get:(_path,_middleware,fn)=>{handler=fn;}},requireAuth:r=>{roles=Array.from(r);},
   dbGet:async(sql,args)=>{consultas.push({sql,args:Array.from(args)});return {id:999,local:'La Tapeta - Girona',drive_thumb:'privado'};},
   estadoPago:()=>({}),instanteMadrid:()=>({fecha:'2026-11-17'})});
- vm.runInContext(acceso+route,ctx);
+ const cuadre=server.slice(server.indexOf('async function actualizarCuadreVisibleTickets('),server.indexOf('app.get("/api/facturas",'));
+ vm.runInContext(acceso+cuadre+route,ctx);
  assert.deepEqual(roles,['direccion','contabilidad']);
  async function pedir(local){let status=200,body;
   const res={status:n=>{status=n;return res;},json:b=>{body=b;}};

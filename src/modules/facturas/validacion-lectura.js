@@ -10,7 +10,7 @@ import { nifValido, normNif } from './emisor.js';
 import { normalizarLinea, validarSuma } from './lineas.js';
 import { revisarCoherencia } from './coherencia.js';
 
-export const CAMPOS_REVISION = ['tipo','titulo_documento','proveedor','nif_proveedor','fecha','vencimiento','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'];
+export const CAMPOS_REVISION = ['tipo','titulo_documento','proveedor','nif_proveedor','nif_receptor','fecha','vencimiento','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'];
 const numero = v => v === null || v === undefined || v === '' ? null : Number(v);
 export function controlesLectura(d = {}) {
   const avisos = [...comprobarCobertura(d), ...avisosAbono(d), ...avisosTipoDocumento(d), ...avisosEvidenciaCabecera(d)];
@@ -137,11 +137,17 @@ export function datosRevision(original,cambios) {
     });
   }
   if(d.nif_proveedor) d.nif_proveedor=normNif(d.nif_proveedor);
+  if(Object.hasOwn(cambios,'nif_receptor') && d.nif_receptor) {
+    d.nif_receptor=normNif(d.nif_receptor);
+    if (d.nif_receptor !== normNif(original?.nif_receptor) && !nifValido(d.nif_receptor)) {
+      throw new Error('Comprueba el NIF del receptor escrito en el original.');
+    }
+  }
   // La duda OCR pertenece al valor leído. Los controles sobre el valor nuevo se ejecutan después.
   if(Array.isArray(d.campos_dudosos)) {
     d.campos_dudosos=d.campos_dudosos.filter(campo=>
       !CAMPOS_REVISION.includes(campo) || !Object.hasOwn(cambios,campo)
-      || (d[campo]??null)===(campo==='nif_proveedor' ? normNif(original?.[campo])||null : original?.[campo]??null));
+      || (d[campo]??null)===(['nif_proveedor','nif_receptor'].includes(campo) ? normNif(original?.[campo])||null : original?.[campo]??null));
   }
 
   // Un cambio de base/IVA invalida el desglose anterior: no mantener datos fiscales contradictorios.

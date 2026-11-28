@@ -64,7 +64,9 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       if (f.estado === 'paginas') throw errorRecibido(id);
       if (f.estado === 'revision') { const e=errorRecibido(id); e.message='Documento guardado para revisión en Compras. Todavía no está contabilizado.'; throw e; }
       if (f.estado === 'error' || new Date(f.proximo) > ahora()) throw errorRecibido(id);
-      await db.run(`UPDATE facturas_recepciones SET estado='leyendo', intentos=intentos+1, actualizado=NOW() WHERE id=?`, [id]);
+      const lectura = await db.run(`UPDATE facturas_recepciones SET estado='leyendo', intentos=intentos+1, actualizado=NOW()
+        WHERE id=? AND estado IN ('pendiente','leyendo') RETURNING id`,[id]);
+      if (!lectura) throw errorRecibido(id);
       try {
         if(!f.resultado?.aprobacion && antesProcesar && await antesProcesar(f)) return {recibido:true,paginas:true};
         const nombre=nombreRecepcion(f);
@@ -131,7 +133,7 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       for (const f of filas) { try { await ejecutar(f.id); } catch(e) { if (!e.recibido && !e.isDuplicate) console.error('[Recepción] no se pudo recuperar el documento', f.id); } }
     } finally { trabajando = false; }
   }
-  async function aprobar(id,cambios,{autor,motivo,confirmado,aceptarAvisos,formato,falsoAviso=false}={}) {
+  async function aprobar(id,cambios,{autor,motivo,confirmado,aceptarAvisos,formato,falsoAviso=false, local }={}) {
     if (confirmado !== true) throw new Error('Confirma que has comprobado el original');
     const formatoConfirmado = validarFormato(formato);
     const leerFila = () => db.get(
@@ -141,12 +143,13 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       return previa?.autor === autor && previa
         && isDeepStrictEqual(previa.despues, datosRevision(previa.antes, cambios))
         && isDeepStrictEqual(previa.formato, formatoConfirmado)
-        && previa.falsoAviso === (falsoAviso === true);
+        && previa.falsoAviso === (falsoAviso === true)
+        && (local === undefined || fila.local === local);
     };
     const f = await leerFila();
     if (!f) throw new Error('Documento no encontrado');
     if (mismaAprobacion(f)) return {ok:true};
-    if (f.estado !== 'revision' || !f.original) throw new Error('Este documento ya no está pendiente de revisión');
+    if (!['revision','paginas'].includes(f.estado) || !f.original) throw new Error('Este documento ya no está pendiente de revisión');
     if (f.resultado?.avisos?.some(a => a.codigo === 'varias_facturas')) {
       throw new Error('Separa las facturas del original antes de confirmar.');
     }
@@ -156,15 +159,17 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
     if(bloqueos.length) throw new Error([...new Set(bloqueos.map(a=>a.texto))].join(" "));
     if(avisos.length && aceptarAvisos!==true) throw new Error("Corrige estos avisos o confirma expresamente la excepción. "+[...new Set(avisos.map(a=>a.texto))].join(" "));
     if(formatoConfirmado && (avisos.length || !datos.nif_proveedor))throw new Error('Resuelve todos los avisos y confirma el NIF antes de recordar un formato.');
-    if(falsoAviso && Object.keys(cambios).some(k=>JSON.stringify(datos[k]??null)!==JSON.stringify(f.resultado?.datos?.[k]??null)))throw new Error('Si has corregido datos no se puede marcar la lectura original como falso aviso.');
-    const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,formato:formatoConfirmado,falsoAviso:falsoAviso===true,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};
+    if(falsoAviso && ((local !== undefined && local !== f.local) || Object.keys(cambios).some(k=>JSON.stringify(datos[k]??null)!==JSON.stringify(f.resultado?.datos?.[k]??null))))throw new Error('Si has corregido datos no se puede marcar la lectura original como falso aviso.');
+    const destino = local ?? f.local;
+    const movimiento = destino !== f.local ? { localAnterior:f.local, localConfirmado:destino } : {};
+    const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,...movimiento,formato:formatoConfirmado,falsoAviso:falsoAviso===true,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};
     // La lectura deja la fila en revisión. Encolar no necesita el candado de OCR.
     // La versión de fila evita pisar una unión, un descarte u otra revisión simultánea.
     const guardada = await db.run(
-      `UPDATE facturas_recepciones SET estado='pendiente',resultado=?::jsonb,nombre=?,
+      `UPDATE facturas_recepciones SET estado='pendiente',resultado=?::jsonb,nombre=?,local=?,
          intentos=0,proximo=NOW(),error=NULL,actualizado=NOW()
-       WHERE id=? AND estado='revision' AND xmin::text=? RETURNING id`,
-      [JSON.stringify(resultado),nombreRecepcion({...f,resultado}),id,f.version]);
+       WHERE id=? AND estado IN ('revision','paginas') AND xmin::text=? RETURNING id`,
+      [JSON.stringify(resultado),nombreRecepcion({...f,local:destino,resultado}),destino,id,f.version]);
     if (guardada || mismaAprobacion(await leerFila())) return {ok:true};
     throw new Error('El documento ha cambiado. Vuelve a abrirlo antes de confirmar.');
   }

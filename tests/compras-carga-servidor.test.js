@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {listadoFacturasSQL} from '../src/modules/facturas/fecha-listado.js';
 const source=readFileSync(new URL('../server.js',import.meta.url),'utf8');
-const handler=source.slice(source.indexOf('app.get("/api/facturas",'),source.indexOf('// Editar los campos de una factura'));
+const handler=source.slice(source.indexOf('async function actualizarCuadreVisibleTickets('),source.indexOf('// Editar los campos de una factura'));
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const tick=()=>new Promise(r=>setImmediate(r));
 function preparar(){

@@ -68,6 +68,10 @@ export function rangoAnterior(from, to, preset) {
 
   const dias = diasEntre(from, to);
   const p = String(preset || "");
+  if (p === 'hoy' && from === to) {
+    const referencia = addDays(from, -7);
+    return {from:referencia,to:referencia,etiqueta:'el mismo día de la semana pasada'};
+  }
   const empiezaMes = from.slice(8) === "01";
   // Sin preset hay que adivinar: un rango que empieza el día 1 y dura más de dos semanas es un
   // mes; uno corto es una ventana de días, aunque empiece el 1.

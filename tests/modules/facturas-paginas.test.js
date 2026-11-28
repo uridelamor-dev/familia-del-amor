@@ -6,7 +6,7 @@ import {validarComplemento,huellaPaginas} from '../../src/modules/facturas/pagin
 import {crearRecepcion} from '../../src/modules/facturas/recepcion.js';
 import {resumenTanda} from '../../src/modules/facturas/tandas-whatsapp.js';
 const prueba=()=>({relacion:'misma',contenido_complementario:true,documentos:[1,2].map(pagina=>({tipo:'factura',nif:'B12345678',numero:'F-123',fecha:'2026-10-28',pagina,paginas:2}))});
-const foto=(id,estado='pendiente')=>({id,estado,hash:'h'+id,local:'Blanes',canal:'WhatsApp',nombre:'foto.jpg',mime:'image/jpeg',original:Buffer.from('foto'+id),creado:'2026-10-28T12:00:00Z',contexto:{grupo:'g',remitente:'r'}});
+const foto=(id,estado='pendiente')=>({id,estado,hash:'h'+id,local:'Blanes',canal:'WhatsApp',nombre:'foto.jpg',mime:'image/jpeg',original:Buffer.from('foto'+id),tiene_original:true,creado:'2026-10-28T12:00:00Z',contexto:{grupo:'g',remitente:'r'}});
 test('solo identidad y páginas impresas diferentes permiten unir automáticamente',()=>{
  assert.equal(decidirPaginas(prueba()),'automatica');
  for(const campo of ['nif','numero','fecha','pagina','paginas']){const p=prueba();p.documentos[1][campo]=null;assert.equal(decidirPaginas(p),'revision');}
@@ -23,6 +23,7 @@ function entorno({estado='pendiente',comparar=async()=>prueba(),fallar=false}={}
  const a=foto(1,estado),b=foto(2);let p;const cambios=[];
  const db={
   get:async(sql,args)=>{
+   if(sql.includes('JOIN facturas_recepciones'))return null;
    if(sql.includes('facturas_paginas'))return p;
    if(sql.includes('facturas_recepciones'))return args[0]===1?a:b;
    throw Error(sql);
@@ -55,9 +56,10 @@ test('sin numeración propone revisión y no crea un documento unido',async()=>{
 test('dos comprobaciones contradictorias impiden unión automática',async()=>{
  let n=0;const e=entorno({comparar:async()=>++n===1?prueba():{relacion:'distintas'}});await e.servicio.antes(e.a);assert.equal(e.propuesta.estado,'revision');
 });
-test('una factura registrada exige revisión; no se vuelve a contabilizar',async()=>{
- const e=entorno({estado:'registrado'});e.db.all=async()=>[e.a];await e.servicio.antes(e.b);
- assert.equal(e.propuesta.estado,'revision');assert.equal(e.completadas,0);
+test('una factura registrada no se propone como pareja ni se vuelve a contabilizar',async()=>{
+ const e=entorno({estado:'registrado'});e.db.all=async()=>[e.a,e.b];
+ assert.equal(await e.servicio.antes(e.b),false);
+ assert.equal(e.propuesta,undefined);assert.equal(e.completadas,0);
 });
 test('si falla el PDF en una unión manual, se conservan originales y propuesta',async()=>{
  const e=entorno({fallar:true});await e.servicio.antes(e.a);
