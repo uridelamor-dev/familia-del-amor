@@ -32,7 +32,7 @@ export function instruccionesCarnet(r){
  }
 }
 
-const LOCALES_CLUB_RESERVA = new Set(['La Tapeta - Blanes', 'La Tapeta - Lloret', 'La Tapeta - Girona']);
+const LOCALES_CLUB_RESERVA = new Set(['La Tapeta - Blanes', 'Cooperativa - Blanes', 'La Tapeta - Lloret', 'La Tapeta - Girona']);
 export const clubEnReserva = local => LOCALES_CLUB_RESERVA.has(local);
 
 const textosReserva = {

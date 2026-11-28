@@ -28,6 +28,8 @@ test('la nota de reserva consulta el carnet vigente sin exponer el enlace person
  assert.doesNotMatch(await nota('encontrado'), /token-privado/);
  assert.match(await nota('sin_carnet'), /de franc.*alta\.html/);
  for (const estado of ['ambiguo','no_vigente','sin_comunicaciones','no_disponible']) assert.equal(await nota(estado), '');
+ assert.match(await notaClubReserva({...base,local:'Cooperativa - Blanes',
+  consultar:async()=>({estado:'encontrado'})}), /ensenyar la targeta/);
  assert.equal(await notaClubReserva({...base,local:'Can Mateu - Tordera', consultar:()=>assert.fail()}), '');
  assert.equal(await notaClubReserva({...base, consultar:()=>{throw Error('BD');}}), '');
 });
@@ -77,7 +79,7 @@ test('reserva web confirma ahora al socio y espera el alta solo si aún no tiene
  };
  const a=source.indexOf('app.post("/api/reservas",'), b=source.indexOf('\n});',a);
  vm.runInNewContext(source.slice(a,b+4),env);
- const req={body:{local:'La Tapeta - Blanes',personas:2,dia:'2026-11-28',hora:'20:30',telefono:'600111222',nombre_reserva:'Prueba',esperar_alta_club:true}};
+ const req={body:{local:'Cooperativa - Blanes',personas:2,dia:'2026-11-28',hora:'20:30',telefono:'600111222',nombre_reserva:'Prueba',esperar_alta_club:true}};
  const res={status(n){assert.fail('Estado '+n);},json(v){assert.equal(v.ok,true);}};
  await reservar(req,res);
  assert.equal(confirmadas.length,1);
