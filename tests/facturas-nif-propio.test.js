@@ -65,9 +65,10 @@ describe("y tampoco agrupa proveedores en la pantalla de repetidos", () => {
     { proveedor: "VINS I LICORS GRAU SA", nif: "A17000000", facturas: 2, gasto: 400 },
   ];
 
-  test("sin saber cuáles son nuestros, los junta a todos — que es lo que pasaba", () => {
+  test("los NIF propios conocidos quedan excluidos aunque no llegue la configuración", () => {
     const g = gruposDuplicados(filas);
-    assert.ok(g.some((x) => x.otros.length >= 2), "reproduce el fallo original");
+    assert.equal(g.length, 1);
+    assert.equal(g[0].motivo, 'mismo NIF A17000000');
   });
 
   test("SABIÉNDOLO, ese grupo desaparece", () => {

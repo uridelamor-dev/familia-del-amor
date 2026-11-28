@@ -106,7 +106,7 @@ test('formato confirmado y falso aviso persisten; rechaza aprendizaje con dudas 
  const datos={tipo:'factura',proveedor:'Proveedor prueba',nif_proveedor:'B60599461',fecha:'2026-11-25',numero_factura:'A1',base_imponible:100,cuota_iva:21,total:121};
  await db.run(`INSERT INTO facturas_recepciones(clave,hash,canal,local,nombre,mime,original,estado,resultado) VALUES('memoria','memoria','Email','Blanes','f.pdf','application/pdf',?,'revision',?::jsonb)`,[archivo.buffer,JSON.stringify({datos})]);
  const f=await db.get('SELECT id FROM facturas_recepciones');let avisos=[];
- const r=crearRecepcion({db,lock:async(_h,fn)=>fn(),procesar:async()=>({datos}),validarRevision:async()=>avisos});
+ const r=crearRecepcion({db,lock:async(_h,fn)=>fn(),antesProcesar:async()=>{assert.fail('Una recepción confirmada no vuelve a la detección de páginas');},procesar:async o=>{assert.equal(o.datosAprobados.numero_factura,datos.numero_factura);return {datos};},validarRevision:async()=>avisos});
  const opts={autor:'contabilidad',confirmado:true,formato:{importes:'neto',unidades:'envases'},falsoAviso:true};
  await assert.rejects(r.aprobar(f.id,{total:122},opts),/falso aviso/);
  avisos=[{campo:'lineas',texto:'Cantidad dudosa'}];
@@ -116,4 +116,27 @@ test('formato confirmado y falso aviso persisten; rechaza aprendizaje con dudas 
  const guardado=await db.get('SELECT * FROM facturas_recepciones');
  assert.equal(guardado.estado,'registrado');assert.equal(guardado.resultado.revisionPrevia.aprobacion.formato.importes,'neto');
  assert.equal(guardado.resultado.revisionPrevia.aprobacion.autor,'contabilidad');assert.equal(guardado.resultado.revisionPrevia.aprobacion.falsoAviso,true);
+}));
+
+test('P2: la nota manuscrita queda como tarea después de registrar la compra', async t => preparar(t, async db => {
+ const { RevisionDocumento } = await import('../../src/modules/facturas/validacion-lectura.js');
+ const datos = {tipo:'factura', proveedor:'Proveedor prueba', nif_proveedor:'B12345674',
+  fecha:'2026-11-25', numero_factura:'K1', base_imponible:100, cuota_iva:21, total:121};
+ const r = crearRecepcion({
+  db, lock:async(_hash,fn)=>fn(), validarRevision:async()=>[],
+  procesar:async o => {
+   if (!o.datosAprobados) throw new RevisionDocumento(datos,[],{...datos,nota_manuscrita:'Abonar 4'});
+   return {facturaId:42,datos:o.datosAprobados};
+  },
+ });
+ await assert.rejects(r.recibir(archivo), error => error.recibido);
+ const antes = await db.get('SELECT id,seguimiento_nota FROM facturas_recepciones');
+ assert.equal(antes.seguimiento_nota,'Abonar 4');
+ await r.aprobar(antes.id,{}, {autor:'contabilidad',confirmado:true});
+ await r.reintentar();
+ const f = await db.get('SELECT estado,seguimiento_nota,seguimiento_cierre,resultado FROM facturas_recepciones');
+ assert.equal(f.estado,'registrado');
+ assert.equal(f.resultado.facturaId,42);
+ assert.equal(f.seguimiento_nota,'Abonar 4');
+ assert.equal(f.seguimiento_cierre,null);
 }));

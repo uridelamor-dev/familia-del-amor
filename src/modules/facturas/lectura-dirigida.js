@@ -1,5 +1,20 @@
 import sharp from 'sharp';
 import {PDFDocument} from 'pdf-lib';
+// La copia orientada se usa solo para OCR. El archivo archivado y su hash siguen intactos.
+export async function orientarImagenLectura(buffer, mime, giro = 0) {
+ if(!['image/jpeg','image/png','image/webp'].includes(mime)) return buffer;
+ try {
+  const img = sharp(buffer, {limitInputPixels:40_000_000});
+  const {orientation} = await img.metadata();
+  let copia = orientation >= 2 && orientation <= 8 ? await img.rotate().toBuffer() : buffer;
+  if (Number.isFinite(giro) && (Math.abs(giro) <= 12 || [90, 180, 270].some(base => Math.abs(Math.abs(giro) - base) <= 12)) && giro !== 0) {
+   copia = await sharp(copia, {limitInputPixels:40_000_000})
+    .rotate(giro, {background:'#ffffff'}).toBuffer();
+  }
+  if (copia.length <= 4.5 * 1024 * 1024) return copia;
+ } catch { /* El flujo existente conserva el archivo y diagnostica los fallos de lectura. */ }
+ return buffer;
+}
 const TIPOS=['cabecera','totales','detalle'];
 export function planRelectura(avisos=[],lecturas=[]) {
  const campos=[...new Set(avisos.map(a=>a.campo||a.clave).filter(Boolean))];

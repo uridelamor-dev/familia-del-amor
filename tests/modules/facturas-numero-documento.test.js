@@ -41,7 +41,7 @@ test('ausencia legítima permite excepción humana explícita y conserva su evid
  const datos={...albaran,numero_factura:null};
  const f={id:1,hash:'hash',estado:'revision',original:Buffer.from('original'),resultado:{datos},local:'Blanes',mime:'image/jpeg'};
  let guardado;
- const cola=crearRecepcion({db:{get:async()=>f,run:async(_sql,args)=>{guardado=JSON.parse(args[0]);}},lock:async(_k,fn)=>fn(),procesar:async()=>{}});
+ const cola=crearRecepcion({db:{get:async()=>f,run:async(_sql,args)=>{guardado=JSON.parse(args[0]);return {id:f.id};}},lock:async(_k,fn)=>fn(),procesar:async()=>{}});
  await assert.rejects(cola.aprobar(1,{}, {autor:'Contabilidad',confirmado:true}),/confirma expresamente la excepción/);
  assert.equal(guardado,undefined);
  await cola.aprobar(1,{}, {autor:'Contabilidad',confirmado:true,aceptarAvisos:true,motivo:'Original completo comprobado: no lleva número.'});

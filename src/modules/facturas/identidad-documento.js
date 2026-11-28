@@ -5,12 +5,23 @@ export function mismoNombreFiscal(a,b) {
  const x=claveProveedor(a),y=claveProveedor(b);
  return !!x && x===y;
 }
+// Identidades cotejadas en originales fiscales. Los colaboradores de bonÀrea
+// son establecimientos y no son nombres alternativos del emisor.
+const EMISORES_COTEJADOS = new Map([
+ ['A25445131','Corporació Alimentària Guissona, S.A.'],
+ ['B44580496','Virutas Branco, S.L.'],
+]);
 export function avisosIdentidad(d={},fichas=[]) {
  const avisos=[];
  const add=(campo,texto)=>avisos.push({campo,texto});
  const nif=normNif(d.nif_proveedor);
  if(nif && nif===normNif(d.nif_receptor)) add('nif_proveedor','Emisor y destinatario tienen el mismo NIF: comprueba a quién pertenece.');
- if(nif && fichas.some(f=>normNif(f.nif)===nif&&!mismoNombreFiscal(f.proveedor,d.proveedor)))
+ const fichasDelEmisor=nif ? fichas.filter(f=>normNif(f.nif)===nif && claveProveedor(f.proveedor)) : [];
+ const emisorCotejado=EMISORES_COTEJADOS.get(nif);
+ const contradice=emisorCotejado
+  ? !mismoNombreFiscal(emisorCotejado,d.proveedor)
+  : fichasDelEmisor.length && !fichasDelEmisor.some(f=>mismoNombreFiscal(f.proveedor,d.proveedor));
+ if(contradice)
   add('proveedor','El nombre del original contradice la memoria para este NIF. No se ha sustituido: comprueba el emisor y su ficha.');
  if(d._exigirEvidenciaEmisor) {
   const e=d.evidencia_emisor;

@@ -15,7 +15,8 @@ CREATE INDEX IF NOT EXISTS facturas_recepciones_remitente ON facturas_recepcione
 export function mismoOrigen(a,b){return !!a.contexto?.grupo&&!!a.contexto?.remitente&&a.contexto.grupo===b.contexto?.grupo&&a.contexto.remitente===b.contexto?.remitente&&a.local===b.local;}
 const abiertos=['pendiente','leyendo','revision','paginas'];
 export function crearPaginas({db,transaccion,comparar,combinar,completar}){
- async function unir(p,autor='automático'){
+ async function unir(p,autor){
+  if(!autor)throw new Error('La unión requiere confirmación explícita.');
   let a=await db.get('SELECT * FROM facturas_recepciones WHERE id=?',[p.primera]);
   let b=await db.get('SELECT * FROM facturas_recepciones WHERE id=?',[p.segunda]);
   if(!a||!b||!(mismoOrigen(a,b)||(p.pruebas?.manual&&a.local&&a.local===b.local))||!a.original||!b.original)throw new Error('Los originales ya no están disponibles para unirlos');
@@ -31,7 +32,7 @@ export function crearPaginas({db,transaccion,comparar,combinar,completar}){
    const filas=await tx.all('SELECT * FROM facturas_recepciones WHERE id=ANY(?::bigint[]) ORDER BY id FOR UPDATE',[[a.id,b.id]]);
    if(filas.length!==2||filas.some(f=>!abiertos.includes(f.estado)))throw new Error('Los documentos han cambiado. Actualiza la lista.');
    const actual=await tx.get('SELECT estado FROM facturas_paginas WHERE id=? FOR UPDATE',[p.id]);
-   if(!['revision','automatica'].includes(actual?.estado))throw new Error('Esta propuesta ya se ha resuelto');
+   if(actual?.estado!=='revision')throw new Error('Esta propuesta ya se ha resuelto');
    const nuevo=await tx.run(`INSERT INTO facturas_recepciones (clave,hash,canal,local,nombre,mime,original,contexto)
     VALUES (?,?,?,?,'Documento con varias páginas.pdf','application/pdf',?,?::jsonb) RETURNING id`,['paginas:'+p.id,hash,a.canal,a.local,buffer,JSON.stringify({...a.contexto,agrupacion:p.id})]);
    await tx.run("UPDATE facturas_recepciones SET estado='sustituido',resultado=?::jsonb,error=NULL,actualizado=NOW() WHERE id=ANY(?::bigint[])",[JSON.stringify({paginas:true,recepcionId:nuevo.id}),[a.id,b.id]]);
@@ -45,23 +46,23 @@ export function crearPaginas({db,transaccion,comparar,combinar,completar}){
   if(!f.contexto?.grupo||f.contexto.agrupacion||!f.original)return false;
   const candidatos=await db.all(`SELECT * FROM facturas_recepciones WHERE id<>? AND local=?
    AND contexto->>'grupo'=? AND contexto->>'remitente'=? AND original IS NOT NULL
-   AND estado IN ('pendiente','revision','registrado','error') AND ABS(EXTRACT(EPOCH FROM (creado-?::timestamptz)))<=1800
+   AND estado IN ('pendiente','revision','registrado','error')
+   AND (estado='registrado' OR resultado->>'aprobacion' IS NULL) AND ABS(EXTRACT(EPOCH FROM (creado-?::timestamptz)))<=1800
    ORDER BY id DESC LIMIT 6`,[f.id,f.local,f.contexto.grupo,f.contexto.remitente,f.creado]);
   for(const candidato of candidatos){
    const [a,b]=Number(candidato.id)<Number(f.id)?[candidato,f]:[f,candidato];
    if(a.hash===b.hash||a.original.length+b.original.length>16*1024*1024)continue;
    const existente=await db.get('SELECT * FROM facturas_paginas WHERE primera=? AND segunda=?',[a.id,b.id]);
    if(existente){
-    if(existente.estado==='automatica'){await unir(existente);return true;}
-    if(existente.estado==='revision'){await db.run("UPDATE facturas_recepciones SET estado='paginas',error='Comprueba las páginas del documento antes de registrar.' WHERE id=ANY(?::bigint[]) AND estado IN ('pendiente','leyendo','revision','error')",[[a.id,b.id]]);return true;}
+    if(existente.estado==='automatica')await db.run("UPDATE facturas_paginas SET estado='revision',actualizado=NOW() WHERE id=? AND estado='automatica'",[existente.id]);
+    if(['revision','automatica'].includes(existente.estado)){await db.run("UPDATE facturas_recepciones SET estado='paginas',error='Comprueba las páginas del documento antes de registrar.' WHERE id=ANY(?::bigint[]) AND estado IN ('pendiente','leyendo','revision','error')",[[a.id,b.id]]);return true;}
     continue;
    }
-   const pruebas=structuredClone(await comparar(a,b));let estado=decidirPaginas(pruebas);
-   if(estado==='automatica'){const segunda=await comparar(a,b);if(decidirPaginas(segunda)!=='automatica'||JSON.stringify(segunda.documentos)!==JSON.stringify(pruebas.documentos))estado='revision';pruebas.contraste=segunda;}
-   if(estado==='automatica'&&(a.estado==='registrado'||b.estado==='registrado'))estado='revision';
+   const pruebas=structuredClone(await comparar(a,b));
+   const sugerencia=decidirPaginas(pruebas);
+   const estado=sugerencia==='automatica'?'revision':sugerencia;
    const p=await db.run('INSERT INTO facturas_paginas (primera,segunda,estado,pruebas) VALUES (?,?,?,?::jsonb) ON CONFLICT(primera,segunda) DO NOTHING RETURNING *',[a.id,b.id,estado,JSON.stringify(pruebas)]);
    if(!p)continue;
-   if(estado==='automatica'){await unir(p);return true;}
    if(estado==='revision'){
     await db.run("UPDATE facturas_recepciones SET estado='paginas',error='Posibles páginas del mismo documento. Comprueba ambas fotos antes de registrar.',actualizado=NOW() WHERE id=ANY(?::bigint[]) AND estado IN ('pendiente','leyendo','revision')",[[a.id,b.id]]);
     return true;

@@ -2290,7 +2290,7 @@ select[multiple], select[size] { background-image: none; padding: 8px 12px; }
 .fac-viewer-tools output{min-width:48px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums}
 .fac-viewer-scroll{overflow:auto;max-height:58vh;min-height:200px;overscroll-behavior:contain;position:relative}
 .fac-viewer-space{position:relative;min-height:100px}.fac-viewer-page{transform-origin:top left;position:absolute;top:0;left:0}
-.fac-viewer .fac-viewer-page img,.fac-viewer .fac-viewer-page iframe{display:block;width:100%;max-width:none;object-fit:initial;border:0;background:white}
+.fac-viewer .fac-viewer-page img{display:block;width:100%;max-width:none;object-fit:initial;border:0;background:white}
 .revrev .prev.fac-viewer{height:auto}.ficha .fic-doc:has(.fac-viewer){flex-direction:column;align-items:stretch}
 @media(max-width:700px){.fac-viewer-scroll{max-height:48vh}}
 

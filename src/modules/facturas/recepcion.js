@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import {validarFormato} from './memoria-formato.js';
 import { crearRecuperacionValidacion } from './recuperar-validacion.js';
 import { nombreArchivo } from './archivo-drive.js';
@@ -14,6 +15,10 @@ export const RECEPCION_SCHEMA = `CREATE TABLE IF NOT EXISTS facturas_recepciones
   proximo TIMESTAMPTZ NOT NULL DEFAULT NOW(), error TEXT, resultado JSONB, contexto JSONB,
   creado TIMESTAMPTZ NOT NULL DEFAULT NOW(), actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE facturas_recepciones ADD COLUMN IF NOT EXISTS seguimiento_nota TEXT;
+ALTER TABLE facturas_recepciones ADD COLUMN IF NOT EXISTS seguimiento_cierre JSONB;
+CREATE INDEX IF NOT EXISTS idx_recepcion_seguimiento ON facturas_recepciones (id DESC)
+  WHERE seguimiento_nota IS NOT NULL AND seguimiento_cierre IS NULL;
 CREATE INDEX IF NOT EXISTS idx_recepcion_factura_fecha ON facturas_recepciones ((resultado->>'facturaId'), creado);
 CREATE INDEX IF NOT EXISTS idx_recepcion_hash_fecha ON facturas_recepciones (hash, creado);`;
 export function canalFactura(origen = 'Manual') {
@@ -40,7 +45,7 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
     if (!inicial) throw new Error('Recepción no encontrada');
     return lock(inicial.hash, async () => {
       const f = await db.get('SELECT * FROM facturas_recepciones WHERE id = ?', [id]);
-      if (['registrado','duplicado'].includes(f.estado) && f.original && !f.contexto?.grupo) {
+      if (['registrado','duplicado'].includes(f.estado) && f.original && !f.contexto?.grupo && !f.resultado?.resolucion) {
         if (existeDestino && !(await existeDestino(f.hash))) {
           await db.run("UPDATE facturas_recepciones SET estado='pendiente',resultado=NULL,intentos=0,proximo=NOW(),error=NULL WHERE id=?", [id]);
           Object.assign(f,{estado:'pendiente',intentos:0,proximo:ahora()});
@@ -61,7 +66,7 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       if (f.estado === 'error' || new Date(f.proximo) > ahora()) throw errorRecibido(id);
       await db.run(`UPDATE facturas_recepciones SET estado='leyendo', intentos=intentos+1, actualizado=NOW() WHERE id=?`, [id]);
       try {
-        if(antesProcesar && await antesProcesar(f)) return {recibido:true,paginas:true};
+        if(!f.resultado?.aprobacion && antesProcesar && await antesProcesar(f)) return {recibido:true,paginas:true};
         const nombre=nombreRecepcion(f);
         await db.run('UPDATE facturas_recepciones SET nombre=? WHERE id=?',[nombre,id]);
         const r = await conPlazoFactura(() => procesar({buffer:f.original,mimeType:f.mime,filename:f.nombre,local:f.local,canal:f.canal,origen:f.canal,datosAprobados:f.resultado?.aprobacion ? f.resultado.datos : null}));
@@ -70,7 +75,13 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       } catch(e) {
         if(e.revisionDocumento) {
           if(f.resultado?.revalidacion)e.resultado.revalidacion=f.resultado.revalidacion;
-          await db.run("UPDATE facturas_recepciones SET estado='revision',resultado=?::jsonb,nombre=?,error=?,actualizado=NOW() WHERE id=?",[JSON.stringify(e.resultado),nombreRecepcion({...f,resultado:e.resultado}),'Comprueba los campos señalados. Original guardado; importes sin registrar.',id]);
+          const nota = [e.resultado.datos, e.resultado.segunda, e.resultado.contraste?.tercera]
+            .map(lectura => lectura?.nota_manuscrita)
+            .find(texto => typeof texto === 'string' && texto.trim());
+          await db.run(`UPDATE facturas_recepciones SET estado='revision',resultado=?::jsonb,nombre=?,error=?,
+            seguimiento_nota=COALESCE(seguimiento_nota,?),actualizado=NOW() WHERE id=?`,
+          [JSON.stringify(e.resultado),nombreRecepcion({...f,resultado:e.resultado}),
+            'Comprueba los campos señalados. Original guardado; importes sin registrar.',nota?.trim().slice(0,300) ?? null,id]);
           const recibido=errorRecibido(id); recibido.message=e.message; throw recibido;
         }
         if (e.isDuplicate) {
@@ -96,7 +107,7 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
     const clave = createHash('sha256').update(JSON.stringify([canal,o.local||'',hash])).digest('hex');
     const f = await db.run(`INSERT INTO facturas_recepciones (clave,hash,canal,local,nombre,mime,original,contexto,proximo)
       VALUES (?,?,?,?,?,?,?,?::jsonb,?) ON CONFLICT(clave) DO UPDATE SET clave=EXCLUDED.clave,
-        original=CASE WHEN facturas_recepciones.estado IN ('registrado','duplicado') THEN EXCLUDED.original ELSE facturas_recepciones.original END RETURNING id,estado`,
+        original=CASE WHEN facturas_recepciones.estado IN ('registrado','duplicado') AND facturas_recepciones.resultado->'resolucion' IS NULL THEN EXCLUDED.original ELSE facturas_recepciones.original END RETURNING id,estado`,
       [clave,hash,canal,o.local||null,nombreRecepcion({hash,local:o.local,mime:o.mimeType,nombre:o.filename}),o.mimeType,o.buffer,o.contexto?.grupo&&o.contexto?.remitente?JSON.stringify(o.contexto):null,new Date(ahora().getTime()+(o.contexto?.grupo?90000:0)).toISOString()]);
     // Vincular el mensaje original incluso cuando el archivo ya estaba registrado.
     if(o.onDocumentoGuardado) await o.onDocumentoGuardado(f.id);
@@ -116,29 +127,46 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
       // Recupera también los decorativos antiguos que agotaron los intentos.
       const decorativos = await db.all("SELECT id FROM facturas_recepciones WHERE estado IN ('pendiente','leyendo','error') AND hash = ANY(?::text[])",[[...ADJUNTOS_DECORATIVOS_VERIFICADOS]]);
       for (const f of decorativos) { try { await ejecutar(f.id); } catch(e) { if (!e.recibido) console.error('[Recepción] no se pudo apartar el adjunto verificado',f.id); } }
-      const filas = await db.all(`SELECT id FROM facturas_recepciones WHERE (estado IN ('pendiente','leyendo') AND proximo <= NOW()) OR (estado IN ('registrado','duplicado') AND original IS NOT NULL AND contexto IS NULL) ORDER BY proximo,id LIMIT 10`);
+      const filas = await db.all(`SELECT id FROM facturas_recepciones WHERE (estado IN ('pendiente','leyendo') AND proximo <= NOW()) OR (estado IN ('registrado','duplicado') AND original IS NOT NULL AND contexto IS NULL AND resultado->'resolucion' IS NULL) ORDER BY (resultado->>'aprobacion' IS NOT NULL) DESC,proximo,id LIMIT 10`);
       for (const f of filas) { try { await ejecutar(f.id); } catch(e) { if (!e.recibido && !e.isDuplicate) console.error('[Recepción] no se pudo recuperar el documento', f.id); } }
     } finally { trabajando = false; }
   }
   async function aprobar(id,cambios,{autor,motivo,confirmado,aceptarAvisos,formato,falsoAviso=false}={}) {
-    const inicial=await db.get('SELECT hash FROM facturas_recepciones WHERE id=?',[id]);
-    if(!inicial) throw new Error('Documento no encontrado');
-    return lock(inicial.hash,async()=>{
-      const f=await db.get('SELECT * FROM facturas_recepciones WHERE id=?',[id]);
-      if(f.estado!=='revision' || !f.original) throw new Error('Este documento ya no está pendiente de revisión');
-      if(confirmado!==true) throw new Error('Confirma que has comprobado el original');
-      const formatoConfirmado=validarFormato(formato);
-      const datos=datosRevision(f.resultado?.datos,cambios);
-      const avisos=await validarRevision(datos);
-      const bloqueos=avisos.filter(a=>["fecha","proveedor","tipo"].includes(a.campo));
-      if(bloqueos.length) throw new Error([...new Set(bloqueos.map(a=>a.texto))].join(" "));
-      if(avisos.length && aceptarAvisos!==true) throw new Error("Corrige estos avisos o confirma expresamente la excepción. "+[...new Set(avisos.map(a=>a.texto))].join(" "));
-      if(formatoConfirmado && (avisos.length || !datos.nif_proveedor))throw new Error('Resuelve todos los avisos y confirma el NIF antes de recordar un formato.');
-      if(falsoAviso && Object.keys(cambios).some(k=>JSON.stringify(datos[k]??null)!==JSON.stringify(f.resultado?.datos?.[k]??null)))throw new Error('Si has corregido datos no se puede marcar la lectura original como falso aviso.');
-      const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,formato:formatoConfirmado,falsoAviso:falsoAviso===true,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};
-      await db.run("UPDATE facturas_recepciones SET estado='pendiente',resultado=?::jsonb,nombre=?,intentos=0,proximo=NOW(),error=NULL,actualizado=NOW() WHERE id=? AND estado='revision'",[JSON.stringify(resultado),nombreRecepcion({...f,resultado}),id]);
-      return {ok:true};
-    });
+    if (confirmado !== true) throw new Error('Confirma que has comprobado el original');
+    const formatoConfirmado = validarFormato(formato);
+    const leerFila = () => db.get(
+      'SELECT *, xmin::text AS version FROM facturas_recepciones WHERE id=?', [id]);
+    const mismaAprobacion = fila => {
+      const previa = fila?.resultado?.aprobacion || fila?.resultado?.revisionPrevia?.aprobacion;
+      return previa?.autor === autor && previa
+        && isDeepStrictEqual(previa.despues, datosRevision(previa.antes, cambios))
+        && isDeepStrictEqual(previa.formato, formatoConfirmado)
+        && previa.falsoAviso === (falsoAviso === true);
+    };
+    const f = await leerFila();
+    if (!f) throw new Error('Documento no encontrado');
+    if (mismaAprobacion(f)) return {ok:true};
+    if (f.estado !== 'revision' || !f.original) throw new Error('Este documento ya no está pendiente de revisión');
+    if (f.resultado?.avisos?.some(a => a.codigo === 'varias_facturas')) {
+      throw new Error('Separa las facturas del original antes de confirmar.');
+    }
+    const datos = datosRevision(f.resultado?.datos, cambios);
+    const avisos=await validarRevision(datos);
+    const bloqueos=avisos.filter(a=>a.codigo !== "titulo_combinado" && ["fecha","proveedor","tipo","nif_proveedor"].includes(a.campo));
+    if(bloqueos.length) throw new Error([...new Set(bloqueos.map(a=>a.texto))].join(" "));
+    if(avisos.length && aceptarAvisos!==true) throw new Error("Corrige estos avisos o confirma expresamente la excepción. "+[...new Set(avisos.map(a=>a.texto))].join(" "));
+    if(formatoConfirmado && (avisos.length || !datos.nif_proveedor))throw new Error('Resuelve todos los avisos y confirma el NIF antes de recordar un formato.');
+    if(falsoAviso && Object.keys(cambios).some(k=>JSON.stringify(datos[k]??null)!==JSON.stringify(f.resultado?.datos?.[k]??null)))throw new Error('Si has corregido datos no se puede marcar la lectura original como falso aviso.');
+    const resultado={...f.resultado,datos,avisosTrasRevision:avisos,aprobacion:{autor,formato:formatoConfirmado,falsoAviso:falsoAviso===true,fecha:ahora().toISOString(),motivo:String(motivo||'').trim().slice(0,2000)||'Corrección confirmada en Compras.',antes:f.resultado?.datos||{},despues:datos}};
+    // La lectura deja la fila en revisión. Encolar no necesita el candado de OCR.
+    // La versión de fila evita pisar una unión, un descarte u otra revisión simultánea.
+    const guardada = await db.run(
+      `UPDATE facturas_recepciones SET estado='pendiente',resultado=?::jsonb,nombre=?,
+         intentos=0,proximo=NOW(),error=NULL,actualizado=NOW()
+       WHERE id=? AND estado='revision' AND xmin::text=? RETURNING id`,
+      [JSON.stringify(resultado),nombreRecepcion({...f,resultado}),id,f.version]);
+    if (guardada || mismaAprobacion(await leerFila())) return {ok:true};
+    throw new Error('El documento ha cambiado. Vuelve a abrirlo antes de confirmar.');
   }
   return {recibir,ejecutar,reintentar,aprobar,conBloqueo:fn=>lock("paginas",fn)};
 }

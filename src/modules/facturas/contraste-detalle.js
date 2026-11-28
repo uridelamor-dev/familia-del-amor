@@ -28,7 +28,7 @@ export function compararDetalle(a,b) {
     const unidad=v=>unidadComparable(v)||texto(v);
     if(unidad(l.unidad)!==unidad(r.unidad))campos.push('unidad');
     if(texto(l.formato_literal)!==texto(r.formato_literal))campos.push('formato del envase');
-    for(const k of ['cantidad','precio_unitario','importe','importe_neto','descuento_pct']) {
+    for(const k of ['cantidad','bultos','precio_unitario','importe','importe_neto','descuento_pct','descuento_euros']) {
       if(importesEquivalentes && ['importe','importe_neto'].includes(k))continue;
       const u=numero(l[k]),v=numero(r[k]);
       // No tolerar unidades distintas. Un céntimo sí puede ser redondeo de importe.
@@ -42,8 +42,20 @@ export function compararDetalle(a,b) {
   return avisos;
 }
 export function comprobarCobertura(d) {
-  if(!d._exigirCobertura)return [];
   const c=d.cobertura;
+  const numeracion = c?.numeracion_impresa;
+  if (Number.isSafeInteger(numeracion?.total) && numeracion.total > 1 && Array.isArray(numeracion.visibles)) {
+    const visibles = new Set(numeracion.visibles.filter(p => Number.isSafeInteger(p) && p >= 1 && p <= numeracion.total));
+    if (visibles.size && visibles.size < numeracion.total) {
+      const faltan = numeracion.total - visibles.size;
+      return [{
+        campo: 'imagen',
+        codigo: 'paginas_ausentes',
+        texto: `El original indica ${numeracion.total} páginas y se han identificado ${visibles.size}. Aporta ${faltan === 1 ? 'la página que falta' : 'las páginas que faltan'} para comprobar el documento completo.`,
+      }];
+    }
+  }
+  if(!d._exigirCobertura)return [];
   if(d._paginasOriginal && c?.paginas_leidas!==d._paginasOriginal)return [{campo:'imagen',texto:'La lectura no coincide con el número real de páginas del archivo. Comprueba el original completo.'}];
   if(!c || c.documento_completo!==true || !Number.isInteger(c.paginas_leidas) || c.paginas_leidas<1)
     return [{campo:'imagen',texto:'No se ha podido confirmar que el documento esté completo y todas sus páginas sean legibles.'}];

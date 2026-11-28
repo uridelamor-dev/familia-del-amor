@@ -38,10 +38,19 @@ export function validarIva(raw,f) {
   if(!p||!['base','tipo','cuota'].every(k=>numero(p[k])))return mal('Hay importes de IVA sin identificar.');
   const base=Number(p.base),tipo=Number(p.tipo),cuota=Number(p.cuota);
   if(tipo<0||tipo>100||Math.abs(cents(base*tipo/100)-cents(cuota))>2)return mal('Una cuota no coincide con su base y tipo de IVA.');
-  const g=grupos.get(tipo)||{base:0,tipo,cuota:0};g.base+=cents(base);g.cuota+=cents(cuota);grupos.set(tipo,g);
+  const g=grupos.get(tipo)||{base:0,tipo,cuota:0};g.base+=cents(base);g.cuota+=cents(cuota);
+  if (p.recargo != null) {
+   if (!numero(p.recargo)) return mal('Hay un recargo de equivalencia no válido.');
+   g.recargo = (g.recargo ?? 0) + cents(p.recargo);
+  }
+  grupos.set(tipo,g);
  }
- const salida=[...grupos.values()].sort((a,b)=>a.tipo-b.tipo).map(g=>({...g,base:g.base/100,cuota:g.cuota/100}));
+ const salida=[...grupos.values()].sort((a,b)=>a.tipo-b.tipo).map(g=>({...g,base:g.base/100,cuota:g.cuota/100,...(g.recargo != null ? {recargo:g.recargo/100} : {})}));
  const base=salida.reduce((n,p)=>n+cents(p.base),0),cuota=salida.reduce((n,p)=>n+cents(p.cuota),0);
+ if (salida.some(p => p.recargo != null) &&
+     salida.reduce((total, p) => total + cents(p.recargo ?? 0), 0) !== cents(f.recargo_equivalencia ?? 0)) {
+   return mal('La suma del recargo por tipo no coincide con el recargo del documento.');
+ }
  if(!['base_imponible','cuota_iva','total'].every(k=>numero(f[k])))return mal('Faltan totales para comprobar el desglose.');
  if(base!==cents(f.base_imponible)||cuota!==cents(f.cuota_iva)||base+cuota+ajustes!==cents(f.total))
   return mal('El desglose de IVA no coincide con los importes guardados. Revisa el original: puede incluir otros impuestos o retenciones.');

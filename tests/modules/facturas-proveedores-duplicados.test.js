@@ -143,3 +143,14 @@ describe("cableado", () => {
     assert.match(panel, /¿Con qué nombre se queda\?/);
   });
 });
+
+test('P4: agrupa el NIF con prefijo y separadores y protege los NIF propios', () => {
+ const grupos = gruposDuplicados([
+  P('Ofart Subministraments',{nif:'NIF: ES B-55122840'}),
+  P('Ofiart subministraments d’Oficina',{nif:'B55122840'}),
+  P('Proveedor distinto',{nif:'NIF B70799135'}),
+  P('Otro proveedor',{nif:'ES-B70799135'}),
+ ]);
+ assert.equal(grupos.length,1);
+ assert.equal(grupos[0].motivo,'mismo NIF B55122840');
+});

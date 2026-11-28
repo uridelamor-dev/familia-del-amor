@@ -1,18 +1,29 @@
+import { centrosPorDireccionEntrega } from './asignacion.js';
 import { comprobarCobertura } from './contraste-detalle.js';
 import { vencimientoManualValido } from './vencimiento.js';
 import { numeroDocumentoAusente } from './numero-documento.js';
 import { avisosEvidenciaCabecera } from './evidencia-cabecera.js';
-import { avisosTipoDocumento } from './tipo-documento.js';
+import { avisosTipoDocumento, tituloFacturaCombinado } from './tipo-documento.js';
 import { avisosAbono } from './abonos.js';
 import { completarIva } from './iva-inferido.js';
 import { nifValido, normNif } from './emisor.js';
 import { normalizarLinea, validarSuma } from './lineas.js';
 import { revisarCoherencia } from './coherencia.js';
 
-export const CAMPOS_REVISION = ['tipo','proveedor','nif_proveedor','fecha','vencimiento','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'];
+export const CAMPOS_REVISION = ['tipo','titulo_documento','proveedor','nif_proveedor','fecha','vencimiento','numero_factura','base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'];
 const numero = v => v === null || v === undefined || v === '' ? null : Number(v);
 export function controlesLectura(d = {}) {
   const avisos = [...comprobarCobertura(d), ...avisosAbono(d), ...avisosTipoDocumento(d), ...avisosEvidenciaCabecera(d)];
+  if (typeof d.nota_manuscrita === 'string' && d.nota_manuscrita.trim()) {
+    avisos.push({campo:'imagen',codigo:'nota_manuscrita',
+      texto:`Anotación manuscrita para seguimiento: ${d.nota_manuscrita.trim().slice(0, 300)}`});
+  }
+  if (Array.isArray(d.numeros_facturas_independientes)) {
+    const numeros = new Set(d.numeros_facturas_independientes
+      .filter(v => typeof v === 'string' && v.trim()).map(v => v.trim().toUpperCase()));
+    if (numeros.size > 1) avisos.push({campo:'tipo',codigo:'varias_facturas',
+      texto:`El archivo contiene varias facturas independientes (${[...numeros].join(', ')}). Revisa y presenta cada factura por separado antes de confirmar.`});
+  }
   const aviso = (campo,texto) => avisos.push({campo,texto});
   if (!String(d.proveedor || '').trim()) aviso('proveedor','No se ha identificado al proveedor.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.fecha || '') || !Number.isFinite(Date.parse(d.fecha)) || new Date(d.fecha).toISOString().slice(0,10) !== d.fecha) aviso('fecha','Falta una fecha de emisión válida.');
@@ -52,6 +63,7 @@ export function controlesLectura(d = {}) {
   if (d._lecturaIncompleta) aviso('lineas','La respuesta se cortó: puede faltar parte del documento.');
   if (d.calidad_imagen === 'ilegible' || d.calidad_imagen === 'recortada') aviso('imagen','Hay partes ilegibles o recortadas. Comprueba el original antes de pedir otra foto.');
   for (const campo of (Array.isArray(d.campos_dudosos) ? d.campos_dudosos : [])) {
+    if (campo === 'tipo' && tituloFacturaCombinado(d.titulo_documento)) continue;
     if(d.tipo==='albaran'&&['total','base_imponible','cuota_iva','porcentaje_iva'].includes(campo)&&(d[campo]==null||d[campo]===''))continue;
     aviso(String(campo).slice(0,60),'La lectura señala dudas en este campo.');
   }
@@ -60,6 +72,11 @@ export function controlesLectura(d = {}) {
 }
 export function compararLecturas(a,b) {
   const diferentes = [];
+  const entregaA = centrosPorDireccionEntrega(a.direccion_entrega);
+  const entregaB = centrosPorDireccionEntrega(b.direccion_entrega);
+  if (entregaA.join('|') !== entregaB.join('|')) {
+    diferentes.push({campo:'local',texto:'Las lecturas difieren en el local que indica la dirección de entrega.'});
+  }
   for (const campo of [...CAMPOS_REVISION,'nif_receptor']) {
     const x=a[campo], y=b[campo];
     const numerico=['base_imponible','porcentaje_iva','cuota_iva','total','retencion','recargo_equivalencia','otros_cargos'].includes(campo);
@@ -95,6 +112,11 @@ export function datosRevision(original,cambios) {
       d[campo]=v===null ? null : v.trim().slice(0,300);
     }
   }
+  if (tituloFacturaCombinado(d.titulo_documento)) d.tipo = 'factura';
+  if (Object.hasOwn(cambios, 'lineas_iva_incluido')) {
+    if (typeof cambios.lineas_iva_incluido !== 'boolean') throw new Error('Indica si las líneas incluyen IVA.');
+    d.lineas_iva_incluido = cambios.lineas_iva_incluido;
+  }
   if(Object.hasOwn(cambios,'lineas')) {
     if(!Array.isArray(cambios.lineas)||cambios.lineas.length>500)throw new Error('Detalle de productos no válido');
     d.lineas=cambios.lineas.map((l,i)=>{
@@ -104,7 +126,7 @@ export function datosRevision(original,cambios) {
         if(l[k]!=null&&typeof l[k]!=='string')throw new Error('Texto de línea no válido');
         out[k]=l[k]==null?null:l[k].trim().slice(0,300);
       }
-      for(const k of ['cantidad','precio_unitario','importe','importe_neto','descuento_pct']){
+      for(const k of ['cantidad','bultos','precio_unitario','importe','importe_neto','descuento_pct','descuento_euros']){
         if(l[k]!=null&&(typeof l[k]!=='number'||!Number.isFinite(l[k])))throw new Error('Importe o cantidad de línea no válido');
         out[k]=l[k]??null;
       }
@@ -123,7 +145,29 @@ export function datosRevision(original,cambios) {
   }
 
   // Un cambio de base/IVA invalida el desglose anterior: no mantener datos fiscales contradictorios.
-  if(['base_imponible','cuota_iva','porcentaje_iva'].some(k=>d[k]!==original?.[k])) d.iva_desglose=[];
+  if (Object.hasOwn(cambios, 'iva_desglose')) {
+    if (!Array.isArray(cambios.iva_desglose) || cambios.iva_desglose.length > 20) {
+      throw new Error('Desglose de IVA no válido.');
+    }
+    d.iva_desglose = cambios.iva_desglose.map(fila => {
+      const { base, tipo, cuota, recargo = null } = fila || {};
+      if (![base, tipo, cuota].every(Number.isFinite) || tipo < 0 || tipo > 100
+        || (recargo !== null && !Number.isFinite(recargo))) {
+        throw new Error('Completa la base, el tipo y la cuota de cada fila de IVA.');
+      }
+      return {base, tipo, cuota, recargo};
+    });
+    if (d.iva_desglose.length) {
+      const suma = campo => Math.round(d.iva_desglose.reduce((total, fila) => total + Math.round((fila[campo] ?? 0) * 100), 0)) / 100;
+      d.base_imponible = suma('base');
+      d.cuota_iva = suma('cuota');
+      const tipos = new Set(d.iva_desglose.map(fila => fila.tipo));
+      d.porcentaje_iva = tipos.size === 1 ? d.iva_desglose[0].tipo : null;
+      if (d.iva_desglose.some(fila => fila.recargo !== null)) d.recargo_equivalencia = suma('recargo');
+    }
+  } else if (['base_imponible','cuota_iva','porcentaje_iva'].some(k => d[k] !== original?.[k])) {
+    d.iva_desglose = [];
+  }
   completarIva(d);
   return d;
 }

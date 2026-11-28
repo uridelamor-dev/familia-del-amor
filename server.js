@@ -1,3 +1,4 @@
+import { datosRevision } from './src/modules/facturas/validacion-lectura.js';
 import {CALIDAD_LECTURA_SCHEMA,registrarCalidadLectura} from './src/modules/facturas/calidad-lectura.js';
 import {clasificarRevision} from './src/modules/facturas/motivos-revision.js';
 import { DIRECCIONES_RESERVA } from './src/modules/reservas/direcciones.js';
@@ -471,7 +472,7 @@ const paginasFacturas=crearPaginas({db:{get:dbGet,all:dbAll,run:dbRun},transacci
 });
 // Una sola lectura externa a la vez; el original ya está guardado si el trabajador está ocupado.
 const recepcionFacturas = crearRecepcion({
-  recuperarPendientes: isProduction(),
+  recuperarPendientes: isProduction() && process.env.FACTURAS_RECUPERACION_AUTOMATICA === '1',
   validarRevision: datos=>comprobarRevisionHumana(datos,{dbAll}),
   antesProcesar: f=>paginasFacturas.antes(f),
   db: {get:dbGet,run:dbRun,all:dbAll},
@@ -1353,7 +1354,7 @@ async function initDB() {
     // Descuento por línea. Muchas facturas traen «IMPORTE» (bruto) y «TOTAL» (lo que se paga):
     // guardando solo el bruto, «Qué compramos» decía un precio que nadie paga y el seguimiento
     // de subidas comparaba tarifas en vez de lo pagado. Va DESPUÉS del CREATE, claro.
-    for (const col of ["precio_bruto NUMERIC", "importe_bruto NUMERIC", "descuento_pct NUMERIC"]) {
+    for (const col of ["precio_bruto NUMERIC", "importe_bruto NUMERIC", "descuento_pct NUMERIC", "bultos NUMERIC", "descuento_euros NUMERIC"]) {
       try { await client.query(`ALTER TABLE factura_lineas ADD COLUMN IF NOT EXISTS ${col}`); }
       catch (e) { console.error("[DB] alter factura_lineas " + col + ":", e.message); }
     }
@@ -3807,8 +3808,84 @@ app.get("/api/facturas/recepciones", requireAuth(["direccion", "contabilidad"]),
     const propuestas=verEspera ? [] : await dbAll(`SELECT p.id,p.estado,p.pruebas->>'motivo' AS motivo FROM facturas_paginas p
       WHERE (p.estado='revision' OR (p.estado='unidas' AND p.creado>NOW()-INTERVAL '7 days'))
       AND EXISTS(SELECT 1 FROM facturas_recepciones WHERE id IN (p.primera,p.segunda) ${filtro}) ORDER BY (p.estado='revision') DESC,p.id DESC LIMIT 50`,params);
-    res.json({ok:true,propuestas,enEspera:Number(conteo.en_espera),data:filas.slice(0,50).map(({resultado,mime,...f})=>({...f,proveedor:resultado?.datos?.proveedor,revision:clasificarRevision({...f,resultado}),nombre:nombreRecepcion({...f,mime,resultado})})),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
+    const seguimientos = await dbAll(`SELECT id, local, nombre, original IS NOT NULL AS tiene_original,
+       seguimiento_nota AS nota, COALESCE(resultado->>'facturaId', resultado->'resolucion'->>'compraId') AS compra_id,
+       COUNT(*) OVER ()::int AS total
+      FROM facturas_recepciones
+      WHERE seguimiento_nota IS NOT NULL AND seguimiento_cierre IS NULL ${filtro}
+      ORDER BY id DESC LIMIT 20`, params);
+    res.json({ok:true,propuestas,seguimientos,enEspera:Number(conteo.en_espera),data:filas.slice(0,50).map(({resultado,mime,...f})=>({...f,proveedor:resultado?.datos?.proveedor,aprobada:!!resultado?.aprobacion,revision:clasificarRevision({...f,resultado}),nombre:nombreRecepcion({...f,mime,resultado})})),total:Number(conteo.total),errores:Number(conteo.errores),siguiente:filas.length > 50 ? filas[49].id : null});
   } catch(e) { next(e); }
+});
+app.post("/api/facturas/recepciones/:id/seguimiento", requireAuth(["direccion","contabilidad"]), async (req,res,next) => {
+  try {
+    const recepcion = await dbGet('SELECT local FROM facturas_recepciones WHERE id=?', [req.params.id]);
+    if (!recepcion || !puedeAccederLocal(req,recepcion.local)) {
+      return res.status(403).json({ok:false,error:'Sin acceso a esta recepción.'});
+    }
+    const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim() : '';
+    if (!motivo || motivo.length > 1000) {
+      return res.status(400).json({ok:false,error:'Indica cómo se resolvió la anotación.'});
+    }
+    const cierre = {motivo, autor:String(req.user.id || req.user.username || req.user.rol), fecha:new Date().toISOString()};
+    const guardado = await dbRun(`UPDATE facturas_recepciones SET seguimiento_cierre=?::jsonb
+      WHERE id=? AND seguimiento_nota IS NOT NULL AND seguimiento_cierre IS NULL RETURNING id`,
+    [JSON.stringify(cierre),req.params.id]);
+    if (!guardado?.id) return res.status(409).json({ok:false,error:'La anotación ya se resolvió o no existe.'});
+    res.json({ok:true});
+  } catch(error) { next(error); }
+});
+app.post("/api/facturas/recepciones/:id/resolver", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const f=await dbGet("SELECT local,estado,xmin::text AS version FROM facturas_recepciones WHERE id=?", [req.params.id]);
+    if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+    const {accion,motivo,facturaId}=req.body || {};
+    if (!['no_contable','duplicado','informativo'].includes(accion) ||
+        typeof motivo!=='string' || !motivo.trim() || motivo.length>2000) {
+      return res.status(400).json({ok:false,error:'Selecciona una acción e indica el motivo.'});
+    }
+    if (f.estado!=='revision') return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión.'});
+    let compra=null;
+    if (accion!=='no_contable') {
+      if (!/^[1-9][0-9]{0,17}$/.test(String(facturaId || ''))) {
+        return res.status(400).json({ok:false,error:'Indica el ID de una compra ya registrada.'});
+      }
+      compra=await dbGet("SELECT id,local FROM facturas WHERE id=?",[facturaId]);
+      if (!compra || !puedeAccederLocal(req,compra.local)) {
+        return res.status(404).json({ok:false,error:'No se encontró una compra accesible con ese ID.'});
+      }
+    }
+    const resolucion=JSON.stringify({
+      accion,motivo:motivo.trim(),compraId:compra?.id ?? null,
+      autor:String(req.user.id || req.user.username || req.user.rol),fecha:new Date().toISOString()
+    });
+    const guardada=await dbRun(`UPDATE facturas_recepciones SET estado=?,
+      resultado=jsonb_set(COALESCE(resultado,'{}'::jsonb),'{resolucion}',?::jsonb),error=NULL,actualizado=NOW()
+      WHERE id=? AND estado='revision' AND xmin::text=? AND original IS NOT NULL RETURNING id`,
+    [accion==='duplicado'?'duplicado':'descartado',resolucion,req.params.id,f.version]);
+    if (!guardada?.id) return res.status(409).json({ok:false,error:'El documento cambió. Vuelve a abrirlo.'});
+    res.json({ok:true});
+  } catch(e) { next(e); }
+});
+app.post("/api/facturas/recepciones/:id/borrador", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  try {
+    const f=await dbGet("SELECT local,estado,resultado,xmin::text AS version FROM facturas_recepciones WHERE id=?", [req.params.id]);
+    if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
+    if(f.estado!=='revision' || !f.resultado?.datos) return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión.'});
+    const cambios=req.body?.datos;
+    if(!cambios || typeof cambios!=='object' || Array.isArray(cambios)) return res.status(400).json({ok:false,error:'Datos del borrador no válidos.'});
+    let datos;
+    try { datos=datosRevision(f.resultado.datos,cambios); }
+    catch(e) { return res.status(400).json({ok:false,error:e.message}); }
+    const borrador=JSON.stringify({
+      datos, autor:String(req.user.id || req.user.username || req.user.rol), fecha:new Date().toISOString()
+    });
+    const actualizado=await dbRun(`UPDATE facturas_recepciones
+      SET resultado=jsonb_set(resultado,'{borrador}',?::jsonb),actualizado=NOW()
+      WHERE id=? AND estado='revision' AND xmin::text=? RETURNING id`,[borrador,req.params.id,f.version]);
+    if(!actualizado?.id) return res.status(409).json({ok:false,error:'El documento cambió mientras guardabas. Vuelve a abrirlo.'});
+    res.json({ok:true});
+  } catch(e) {next(e);}
 });
 app.post("/api/facturas/recepciones/:id/espera", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
@@ -3848,6 +3925,31 @@ app.post("/api/facturas/recepciones/:id/pedir-foto", requireAuth(["direccion", "
   res.json({ok:true});
  }catch(e){next(e);}
 });
+app.post("/api/facturas/recepciones/:id/proveedor", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
+  const f = await dbGet('SELECT local,estado FROM facturas_recepciones WHERE id=?',[req.params.id]).catch(() => null);
+  if (!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a esta recepción.'});
+  if (f.estado !== 'revision') return res.status(409).json({ok:false,error:'Abre una recepción pendiente de revisión.'});
+  const proveedor = String(req.body?.proveedor || '').trim();
+  const nif = normNif(req.body?.nif);
+  if (req.body?.confirmado !== true || !proveedor || proveedor.length > 300
+    || !nifValido(nif) || ['B70799135','46535781L','46533801V'].includes(nif)) {
+    return res.status(400).json({ok:false,error:'Comprueba el nombre fiscal y un NIF válido del proveedor en el original.'});
+  }
+  const autor = String(req.user?.username || req.user?.nombre || req.user?.id || req.user?.rol || '');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const guardado = await recordarProveedorRevision((sql, params) => client.query(sql,params),{proveedor,nif},autor);
+    await client.query('COMMIT');
+    if (!guardado) return res.status(409).json({ok:false,error:'El NIF ya tiene otra identidad fiscal en el maestro o pertenece a una empresa propia.'});
+    res.json({ok:true,nif});
+  } catch(error) {
+    await client.query('ROLLBACK');
+    next(error);
+  } finally {
+    client.release();
+  }
+});
 app.post("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
     const f=await dbGet('SELECT local FROM facturas_recepciones WHERE id=?',[req.params.id]);
@@ -3863,6 +3965,25 @@ app.get("/api/facturas/recepciones/:id/original", requireAuth(["direccion", "con
     if (!f?.original) return res.status(404).json({ok:false,error:'El original ya está archivado con la factura o no existe.'});
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
+    if (req.query.desde !== undefined || req.query.hasta !== undefined) {
+      if (f.mime !== 'application/pdf' || !f.resultado?.avisos?.some(a => a.codigo === 'varias_facturas')) {
+        return res.status(400).json({error:'La extracción está disponible para PDF con varias facturas detectadas.'});
+      }
+      const desde = Number(req.query.desde), hasta = Number(req.query.hasta);
+      if (!Number.isSafeInteger(desde) || !Number.isSafeInteger(hasta) || desde < 1 || hasta < desde) {
+        return res.status(400).json({error:'Indica un intervalo válido de páginas.'});
+      }
+      const { PDFDocument } = await import('pdf-lib');
+      const original = await PDFDocument.load(f.original);
+      if (hasta > original.getPageCount() || (desde === 1 && hasta === original.getPageCount())) {
+        return res.status(400).json({error:'Elige solo las páginas de una factura dentro del PDF.'});
+      }
+      const copia = await PDFDocument.create();
+      const paginas = await copia.copyPages(original, Array.from({length:hasta - desde + 1}, (_, i) => desde + i - 1));
+      for (const pagina of paginas) copia.addPage(pagina);
+      return res.type('application/pdf').attachment(`recepcion-${f.id}-paginas-${desde}-${hasta}.pdf`)
+        .send(Buffer.from(await copia.save()));
+    }
     if(req.query.ver==='1' && ['application/pdf','image/jpeg','image/png','image/webp'].includes(f.mime)) res.type(f.mime).send(f.original);
     else res.type('application/octet-stream').attachment(nombreRecepcion(f)).send(f.original);
   } catch(e) { next(e); }
@@ -6848,7 +6969,7 @@ app.put("/api/facturas/proveedor", requireAuth(["direccion", "contabilidad"]), a
       ? (await q(`SELECT nif FROM facturas WHERE proveedor = ANY(?) AND nif IS NOT NULL AND nif <> '' GROUP BY nif ORDER BY count(*) DESC LIMIT 1`, [todos])).rows[0]
       : null;
     const nifActual = nifRow?.nif || null;
-    const nifNuevo = String(req.body?.nif || "").trim() || null;
+    const nifNuevo = normNif(req.body?.nif) || null;
     const nif = nifNuevo || nifActual;
 
     // Cambiar el NIF es más delicado que cambiar el nombre: el NIF es el ancla con la que se

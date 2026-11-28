@@ -1,4 +1,4 @@
-export async function abrirPaginas(id,{apiRaw,apiSend,modal,token,esc,toast,actualizar}){
+export async function abrirPaginas(id,{apiRaw,apiSend,modal,token,esc,toast,facVistaDocumento,actualizar}){
  const {data:p}=await apiRaw(`/api/facturas/paginas/${encodeURIComponent(id)}`);
  const unidas=p.estado==='unidas';
  const ov=modal(unidas?'Páginas unidas':'¿Son páginas de la misma factura?',`<p class="mut">${esc(p.motivo||'Compara los originales antes de decidir.')}</p><div class="fac-paginas-grid">${p.documentos.map((d,i)=>`<section><h3>${i+1}. ${esc(d.nombre||'Documento')}</h3><div data-original="${esc(d.id)}" class="fac-pagina-original">Cargando original…</div></section>`).join('')}</div><p class="mut">${p.documentos.some(d=>d.estado==='registrado')?'La factura existente conservará sus pagos y su número interno. Si la lectura cambia sus importes, se detendrá para revisarla.':'Al unir, se leerán todas las páginas como un único documento. Los originales se conservan.'}</p>${unidas?'<p class="mut">Puedes deshacer mientras el documento unido no se haya registrado. Si se completó una factura existente, se puede restaurar mientras no haya sido editada después.</p>':''}<p class="fac-paginas-estado" role="status"></p><div class="fac-paginas-acciones">${unidas?'<button class="btn" data-decision="deshacer">Deshacer unión</button>':'<button class="btn" data-decision="separar">Son documentos distintos</button><button class="btn primary" data-decision="unir">Unir como páginas</button>'}</div>`);
@@ -21,10 +21,14 @@ export async function abrirPaginas(id,{apiRaw,apiSend,modal,token,esc,toast,actu
    const r=await fetch(`/api/facturas/recepciones/${encodeURIComponent(d.id)}/original?ver=1`,{headers:{Authorization:'Bearer '+token()}});
    if(!r.ok)throw new Error();const blob=await r.blob();if(!ov.isConnected)return;
    const url=URL.createObjectURL(blob);urls.push(url);
-   const el=document.createElement(blob.type==='application/pdf'?'iframe':'img');el.src=url;
-   if(el.tagName==='IMG')el.alt='Página original';else el.title='Documento original';
-   caja.replaceChildren(el);
-   const ampliar=document.createElement('a');ampliar.href=url;ampliar.target='_blank';ampliar.rel='noopener';ampliar.textContent='Ampliar original';ampliar.className='btn sm';caja.after(ampliar);
+   const mime=blob.type.split(';')[0];
+   if(mime==='application/pdf'){
+    facVistaDocumento(caja,url,mime);
+   }else{
+    const el=document.createElement('img');el.src=url;el.alt='Página original';
+    caja.replaceChildren(el);
+    const ampliar=document.createElement('a');ampliar.href=url;ampliar.target='_blank';ampliar.rel='noopener';ampliar.textContent='Ampliar original';ampliar.className='btn sm';caja.after(ampliar);
+   }
   }catch{if(ov.isConnected)caja.textContent='No se pudo cargar el original. Cierra y vuelve a abrir la propuesta.';}
  }));
 }

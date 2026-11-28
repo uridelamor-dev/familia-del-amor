@@ -52,3 +52,19 @@ test('recuperación no se activa sin lectura, con aprobación humana o tras un i
  const {motivosRecuperacion}=await import('../../src/modules/facturas/recuperar-validacion.js');
  for(const r of [null,{}, {datos:{nif_proveedor:'ESB60599461'},aprobacion:{autor:'humano'}},{datos:{nif_proveedor:'ESB60599461'},revalidacion:{version:'anterior'}},{datos:{nif_proveedor:'ESB60599461'},contraste:{version:4}}])assert.deepEqual(motivosRecuperacion(r),[]);
 });
+
+test('P1 #1698–1700: dos lecturas claras de un icono social permiten descartarlo', async () => {
+ const icono={es_documento_compra:false,confianza_clasificacion:'alta',clase_adjunto:'icono_social',
+  tipo:null,lineas:[],calidad_imagen:'legible'};
+ for (const id of [1698,1699,1700]) {
+  let lecturas=0;
+  const resultado=await leerDocumentoVerificado(Buffer.from(String(id)),'image/png',{
+   leer:async()=>{lecturas++;return structuredClone(icono);},
+  });
+  assert.equal(lecturas,2);
+  assert.ok(esAdjuntoDecorativo(resultado));
+ }
+ await assert.rejects(leerDocumentoVerificado(Buffer.from('dudoso'),'image/png',{
+  leer:async(_buffer,_mime,opciones)=>opciones ? {...icono,calidad_imagen:'recortada'} : icono,
+ }), e=>e.revisionDocumento && e.resultado.avisos.some(a=>a.campo==='imagen'));
+});
