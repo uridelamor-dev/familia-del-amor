@@ -38,11 +38,12 @@ test('Laura recibe el primer aviso incluso de noche y el siguiente día a las nu
  assert.equal(nivelAviso(avisada,new Date('2026-10-25T08:00:00Z')),2);
  assert.equal(nivelAviso(avisada,new Date('2026-10-26T00:00:00Z')),2);
 });
-test('Dirección recibe un aviso a las 72 horas reales desde la apertura si sigue sin resolver',async()=>{
+test('Dirección solo recibe un aviso a las 72 horas si el caso sigue sin tomar',async()=>{
  const {nivelAviso}=await import('../src/modules/messaging/atencion.js');
- const t={abierta_en:'2026-10-24T20:20:00Z',estado:'en_curso',actualizada_en:'2026-10-27T20:00:00Z',aviso_nivel:2};
+ const t={abierta_en:'2026-10-24T20:20:00Z',estado:'pendiente',aviso_nivel:2};
  assert.equal(nivelAviso(t,new Date('2026-10-27T20:19:59Z')),0);
  assert.equal(nivelAviso(t,new Date('2026-10-27T20:20:00Z')),3);
+ assert.equal(nivelAviso({...t,estado:'en_curso'},new Date('2026-10-27T20:20:00Z')),0);
  assert.equal(nivelAviso({...t,estado:'resuelta'},new Date('2026-10-27T20:20:00Z')),0);
  assert.equal(nivelAviso({...t,aviso_nivel:3},new Date('2026-10-27T20:20:00Z')),0);
 });

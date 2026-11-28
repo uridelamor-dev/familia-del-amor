@@ -64,7 +64,7 @@ export function nivelAviso(tarea, ahora = new Date()) {
   const {fecha,minutoDia}=instanteMadrid(ahora);
   return fecha>recordatorio || (fecha===recordatorio && minutoDia>=9*60) ? 2 : 0;
  }
- if(previo===2 && +ahora-Date.parse(tarea.abierta_en)>=72*60*60000)return 3;
+ if(previo===2 && tarea.estado==='pendiente' && +ahora-Date.parse(tarea.abierta_en)>=72*60*60000)return 3;
  return 0;
 }
 export function crearAtencion({pool,enviar,listo,recuperar,avisarAlAbrir=false,ahora=()=>new Date()}) {

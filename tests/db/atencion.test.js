@@ -73,7 +73,11 @@ test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente'
  reloj=new Date('2026-10-23T19:59:59Z');
  await notificador.tick();assert.equal(avisos.length,2);
  reloj=new Date('2026-10-23T20:00:00Z');
- await notificador.tick();assert.equal(avisos.length,3);assert.equal(avisos[2][0],'34622149946');
+ const otroEnCurso='34600000008@s.whatsapp.net';
+ await db.raw(`INSERT INTO wa_atencion(jid,motivo,resumen,abierta_en,estado,aviso_nivel)
+  VALUES($1,'consulta','Incidencia en gestión',$2,'en_curso',2)`,[otroEnCurso,new Date('2026-10-20T20:00:00Z')]);
+ await notificador.tick();assert.equal(avisos.length,3);
+ assert.doesNotMatch(avisos[2][1],/Incidencia en gestión/);assert.equal(avisos[2][0],'34622149946');
  assert.match(avisos[2][1],/sin resolver tras 72 horas/);
  await notificador.control('34600000009@s.whatsapp.net','resolver','Laura');
  await notificador.tick();assert.equal(avisos.length,3,'cerrar detiene avisos');
