@@ -388,6 +388,7 @@ export async function ensureSchemaFidelizacion(x) {
     creado_en TEXT NOT NULL,
     CHECK (estado IN ('usado','revertido'))
   )`);
+  await x.run('ALTER TABLE fid_promo_usos ADD COLUMN IF NOT EXISTS descuento_centimos INTEGER');
   // Un premio por cuenta y promoción: el índice es el candado de verdad, no una comprobación previa.
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_promo_uso_cuenta ON fid_promo_usos (promo_id, qr_id)`);
   await x.run(`CREATE INDEX IF NOT EXISTS idx_fid_promo_uso_clave ON fid_promo_usos (clave, qr_id)`);

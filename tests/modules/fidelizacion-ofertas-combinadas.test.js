@@ -1,3 +1,4 @@
+import { descuentoPromocionCentimos } from '../../src/modules/fidelizacion/descuento-promocion.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rewardsDePromo, rewardsCoincidenConPromo, idPromoDeReward, puedePublicar, elegible } from '../../src/modules/fidelizacion/promos.js';
@@ -58,4 +59,20 @@ test('solo local autorizado y hasta el domingo inclusive', () => {
   assert.equal(elegible(p, { ...ctx, ahora: '2026-11-29T22:59:00Z' }).ok, true);
   assert.equal(elegible(p, { ...ctx, ahora: '2026-11-29T23:00:00Z' }).ok, false);
   assert.equal(elegible(p, { ...ctx, ahora: '2026-11-27T12:00:00Z', local: 'otro' }).ok, false);
+});
+
+
+test('Black Friday: suma solo descuentos conciliados de las dos ofertas', () => {
+  const ticket = {InvoiceItems:[{VatIncluded:true,LoyaltyProgram:{Rewards:emitted},Lines:[
+    {OfferCode:'BFR1',UnitPrice:18.5,Quantity:1,TotalAmount:16.65,DiscountRate:0.1},
+    {OfferCode:'BFR2',UnitPrice:30,Quantity:1,TotalAmount:24,CashDiscount:6},
+    {OfferCode:'otra',UnitPrice:10,Quantity:1,TotalAmount:5,CashDiscount:5},
+  ]}]};
+  assert.equal(descuentoPromocionCentimos(ticket,p),785);
+  const incompleto = structuredClone(ticket);
+  incompleto.InvoiceItems[0].Lines[1].OfferCode = 'otra';
+  assert.equal(descuentoPromocionCentimos(incompleto,p),null);
+  const descuadre = structuredClone(ticket);
+  descuadre.InvoiceItems[0].Lines[0].TotalAmount = 16;
+  assert.equal(descuentoPromocionCentimos(descuadre,p),null);
 });

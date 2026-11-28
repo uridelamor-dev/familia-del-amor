@@ -1,3 +1,4 @@
+import {descuentoPromocionCentimos} from '../fidelizacion/descuento-promocion.js';
 import {telefono,dia,validarFiltros,cargarFuente,resolverIdentidades,analizarRecorrido,cargarActividad} from './recorrido.js';
 
 export const PROMOCION_RESULTADOS_SCHEMA = `CREATE TABLE IF NOT EXISTS campana_promocion_vinculos (
@@ -36,7 +37,7 @@ export async function obtenerPromocion(db,id,user,query={}){
  const receptores=resolverIdentidades(envios,leads);
  const derechos=await db.all('SELECT q.id AS qr_id,q.nombre,q.telefono,d.concedido_en FROM fid_promo_derechos d JOIN pro_qr q ON q.id=d.qr_id WHERE d.clave=?',[p.clave]);
  // Una factura compartida se suma una sola vez; anulaciones y pruebas nunca son canjes válidos.
- const usos=await db.all(`SELECT u.id,u.qr_id,q.nombre,q.telefono,u.local,u.creado_en AS fecha,u.factura_id,f.importe_total
+ const usos=await db.all(`SELECT u.id,u.qr_id,q.nombre,q.telefono,u.local,u.creado_en AS fecha,u.factura_id,u.descuento_centimos,f.importe_total
  FROM fid_promo_usos u JOIN fid_facturas f ON f.id=u.factura_id LEFT JOIN pro_qr q ON q.id=u.qr_id
  WHERE u.clave=? AND u.estado='usado' AND f.es_prueba=FALSE AND f.devolucion=FALSE AND f.revertida_en IS NULL`,[p.clave]);
  const personas=new Map(receptores.map(r=>[r.id,{...r,fecha_envio:r.fecha_envio,derecho:false,observado:true}]));
@@ -59,6 +60,30 @@ export async function obtenerPromocion(db,id,user,query={}){
  filas=filas.filter(x=>grupos[f.grupo](x)&&(!f.q||[x.nombre,x.telefono,x.correo].join(' ').toLowerCase().includes(f.q.toLowerCase())));
  const facturas=new Map();for(const x of filas)for(const u of x.usos_promocion)facturas.set(u.factura_id,u.importe_total);
  const resumen={personas:filas.length,enviados:filas.filter(x=>x.enviado).length,derechos:filas.filter(x=>x.derecho).length,usuarios:filas.filter(x=>x.canjes_promocion).length,canjes:filas.reduce((s,x)=>s+x.canjes_promocion,0),visitas:filas.filter(x=>x.visitas).length,tarjetas:filas.filter(x=>x.tarjeta!=='sin_registro').length,resenas:filas.filter(x=>x.eventos.some(e=>e.tipo==='resena')).length,facturas:facturas.size,consumo:facturas.size&&[...facturas.values()].every(x=>x!=null)?Math.round([...facturas.values()].reduce((s,x)=>s+Number(x),0)*100)/100:null};
+ const descuentoPorTicket = new Map();
+ const pendientes = new Set();
+ for (const {usos_promocion} of filas) for (const uso of usos_promocion) {
+  if (Number.isSafeInteger(uso.descuento_centimos) && uso.descuento_centimos > 0) {
+   descuentoPorTicket.set(uso.factura_id, uso.descuento_centimos);
+  } else {
+   pendientes.add(uso.factura_id);
+  }
+ }
+ for (const id of descuentoPorTicket.keys()) pendientes.delete(id);
+ if (pendientes.size && db.leerFacturaPromocion) {
+  const originales = await db.all(`SELECT DISTINCT ON (f.id) f.id, f.cuerpo_enc,
+    p.tipo,p.reward_id,p.codigo_agora,p.codigo_agora_adicional
+    FROM fid_facturas f JOIN fid_promo_usos u ON u.factura_id=f.id JOIN fid_promos p ON p.id=u.promo_id
+    WHERE f.id=ANY(?::int[]) AND u.clave=? AND u.estado='usado' AND p.tipo='oferta_agora'
+      AND f.cuerpo_enc IS NOT NULL ORDER BY f.id,u.id`, [[...pendientes],p.clave]);
+  for (const {id,cuerpo_enc,...version} of originales) {
+   const importe = descuentoPromocionCentimos(db.leerFacturaPromocion(cuerpo_enc), version);
+   if (importe != null) descuentoPorTicket.set(id, importe);
+  }
+ }
+ resumen.tickets_con_descuento = descuentoPorTicket.size;
+ resumen.descuento = descuentoPorTicket.size
+  ? [...descuentoPorTicket.values()].reduce((total, importe) => total+importe,0)/100 : null;
  const enviados=filas.filter(x=>x.enviado);resumen.conversion=enviados.length?Math.round(enviados.filter(x=>x.usos_promocion.some(u=>Date.parse(u.fecha)>=Date.parse(x.fecha_envio))).length/enviados.length*1000)/10:null;
- return {promocion:{id:p.id,clave:p.clave,nombre:p.nombre,desde:p.desde,hasta:p.hasta},comunicaciones,filtros:f,locales:[...new Set([...base.locales,...usos.map(u=>u.local)])].sort(),filas,resumen,actualizado_en:new Date().toISOString()};
+ return {promocion:{id:p.id,clave:p.clave,nombre:p.nombre,desde:p.desde,hasta:p.hasta},comunicaciones,filtros:f,locales:[...new Set([...base.locales,...usos.map(u=>u.local)])].sort(),filas:filas.map(fila=>({...fila,usos_promocion:fila.usos_promocion.map(({descuento_centimos,...uso})=>uso)})),resumen,actualizado_en:new Date().toISOString()};
 }

@@ -21801,7 +21801,12 @@ app.post("/api/campanas", requireAuth(["direccion", "marketing"]), async (req, r
   }
 });
 
-registrarRecorrido(app,{auth:requireAuth(["direccion","marketing"]),all:dbAll,get:dbGet,run:dbRun});
+registrarRecorrido(app,{auth:requireAuth(["direccion","marketing"]),all:dbAll,get:dbGet,run:dbRun,
+ leerFacturaPromocion: cifrado => {
+  const plano = leerSecreto(cifrado, DOMINIOS.FIDELIZACION, "fid_facturas");
+  try { return plano ? JSON.parse(plano) : null; } catch { return null; }
+ },
+});
 
 // Detalle de una campaña con resultados por destinatario.
 app.get("/api/campanas/:id", requireAuth(["direccion", "marketing"]), async (req, res) => {

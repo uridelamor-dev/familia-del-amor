@@ -1,7 +1,7 @@
 import {obtenerPromocion,promocion,listarPromociones,vincularPromocion,enviosDisponibles} from './promocion-resultados.js';
 import {obtenerRecorrido,cargarFuente,OBJETIVOS,prepararSeguimiento} from './recorrido.js';
-export function registrarRecorrido(app,{auth,all,get,run}){
- const db={all,get,run};
+export function registrarRecorrido(app,{auth,all,get,run,leerFacturaPromocion}){
+ const db={all,get,run,leerFacturaPromocion};
  const fuente=(o,id,u)=>o==='promocion'?promocion(db,id,u):cargarFuente(db,o,id,u);
  const informe=(o,id,u)=>o==='promocion'?obtenerPromocion(db,id,u):obtenerRecorrido(db,o,id,u);
  app.get('/api/campanas-promociones',auth,async(req,res)=>{
