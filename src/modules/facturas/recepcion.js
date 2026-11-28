@@ -102,8 +102,15 @@ export function crearRecepcion({db, lock, procesar, existeDestino, antesProcesar
     });
   }
   async function recibir(o) {
-    if (!Buffer.isBuffer(o.buffer) || !o.buffer.length || o.buffer.length > 20*1024*1024) throw Object.assign(new Error('El documento debe tener entre 1 byte y 20 MB'), {permanente:true});
-    if (!(o.mimeType === 'application/pdf' || o.mimeType?.startsWith('image/'))) throw new Error('Solo se admiten PDF o imágenes');
+    const tamano = Buffer.isBuffer(o.buffer) ? o.buffer.length : 0;
+    if (!tamano || tamano > 20*1024*1024) {
+      throw Object.assign(new Error('El documento debe tener entre 1 byte y 20 MB'), {
+        permanente:true,codigoOriginal:tamano ? 'demasiado_grande' : 'vacio',
+      });
+    }
+    if (!(o.mimeType === 'application/pdf' || o.mimeType?.startsWith('image/'))) {
+      throw Object.assign(new Error('Solo se admiten PDF o imágenes'), {codigoOriginal:'formato'});
+    }
     const hash = createHash('sha256').update(o.buffer).digest('hex');
     const canal = canalFactura(o.canal || o.origen);
     const clave = createHash('sha256').update(JSON.stringify([canal,o.local||'',hash])).digest('hex');

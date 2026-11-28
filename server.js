@@ -42,7 +42,7 @@ import {crearPlanificacionPersonal,leerPersonal} from './src/modules/informes/pl
 import {crearDecisionesHistorico,cabeceraHistorica} from './src/modules/facturas/repaso-decision.js';
 import { REPASO_HISTORICO_SCHEMA, crearRepasoHistorico } from './src/modules/facturas/repaso-historico.js';
 import {AUDITORIA_COMPLETA_SCHEMA,cargarDistintivos,registrarAuditoriaCompleta} from './src/modules/facturas/auditoria-completa.js';
-import { TANDAS_SCHEMA, TANDAS_RESULTADO_SCHEMA, crearTandas } from './src/modules/facturas/tandas-whatsapp.js';
+import { TANDAS_SCHEMA, TANDAS_RESULTADO_SCHEMA, avisoReenvioFactura, citarOriginalFactura, crearTandas } from './src/modules/facturas/tandas-whatsapp.js';
 import { leerDocumentoVerificado, driveDescargar } from './facturas.js';
 import {crearAvisosSolicitudes} from './src/modules/tienda/solicitudes.js';
 import {crearMensuales,desplazarMes} from './src/modules/informes/mensuales.js';
@@ -3933,7 +3933,7 @@ app.post("/api/facturas/recepciones/:id/espera", requireAuth(["direccion", "cont
 });
 app.get("/api/facturas/recepciones/:id/revision", requireAuth(["direccion", "contabilidad"]), async (req,res,next) => {
   try {
-    const f=await dbGet(`SELECT id,local,nombre,mime,estado,resultado,(SELECT jsonb_build_object('resumen_error',a.resumen_error,'solicitud_estado',a.solicitud_estado) FROM facturas_avisos_grupo a WHERE a.recepcion_id=facturas_recepciones.id ORDER BY a.id DESC LIMIT 1) AS aviso_grupo FROM facturas_recepciones WHERE id=?`,[req.params.id]);
+    const f=await dbGet(`SELECT id,local,nombre,mime,estado,resultado,(SELECT jsonb_build_object('solicitud_estado',a.solicitud_estado) FROM facturas_avisos_grupo a WHERE a.recepcion_id=facturas_recepciones.id ORDER BY (a.solicitud_estado IS NOT NULL) DESC,a.id DESC LIMIT 1) AS aviso_grupo FROM facturas_recepciones WHERE id=?`,[req.params.id]);
     if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
     if (f.resultado?.datos) {
       const ajuste=completarIva(f.resultado.datos);
@@ -3950,7 +3950,7 @@ app.post("/api/facturas/recepciones/:id/pedir-foto", requireAuth(["direccion", "
   const f=await dbGet('SELECT local,estado FROM facturas_recepciones WHERE id=?',[req.params.id]);
   if(!f || !puedeAccederLocal(req,f.local)) return res.status(403).json({ok:false,error:'Sin acceso a este documento'});
   if(f.estado!=='revision') return res.status(409).json({ok:false,error:'El documento ya no está pendiente de revisión'});
-  const origen=await dbGet('SELECT id,solicitud_estado FROM facturas_avisos_grupo WHERE recepcion_id=? LIMIT 1',[req.params.id]);
+  const origen=await dbGet('SELECT id,solicitud_estado FROM facturas_avisos_grupo WHERE recepcion_id=? ORDER BY (solicitud_estado IS NOT NULL) DESC,id LIMIT 1',[req.params.id]);
   if(!origen) return res.status(400).json({ok:false,error:'Este documento no tiene una foto de WhatsApp vinculada. Pide el original por su canal de recepción.'});
   if(origen.solicitud_estado) return res.status(409).json({ok:false,error:'La solicitud ya se ha enviado o necesita comprobarse en el grupo. No se repetirá automáticamente.'});
   await dbRun("UPDATE facturas_recepciones SET resultado=jsonb_set(resultado,'{solicitarFoto}','true'::jsonb),actualizado=NOW() WHERE id=? AND estado='revision'",[req.params.id]);
@@ -26705,7 +26705,7 @@ const server = app.listen(PORT, async () => {
 
     try {
       // Guardar el original y su referencia antes de cualquier lectura.
-      const result = await procesarFactura({
+      return await procesarFactura({
         buffer, mimeType, filename, local, caption,
         contexto:{grupo:groupJid,remitente:senderJid,mensaje:mensajeId},
         onDocumentoGuardado: async id => {
@@ -26715,23 +26715,18 @@ const server = app.listen(PORT, async () => {
         dbGet, dbAll, dbRun,
         backupFn: null
       });
-
-      // El resumen persistente se enviará tras dos minutos sin nuevos documentos.
-      return result;
     } catch (err) {
       if (recuperado) {
         console.warn("[Facturas] Recuperación:", err.recibido ? "Original guardado, lectura pendiente" : err.message);
         return;
       }
-      if (err.recibido) return; // Original guardado: el resumen de la tanda informará del estado.
-      if (err instanceof FacturaDuplicadaError) {
-        return; // Ya queda identificado como duplicado en el resumen de la tanda.
-      } else {
-        console.error("[Facturas] Error procesando documento:", err.message);
-        await sendMensajeAGrupo(groupJid,
-          `⚠️ No he podido confirmar la recepción de este documento. El equipo debe comprobarlo en el panel antes de reenviarlo.`
-        ).catch(() => {});
-      }
+      if (err.recibido || err instanceof FacturaDuplicadaError) return;
+      console.error("[Facturas] Error procesando documento:", err.message);
+      // Solo se pide reenvío para rechazos de validación anteriores al guardado.
+      // Un fallo de enlace o de base de datos puede haber dejado el original guardado.
+      const aviso=avisoReenvioFactura(err);
+      if (aviso) await sendMensajeAGrupo(groupJid,aviso,citarOriginalFactura(citado)).catch(e=>
+        console.warn("[Facturas] No se pudo pedir el reenvío del adjunto:",e.message));
     }
   });
 
@@ -26744,7 +26739,7 @@ const server = app.listen(PORT, async () => {
   setTimeout(() => recepcionFacturas.reintentar().catch(console.error), 20000);
   setInterval(() => recepcionFacturas.reintentar().catch(console.error), 60000);
   if(PROD) setInterval(() => repasoHistorico.paso().catch(e=>console.error("[Facturas] repaso histórico pendiente:",e.message)),30000);
-  setInterval(() => tandasFacturas.revisar().catch(e=>console.error("[Facturas] resumen de tanda pendiente:",e.message)),30000);
+  setInterval(() => tandasFacturas.revisar().catch(e=>console.error("[Facturas] solicitudes de nueva foto pendientes:",e.message)),30000);
   setTimeout(pollDriveFacturas, 45 * 1000);
   setInterval(pollDriveFacturas, 5 * 60 * 1000);
   // Cola de reintentos de volcado a Sheets: reproyecta desde la BD lo que quedó sin sincronizar.

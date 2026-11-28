@@ -4,7 +4,6 @@ import {decidirPaginas} from '../../src/modules/facturas/paginas-clasificacion.j
 import {crearPaginas,mismoOrigen} from '../../src/modules/facturas/paginas.js';
 import {validarComplemento,huellaPaginas} from '../../src/modules/facturas/paginas-completar.js';
 import {crearRecepcion} from '../../src/modules/facturas/recepcion.js';
-import {resumenTanda} from '../../src/modules/facturas/tandas-whatsapp.js';
 const prueba=()=>({relacion:'misma',contenido_complementario:true,documentos:[1,2].map(pagina=>({tipo:'factura',nif:'B12345678',numero:'F-123',fecha:'2026-10-28',pagina,paginas:2}))});
 const foto=(id,estado='pendiente')=>({id,estado,hash:'h'+id,local:'Blanes',canal:'WhatsApp',nombre:'foto.jpg',mime:'image/jpeg',original:Buffer.from('foto'+id),tiene_original:true,creado:'2026-10-28T12:00:00Z',contexto:{grupo:'g',remitente:'r'}});
 test('solo identidad y páginas impresas diferentes permiten unir automáticamente',()=>{
@@ -82,8 +81,4 @@ test('la espera guarda el original y no llama a IA ni registra al recibir la pri
  const r=crearRecepcion({db,lock:async(_,fn)=>fn(),procesar:async()=>llamadas++,ahora:()=>now});
  await assert.rejects(r.recibir({buffer:Buffer.from('foto'),mimeType:'image/jpeg',local:'Blanes',contexto:{grupo:'g',remitente:'r'}}),e=>e.recibido===true);
  assert.equal(llamadas,0);assert.equal(new Date(fila.proximo)-now,90000);assert.equal(fila.original.toString(),'foto');
-});
-test('el resumen de WhatsApp no repite el mismo documento agrupado',()=>{
- const f={id:1,recepcion_id:3,estado:'registrado',resultado:{datos:{proveedor:'Ejemplo',total:12}}};
- assert.equal(resumenTanda([f,{...f,id:2}]),resumenTanda([f]));
 });
