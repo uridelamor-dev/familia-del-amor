@@ -25,7 +25,8 @@ Los datos de su propia solicitud que facilita el cliente (local elegido, número
 7. Si hay una acción ya ejecutada y debes consultar otra cuestión, conserva en respuesta SOLO la confirmación breve de la acción respaldada por resultadosAcciones. No prometas la derivación: la aplicación la realizará después.
 8. Prioriza resolver con Sara. Saludos, agradecimientos, recogida de datos y aclaraciones no requieren intervención humana. Una negativa respaldada por las condiciones oficiales tampoco requiere derivación por sí sola. No cierres ni declares resuelta una gestión pendiente. En consultar, motivo debe concretar qué pide el cliente, qué se ha comprobado y qué decisión o dato falta al equipo, sin inventar comprobaciones.
 9. Preguntar si una promoción vale otro día no es pedir una excepción: explica las fechas oficiales, o pide identificar la oferta si falta. No derives por una duda que puedas aclarar ni por ausencia de información accesoria. Nunca prometas contacto posterior ni plazos sin confirmación.
-10. respuesta debe ser un mensaje breve listo para WhatsApp, sin JSON, diagnósticos ni etiquetas internas.`;
+10. Escribe como en WhatsApp. Abre con la respuesta o el siguiente paso. Una o dos frases bastan para una petición simple. Evita presentaciones repetidas, listas de locales, repetir datos ya dados, ofertas accesorias o cierres como «¿algo más?». Pregunta solo lo que falte; mira el historial, la cita y el perfil antes de hacerlo. Un «ok», «sí» o «vale» puede responder una pregunta previa, incluidas las del equipo. Usa primero la referencia indicada.
+11. Decide consultar únicamente si el cliente pide una persona, hay una incidencia real que requiere actuación, una operación de resultado incierto o hace falta una decisión del equipo. Una confirmación de cortesía, un dato nuevo o un cambio ordinario de reserva no justifican consultar. Un aviso de llegada o un desglose de personas que no cambia el total de una reserva ya confirmada solo requiere acuse. Si consultas, deja en respuesta una frase de empatía o el estado que sí puedes comprobar, sin afirmar que has derivado.`;
 
 export function textoSeguro(tipo, idioma = 'es') {
   const textos = {
@@ -38,6 +39,11 @@ export function textoSeguro(tipo, idioma = 'es') {
       ca: 'He rebut el teu missatge. Ara mateix no puc completar la gestió; encara no està confirmada.',
       es: 'He recibido tu mensaje. Ahora mismo no puedo completar la gestión; todavía no está confirmada.',
       en: 'I have received your message. I cannot complete the request right now; it is not yet confirmed.',
+    },
+    aclaracion: {
+      ca: 'Em pots concretar què necessites?',
+      es: '¿Me concretas qué necesitas?',
+      en: 'Could you clarify what you need?',
     },
     consulta: {
       ca: 'He deixat la teva petició pendent de revisió amb l’equip. Encara no està confirmada; no cal que tornis a enviar les dades.',
@@ -54,14 +60,18 @@ export function textoSeguro(tipo, idioma = 'es') {
 }
 
 // Diagnósticos cerrados: nunca incluyen textos del cliente ni contenido del modelo.
-function validarRevision(r, fuentes, resultadosAcciones) {
+function validarRevision(r, fuentes, resultadosAcciones, idiomaObligatorio) {
   if (r?.stop_reason !== 'tool_use') return { fallo: r?.stop_reason === 'max_tokens' ? 'truncada' : 'sin_herramienta' };
   const bloques = r.content?.filter(b => b.type === 'tool_use' && b.name === REVISION_TOOL.name) || [];
   if (bloques.length !== 1) return { fallo: 'numero_herramientas' };
   const v = bloques[0].input;
   if (!v || !['enviar', 'consultar'].includes(v.decision)) return { fallo: 'decision' };
-  if (!['ca', 'es', 'en'].includes(v.idioma)) return { fallo: 'idioma' };
-  if (typeof v.respuesta !== 'string' || v.respuesta.length > 6000) return { fallo: 'respuesta' };
+  if (!['ca', 'es', 'en'].includes(v.idioma) || idiomaObligatorio && v.idioma !== idiomaObligatorio) return { fallo: 'idioma' };
+  if (typeof v.respuesta !== 'string' || v.respuesta.length > 1200) return { fallo: 'respuesta' };
+  const texto = v.respuesta.replace(/https?:\/\/\S+/gi, '').trim();
+  if (texto.length > 470 || texto.split(/\s+/).length > 75 || (texto.match(/[?？]/g) || []).length > 2) {
+    return { fallo: 'respuesta_extensa' };
+  }
   if (typeof v.motivo !== 'string') return { fallo: 'motivo' };
   if (!Array.isArray(v.evidencias)) return { fallo: 'evidencias_formato' };
   if (v.evidencias.some(e => typeof e !== 'string' || !e.trim() || !fuentes.includes(e) && !resultadosAcciones.some(a => a.resultado?.is_error === false && typeof a.resultado.content === 'string' && a.resultado.content.includes(e)))) return { fallo: 'evidencia_no_literal' };
@@ -69,7 +79,7 @@ function validarRevision(r, fuentes, resultadosAcciones) {
   return { valor: v };
 }
 
-export async function revisarRespuesta({ crear, borrador, mensaje, historial, fuentes = '', resultadosAcciones = [], idioma = 'es', diagnostico = () => {} }) {
+export async function revisarRespuesta({ crear, borrador, mensaje, historial, fuentes = '', resultadosAcciones = [], idioma = 'es', idiomaObligatorio = null, referencia = '', diagnostico = () => {} }) {
   let fallo;
   for (let intento = 1; intento <= 2; intento++) {
     // Revisa de nuevo los datos originales. Nunca reejecuta acciones ni acepta el borrador sin revisar.
@@ -78,9 +88,9 @@ export async function revisarRespuesta({ crear, borrador, mensaje, historial, fu
       max_tokens: intento === 1 ? 1800 : 2600,
       system: REVISION_PROMPT + (fallo ? `\nLa revisión anterior fue inválida (${fallo}). Revisa de nuevo todos los datos y devuelve todos los campos obligatorios. Usa citas literales breves de fuentesOficiales; no inventes citas ni elimines evidencias necesarias para pasar la validación. Si falta respaldo comercial, elimina la afirmación no respaldada y pregunta el dato que pueda aportar el cliente. Consulta solo si hace falta una decisión exclusiva del equipo.` : ''),
       tools: [REVISION_TOOL], tool_choice: { type: 'tool', name: REVISION_TOOL.name },
-      messages: [{ role: 'user', content: JSON.stringify({ borrador, mensaje, historial, fuentesOficiales: fuentes, resultadosAcciones, idiomaPreferido: idioma }) }],
+      messages: [{ role: 'user', content: JSON.stringify({ borrador, mensaje, historial, fuentesOficiales: fuentes, resultadosAcciones, idiomaPreferido: idioma, idiomaObligatorio, referencia }) }],
     });
-    const validacion = validarRevision(r, fuentes, resultadosAcciones);
+    const validacion = validarRevision(r, fuentes, resultadosAcciones, idiomaObligatorio);
     if (validacion.valor) return validacion.valor;
     fallo = validacion.fallo;
     diagnostico({ intento, motivo: fallo });
@@ -92,10 +102,17 @@ export async function revisarRespuesta({ crear, borrador, mensaje, historial, fu
 export function crearControlAvisos({ ahora = Date.now, ventanaMs = 60000 } = {}) {
   const ultimos = new Map();
   const esAviso = texto => ['error', 'resultado', 'adjunto'].some(tipo => ['ca', 'es', 'en'].some(idioma => texto === textoSeguro(tipo, idioma)));
-  function limpiar() { for (const [jid, t] of ultimos) if (ahora() - t >= ventanaMs) ultimos.delete(jid); }
+  function limpiar() { for (const [jid, t] of ultimos) if (ahora() - t.fecha >= ventanaMs) ultimos.delete(jid); }
   return {
-    omitir(jid, texto) { limpiar(); return esAviso(texto) && ultimos.has(jid); },
-    enviado(jid, texto) { limpiar(); if (esAviso(texto)) ultimos.set(jid, ahora()); else ultimos.delete(jid); },
+    omitir(jid, texto, entrada = '') {
+      limpiar();
+      return esAviso(texto) && ultimos.get(jid)?.entrada === entrada;
+    },
+    enviado(jid, texto, entrada = '') {
+      limpiar();
+      if (esAviso(texto)) ultimos.set(jid, { fecha: ahora(), entrada });
+      else ultimos.delete(jid);
+    },
   };
 }
 

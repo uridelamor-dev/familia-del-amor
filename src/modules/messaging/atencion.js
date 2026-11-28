@@ -3,6 +3,31 @@ import {instanteMadrid,sumaDias} from '../horarios/tiempo.js';
 import { ARCHIVO_CTE } from './bandeja-historial.js';
 import { IDENTIDAD_CTE, telefonoContacto } from './contacto-conversacion.js';
 
+// Comparte los requisitos entre selección y reclamación. Un envío automático no responde a la entrada.
+const RECUPERABLES = `${ARCHIVO_CTE},
+ entradas_recientes AS (
+   SELECT DISTINCT ON (o.canon) o.canon AS jid, 'w'||o.id AS id, o.mensaje_id, o.texto AS mensaje, o.fecha AS creado_en
+   FROM originales o
+   WHERE NOT o.enviado AND o.fecha >= now()-interval '72 hours'
+   ORDER BY o.canon,o.fecha DESC,o.id DESC
+ ),
+ recuperables AS (
+   SELECT e.* FROM entradas_recientes e JOIN ultimos w ON w.jid=e.jid
+   WHERE NOT w.interno AND e.jid ~ '^[0-9]+@(s[.]whatsapp[.]net|lid)$'
+   AND e.mensaje NOT LIKE '[%' AND e.creado_en <= now()-interval '5 minutes'
+   AND NOT EXISTS(SELECT 1 FROM wa_entrada_procesada p JOIN originales o
+     ON o.mensaje_id=p.mensaje_id AND p.jid IN(o.jid,o.canon) WHERE o.canon=e.jid AND 'w'||o.id=e.id)
+   AND NOT EXISTS(SELECT 1 FROM legados l WHERE l.canon=e.jid AND l.creado_en::timestamptz>=e.creado_en
+     AND COALESCE(l.historico,0)=0 AND (l.tipo='manual' OR
+       (COALESCE(l.tipo,'intercambio')='intercambio' AND NULLIF(l.respuesta,'') IS NOT NULL
+        AND l.respuesta<>'(sin respuesta registrada)')))
+   AND NOT EXISTS(SELECT 1 FROM originales o WHERE o.canon=e.jid AND o.enviado AND o.fecha>=e.creado_en
+     AND NOT EXISTS(SELECT 1 FROM legados l WHERE l.canon=e.jid AND l.tipo='saliente' AND l.respuesta=o.texto
+       AND abs(extract(epoch FROM(o.fecha-l.creado_en::timestamptz)))<300))
+   AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=e.jid
+     AND (a.estado='en_curso' OR a.motivo IN ('error_respuesta','error_entrada') OR a.cerrada_en>=e.creado_en))
+ )`;
+
 export const ATENCION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS wa_atencion (
  jid TEXT PRIMARY KEY, estado TEXT NOT NULL DEFAULT 'pendiente', responsable TEXT NOT NULL DEFAULT 'marketing',
@@ -142,25 +167,41 @@ export function crearAtencion({pool,enviar,listo,recuperar,avisarAlAbrir=false,a
  }
  async function recuperarRecientes() {
   if(!recuperar||!listo())return;
-  const {rows}=await pool.query(`WITH ${ARCHIVO_CTE} SELECT w.jid,w.id,w.mensaje,w.creado_en FROM ultimos w
-   WHERE NOT w.interno AND w.jid ~ '^[0-9]+@(s[.]whatsapp[.]net|lid)$' AND w.tipo='recibido'
-   AND w.id LIKE 'w%' AND w.mensaje NOT LIKE '[%'
-   AND w.creado_en::timestamptz BETWEEN now()-interval '72 hours' AND now()-interval '5 minutes'
-   AND NOT EXISTS(SELECT 1 FROM wa_entrada_recuperada r WHERE r.jid=w.jid AND r.clave=w.id)
-   AND NOT EXISTS(SELECT 1 FROM wa_entrada_procesada p JOIN originales o ON o.mensaje_id=p.mensaje_id AND p.jid IN(o.jid,o.canon) WHERE o.canon=w.jid AND 'w'||o.id::text=w.id)
-   AND NOT EXISTS(SELECT 1 FROM legados l WHERE l.canon=w.jid AND l.creado_en::timestamptz>=w.creado_en::timestamptz AND COALESCE(l.historico,0)=0)
-   AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=w.jid AND (a.estado='en_curso' OR a.motivo IN ('error_respuesta','error_entrada') OR a.cerrada_en>=w.creado_en::timestamptz))
-   ORDER BY w.creado_en::timestamptz DESC LIMIT 10`);
+  const {rows}=await pool.query(`WITH ${RECUPERABLES}
+   SELECT e.jid,e.id,e.mensaje,e.creado_en FROM recuperables e
+   WHERE NOT EXISTS(SELECT 1 FROM wa_entrada_recuperada r WHERE r.jid=e.jid AND r.clave=e.id)
+   ORDER BY e.creado_en DESC LIMIT 10`);
   for(const m of rows.filter(m=>contactoAtendible(m.jid) && !cierreCortesia(m.mensaje))) await recuperar(m,async()=>{
-   // Releer bajo la cola del contacto; cualquier procesamiento previo, respuesta o cierre impide repetir acciones.
-   const r=await pool.query(`WITH ${ARCHIVO_CTE} INSERT INTO wa_entrada_recuperada(jid,clave)
-    SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM ultimos WHERE jid=$1 AND id=$2 AND tipo='recibido')
-    AND NOT EXISTS(SELECT 1 FROM wa_entrada_procesada p JOIN originales o ON o.mensaje_id=p.mensaje_id AND p.jid IN(o.jid,o.canon) WHERE o.canon=$1 AND 'w'||o.id::text=$2)
-    AND NOT EXISTS(SELECT 1 FROM legados WHERE canon=$1 AND creado_en::timestamptz >= $3::timestamptz AND COALESCE(historico,0)=0)
-    AND NOT EXISTS(SELECT 1 FROM wa_atencion WHERE jid=$1 AND (estado='en_curso' OR motivo IN ('error_respuesta','error_entrada') OR cerrada_en >= $3::timestamptz))
-    ON CONFLICT DO NOTHING RETURNING jid`,[m.jid,m.id,m.creado_en]);
+   // Releer bajo la cola del contacto para no repetir una gestión contestada o ya reclamada.
+   const r=await pool.query(`WITH ${RECUPERABLES} INSERT INTO wa_entrada_recuperada(jid,clave)
+    SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM recuperables WHERE jid=$1 AND id=$2)
+    ON CONFLICT DO NOTHING RETURNING jid`,[m.jid,m.id]);
    return !!r.rows.length;
   });
+ }
+ async function diagnosticoSara(jid, cliente) {
+  if (!contactoAtendible(jid) || cliente.solo_lectura || cliente.interno) return null;
+  const {rows}=await pool.query(`WITH ${RECUPERABLES},
+   ultima AS (SELECT fecha FROM eventos WHERE jid=$1 AND tipo='recibido' ORDER BY fecha DESC,clave DESC LIMIT 1)
+   SELECT u.fecha,
+    (SELECT l.tipo_mensaje FROM legados l WHERE l.canon=$1 AND COALESCE(l.historico,0)=0
+     AND l.tipo='intercambio' AND l.creado_en::timestamptz>=u.fecha
+     ORDER BY l.creado_en::timestamptz DESC,l.id DESC LIMIT 1) AS marca,
+    (EXISTS(SELECT 1 FROM legados l WHERE l.canon=$1 AND COALESCE(l.historico,0)=0 AND l.creado_en::timestamptz>=u.fecha
+      AND (l.tipo='manual' OR (l.tipo='intercambio' AND NULLIF(l.respuesta,'') IS NOT NULL AND l.respuesta<>'(sin respuesta registrada)')))
+     OR EXISTS(SELECT 1 FROM originales o WHERE o.canon=$1 AND o.enviado AND o.fecha>=u.fecha
+      AND NOT EXISTS(SELECT 1 FROM legados l WHERE l.canon=$1 AND l.tipo='saliente' AND l.respuesta=o.texto
+        AND abs(extract(epoch FROM(o.fecha-l.creado_en::timestamptz)))<300))) AS atendido,
+    e.mensaje IS NOT NULL AS recuperable,e.mensaje,
+    EXISTS(SELECT 1 FROM wa_entrada_recuperada r WHERE r.jid=$1 AND r.clave=e.id) AS reclamada
+   FROM ultima u LEFT JOIN recuperables e ON e.jid=$1`,[jid]);
+  const d=rows[0];
+  if (!d || d.atendido) return null;
+  const marcas = ['sara_fallo_envio', 'sara_fallo_procesamiento', 'sara_pausada', 'sara_aviso_repetido'];
+  if (marcas.includes(d.marca)) return d.marca;
+  if (pausaBloqueante(cliente)) return 'sara_pausada';
+  if (!d.recuperable || cierreCortesia(d.mensaje)) return null;
+  return d.reclamada ? 'sara_recuperacion_iniciada' : 'sara_pendiente_recuperacion';
  }
  async function barrer() {
   // No convertir mensajes sin respuesta en incidencias: recuperarRecientes los atiende.
@@ -206,5 +247,5 @@ export function crearAtencion({pool,enviar,listo,recuperar,avisarAlAbrir=false,a
    await avisar();
   } finally {ocupado=false;}
  }
- return {abrir,entrada,respuestaHumana,control,acuse,iniciar,tick};
+ return {abrir,entrada,respuestaHumana,control,acuse,iniciar,diagnosticoSara,tick};
 }

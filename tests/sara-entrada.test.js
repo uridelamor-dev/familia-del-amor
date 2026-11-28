@@ -29,7 +29,7 @@ test('el mismo mensaje no se procesa dos veces y la cola mantiene el orden por c
   assert.deepEqual(orden, ['inicio']); liberar(); await Promise.all([p1, p2]);
   assert.deepEqual(orden, ['inicio', 'fin', 'segundo']);
 });
-function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false, fallaPresencia = false } = {}) {
+function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false, fallaPresencia = false, fallaEnvio = false } = {}) {
   const guardados = [], envios = [], llamadas = [], marcados = [];
   const perfil = { estado_ia: estado, idioma_ultimo: 'ca', pausado_por: estado === 'pausada' ? 'operador' : null };
   const env = { atencionEntrada:null, pausaBloqueante, console, _marcarMensajeSistema: (jid, texto) => marcados.push(texto), conTurno, indicarEscribiendo, controlAvisosSara: crearControlAvisos(), estaPausada, idiomaSugerido, pidePersona, MOTIVO_PAUSA, textoSeguro,
@@ -40,7 +40,7 @@ function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false, 
       return { etiqueta: 'Lectura del archivo', texto: 'Vull reservar una taula per a quatre persones.' };
     } }),
     onMessage: async x => guardados.push(x), onPausarIA: null, followupAwaitingReply: new Map(), seguimientoResolver: null,
-    sock: { updateMediaMessage() {}, sendPresenceUpdate: async () => { if(fallaPresencia) throw Error('presencia no disponible'); }, sendMessage: async (_jid, x) => envios.push(x.text) },
+    sock: { updateMediaMessage() {}, sendPresenceUpdate: async () => { if(fallaPresencia) throw Error('presencia no disponible'); }, sendMessage: async (_jid, x) => { if (fallaEnvio) throw Error('WhatsApp no confirmó el envío'); envios.push(x.text); } },
     responderConIA: async (_jid, texto) => {
       llamadas.push(texto);
       if (tomaManual) Object.assign(perfil, { estado_ia: 'pausada', pausado_por: 'operador' });
@@ -48,7 +48,10 @@ function entrada({ estado = 'activa', fallaLectura = false, tomaManual = false, 
     },
   };
   const a = wa.indexOf('async function procesarBatch('), b = wa.indexOf('/**', a);
-  vm.runInNewContext(wa.slice(a, b), env);
+  const inicioEnvio = wa.indexOf('const mensajesAplicacion =');
+  const finEnvio = wa.indexOf('const _mensajesSistema =', inicioEnvio);
+  Object.assign(env, { generateMessageIDV2: () => 'id-simulado', setTimeout: () => ({unref() {}}) });
+  vm.runInNewContext(wa.slice(inicioEnvio, finEnvio) + wa.slice(a, b), env);
   return { run: () => env.procesarBatch('cliente', [{ textoFinal: '[Archivo adjunto sin texto]', tieneAdjunto: true,
     msg: { key: { id: 'm1', remoteJid: 'cliente' }, message: { documentMessage: { mimetype: 'application/pdf' } } } }]), envios, guardados, llamadas, marcados };
 }
@@ -61,6 +64,7 @@ test('entrada real: estando pausada archiva y permanece en silencio', async () =
   const e = entrada({ estado: 'pausada' }); await e.run();
   assert.equal(e.envios.length, 0); assert.equal(e.llamadas.length, 0); assert.equal(e.guardados[0].respuesta, null);
   assert.deepEqual([...e.guardados[0].adjuntos], ['adjunto-1']);
+  assert.equal(e.guardados[0].estadoSara, 'sara_pausada');
 });
 test('entrada real: lectura fallida no ejecuta acciones ni pierde el original', async () => {
   const e = entrada({ fallaLectura: true }); await e.run();
@@ -114,3 +118,10 @@ test('endpoint de adjuntos exige autenticación de dirección y aplica caducidad
 });
 
 test('entrada real: responde aunque falle el indicador escribiendo', async () => { const e = entrada({ fallaPresencia: true }); await e.run(); assert.deepEqual(e.envios, ['Per a quin dia?']); assert.deepEqual(e.marcados, e.envios); });
+
+test('marca el fallo de WhatsApp sin registrar como enviada la respuesta', async () => {
+ const e = entrada({fallaEnvio:true}); await e.run();
+ assert.deepEqual(e.envios, []);
+ assert.equal(e.guardados[0].estadoSara, 'sara_fallo_envio');
+ assert.equal(e.guardados[0].respuesta, null);
+});

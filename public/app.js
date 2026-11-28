@@ -1008,7 +1008,7 @@ if (reservaForm) reservaForm.addEventListener("submit", async (e) => {
   const res = await fetch("/api/reservas", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify({...payload, idioma: currentLang, esperar_alta_club: true})
   });
   const data = await res.json();
   if (data.ok) {

@@ -1,5 +1,5 @@
 import { DIRECCIONES_RESERVA } from './src/modules/reservas/direcciones.js';
-import {HERRAMIENTA_CARNET,instruccionesCarnet} from './src/modules/messaging/sara-carnet.js';
+import {HERRAMIENTA_CARNET,instruccionesCarnet,notaClubReserva,telefonoCarnet} from './src/modules/messaging/sara-carnet.js';
 import { pausaBloqueante, fechaRespuestaWhatsApp } from './src/modules/messaging/atencion.js';
 import { conTurno } from './src/modules/messaging/turno.js';
 import { entradaDiferidaVigente, adjuntoGrupoDiferidoVigente, indicarEscribiendo } from './src/modules/messaging/entrada-diferida.js';
@@ -10,9 +10,9 @@ import pino from "pino";
 import Anthropic from "@anthropic-ai/sdk";
 import { anteponerCitado as ctxAnteponerCitado, ORIGEN as CTX_ORIGEN }
   from "./src/modules/messaging/contexto.js";
-import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan }
+import { estaPausada, MOTIVO_PAUSA, pidePersona, idiomaSugerido, lineaIdioma, pistaIdioma, datosCancelacionConfirmados, referenciaRespuesta, respuestaBreve, textoBreve, pulirCatalan }
   from "./src/modules/messaging/sara.js";
-import { revisarRespuesta, textoSeguro, confirmacionDocumentoEnviado, confirmacionAcciones, acuseTrasIncidencia, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
+import { revisarRespuesta, textoSeguro, confirmacionAcciones, acuseTrasIncidencia, crearControlAvisos } from "./src/modules/messaging/sara-revision.js";
 import { mensajeNormalizado, prepararAdjunto } from "./src/modules/messaging/sara-adjuntos.js";
 import { respuestaTrasHerramientas } from "./src/modules/messaging/respuesta-herramientas.js";
 import path from "path";
@@ -84,7 +84,7 @@ function getAnthropic() {
 
 const SYSTEM_PROMPT = `Eres *Sara*, la asistente virtual de Familia del Amor, un grupo de restauración con varios locales en la Costa Brava y el Maresme (Cataluña, España). Tratas siempre de tú a los clientes — eres cercana, directa y simpática, como una buena camarera. Respondes siempre en el idioma en que te escriban (español, catalán o inglés).
 
-**Norma de conversación:** nunca hagas más de dos preguntas en un mismo mensaje.
+**Norma de conversación:** abre con el dato útil. Para una consulta simple, responde en una o dos frases. Pregunta solo lo que falte y nunca hagas más de dos preguntas en un mismo mensaje. Usa los datos del cliente que ya constan en su perfil y en el historial. Un mensaje largo no obliga a una respuesta larga. Sin despedidas de rutina, listas de locales, repetir toda la reserva ni ofrecer servicios que no pidió. Si pregunta por un domingo, no recomiendes un menú de lunes a viernes. Si el cliente da el total desglosado y coincide con el de una reserva confirmada, acusa recibo sin cambiarla.
 
 ## Nuestros locales, ubicaciones y horarios
 No hay un horario de apertura universal confirmado. Consulta la configuración vigente del local; si no consta, no lo deduzcas de las franjas de reserva.
@@ -115,12 +115,13 @@ Ejemplo CORRECTO: "¡Uy! Justo ese día tenemos la Fiesta Mayor en Blanes y no a
 Ejemplo INCORRECTO (no lo hagas nunca): "¡Claro que sí, podemos reservar este sábado en Blanes!... aunque ese día hay fiesta mayor y no se puede."
 
 ## Cancelaciones
-Si un cliente quiere cancelar su reserva: primero confirma con él de qué reserva se trata (normalmente la verás en el contexto de su reserva: local, día y hora). Cuando el cliente confirme que quiere cancelarla, usa la herramienta \`cancelar_reserva\` con el día (y el local si lo sabes). Después, confírmale con amabilidad que su reserva ha quedado cancelada. Si no encuentras su reserva, pídele el día y el nombre, o dile que llame al local.
+Si un cliente quiere cancelar su reserva: primero confirma con él de qué reserva se trata (normalmente la verás en el contexto de su reserva: local, día y hora). Cuando el cliente confirme que quiere cancelarla, usa la herramienta \`cancelar_reserva\` con el día y los datos de local u hora que ya conoces. Si el cliente no ha identificado la reserva, no uses los datos de su última reserva como si los hubiese confirmado. Si la herramienta indica varias coincidencias, pide solo el dato indicado y no confirmes que se ha cancelado. Después, confírmale con amabilidad que su reserva ha quedado cancelada. Si no encuentras su reserva, pídele el día y el nombre, o dile que llame al local.
 
 ## Modificaciones (¡NO son cancelaciones!)
 Si un cliente quiere CAMBIAR algo de una reserva que YA tiene (número de personas, hora, día o zona) — por ejemplo "al final seremos 4 en vez de 2" o "¿podemos cambiarlo a las 21:30?" — es una MODIFICACIÓN, NO una cancelación. Usa la herramienta \`modificar_reserva\` (localiza la reserva por su día actual y, si lo sabes, el local; pon en null lo que no cambie). NUNCA canceles y vuelvas a crear la reserva para un cambio: eso confunde al local. Solo usa \`cancelar_reserva\` si el cliente quiere anular la reserva del todo y no venir.
 
 ## Carnet del Club
+En esta fase el Club se usa en La Tapeta de Blanes, Lloret y Girona. Las promociones concretas tienen sus propios locales y condiciones. Para preguntar si se admite en otro establecimiento, responde con esta información directamente. Si pregunta cómo darse de alta, puedes facilitar el formulario oficial https://familiadelamor.org/alta.html.
 Cuando el cliente pida su carnet de socio, tarjeta del Club, QR personal o recuperar su enlace, usa consultar_mi_carnet. La herramienta consulta solo el teléfono verificado del remitente. No pidas que repita su nombre o teléfono, no uses números mencionados en el mensaje, no inventes enlaces ni crees tarjetas nuevas. Devuelve el enlace exacto que proporcione la herramienta. Si falla la consulta no digas que no tiene carnet.
 
 ## Carta, platos y precios
@@ -188,7 +189,7 @@ En el contexto verás mensajes marcados como enviados por nosotros —por ti, po
 Si el cliente parece estar respondiendo a uno de ellos, interpreta lo que dice DENTRO de ese contexto. Si te dice "ese día trabajo" y el mensaje anterior hablaba de un día concreto, se refiere a ese día: no le preguntes de qué día habla, que ya está escrito ahí arriba.
 Un agradecimiento a nuestra invitación solo necesita una respuesta breve: «De res! T’hi esperem 😊» / «¡De nada! Te esperamos 😊». No vuelvas a presentarte, no preguntes en qué puedes ayudar y no ofrezcas reservas o la carta sin que lo pidan.
 Si pregunta dónde estamos después de recibir una promoción, contesta la ubicación DEL LOCAL DE ESA PROMOCIÓN cuando conste en el contexto; nunca enumeres todos los locales ni sugieras que el regalo sirve en cualquiera. Si no consta el local o hay varias promociones posibles, pregunta a cuál se refiere. Si falta una condición, consulta al equipo antes de afirmarla.
-Cuando el cliente usa "Responder" de WhatsApp verás el mensaje citado marcado como tal: ese manda sobre el resto del historial.
+Cuando el cliente usa "Responder" de WhatsApp verás el mensaje citado marcado como tal: ese manda sobre el resto del historial. Sin cita, usa la última intervención pertinente, incluida la de una persona del equipo. Un «sí», «ok» o «vale» puede aceptar una propuesta o contestar una pregunta previa. Continúa desde ahí y solo ejecuta acciones si los datos y la intención están claros. Un «ok» después de un mensaje informativo no requiere otra decisión.
 
 ## Promociones y códigos: lo que sabes y lo que no
 Entender de qué promoción habla NO es saber sus condiciones.
@@ -333,7 +334,9 @@ const TOOLS = [
       type: "object",
       properties: {
         dia: { type: "string", format: "date", description: "Fecha de la reserva a cancelar (YYYY-MM-DD)" },
-        local: { type: "string", description: "Local de la reserva, si lo sabes (para desambiguar)" }
+        local: { type: "string", description: "Local de la reserva, si lo sabes (para desambiguar)" },
+        hora: { type: "string", description: "Hora HH:MM indicada por el cliente, si consta" },
+        nombre: { type: "string", description: "Nombre de la reserva si es necesario distinguir varias a la misma hora" }
       },
       required: ["dia"],
       additionalProperties: false
@@ -664,6 +667,14 @@ function buildPerfilContext(perfil) {
     : "";
 }
 
+async function incluirClubEnRespuesta(texto, acciones, telefono, idioma) {
+  const reserva = acciones.find(a => a.herramienta === 'registrar_reserva' &&
+    a.resultado?.is_error === false && a.resultado.content === 'Reserva registrada correctamente.');
+  if (!reserva || !telefonoCarnet(telefono) || telefonoCarnet(reserva.solicitud.telefono) !== telefonoCarnet(telefono)) return texto;
+  const nota = await notaClubReserva({local: reserva.solicitud.local, telefono, idioma, consultar: carnetResolver});
+  return [texto, nota].filter(Boolean).join('\n\n');
+}
+
 async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, citado = null) {
   // 1. Cargar perfil permanente del cliente
   let perfil = null;
@@ -733,6 +744,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
   //
   // Los mensajes del cliente salen del historial ya construido: los turnos `user` que no son
   // contexto interno nuestro. El del cliente gana siempre al de cualquier campaña anterior.
+  const referencia = referenciaRespuesta(historial, citado);
   const suyos = [...historial, { role: "user", content: mensajeUsuario }]
     .filter((t) => t.role === "user" && typeof t.content === "string"
                    && !t.content.startsWith("[CONTEXTO INTERNO:"))
@@ -748,7 +760,7 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
   const parteFallo = falloContexto
     ? " [CONTEXTO INTERNO: no se ha podido recuperar todo el contexto. Si se refiere a una invitación o a una promoción y falta el dato, no adivines: pide al cliente identificar la promoción o el dato que falta; deriva solo si requiere una decisión exclusiva del equipo.]" : "";
   const contenidoUsuario =
-    `${partesFecha}${partesRetraso}${reservaCtx}${parteCampana}${parteFallo}${partesPrimer}${parteIdioma} ${mensajeUsuario}${parteAdjunto}`;
+    `${referencia ? "[CONTEXTO INTERNO: mensaje previo relevante; interpreta las respuestas breves en relación con él.] " + referencia + "\n" : ""}${partesFecha}${partesRetraso}${reservaCtx}${parteCampana}${parteFallo}${partesPrimer}${parteIdioma} ${mensajeUsuario}${parteAdjunto}`;
 
   // Se recuerda el idioma que se le ha detectado, para poder desempatar un «Hola» a secas
   // dentro de tres días. Solo cuando el mensaje daba para decidirlo: guardar una suposición
@@ -763,15 +775,17 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
   historial.push({ role: "user", content: contenidoUsuario });
   if (historial.length > MAX_HISTORIAL * 2) historial.splice(0, 2);
 
-  // Preguntar por otra fecha no equivale a pedir una excepción: consultar primero
-  // las condiciones oficiales y mantener la revisión antes de enviar.
-  const ultimoAviso=[...historial].reverse().find(m=>m.role==='assistant')?.content;
-  const acuse=acuseTrasIncidencia(mensajeUsuario,ultimoAviso,pista.idioma);
-  if(acuse)return acuse;
-  const cortesia = respuestaCortesia(mensajeUsuario, pista.idioma, !!campana?.texto);
-  if (cortesia) {
-    historial.push({ role: "assistant", content: cortesia });
-    return cortesia;
+  if (pidePersona(mensajeUsuario)) {
+    const entrega = await ejecutarHerramienta({ name: 'pasar_a_persona', input: {
+      motivo: mensajeUsuario, pidio_persona: true,
+    } }, adjuntoUrl, jid);
+    return entrega.is_error ? textoSeguro('error', pista.idioma) : textoBreve('persona', pista.idioma);
+  }
+  const corta = acuseTrasIncidencia(mensajeUsuario, referencia, pista.idioma)
+    || respuestaBreve(mensajeUsuario, referencia, pista.idioma);
+  if (corta) {
+    historial.push({ role: "assistant", content: corta });
+    return corta;
   }
   const ai = getAnthropic();
   if (!ai) return textoSeguro('error', pista.idioma);
@@ -805,36 +819,43 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
         system: systemBlocks,
-        tools: TOOLS,
+        tools: TOOLS.filter(t => t.name !== "pasar_a_persona"),
         messages
       }),
       ejecutar: async block => {
-        if (perfilLoader && estaPausada(await perfilLoader(jid))) {
+        if (block.name === "pasar_a_persona") {
+          return { content: 'La revisión decidirá si hace falta intervención. Continúa con los datos disponibles.', is_error: true };
+        }
+        if (perfilLoader && pausaBloqueante(await perfilLoader(jid))) {
           return { content: 'La conversación ya está en manos del equipo. No ejecutar ninguna acción adicional.', is_error: true };
         }
-        const resultado = await ejecutarHerramienta(block, adjuntoUrl, jid);
-        resultadosAcciones.push({ herramienta: block.name, solicitud: block.input, resultado });
+        const solicitud = block.name === "cancelar_reserva"
+          ? datosCancelacionConfirmados(block.input, suyos, referencia) : block.input;
+        const resultado = await ejecutarHerramienta({...block, input: solicitud}, adjuntoUrl, jid);
+        resultadosAcciones.push({ herramienta: block.name, solicitud, resultado });
         return resultado;
       }
     });
 
     const revision = await revisarRespuesta({
       crear: args => ai.messages.create(args, { timeout: 20000, maxRetries: 1 }), borrador: respuestaCliente, mensaje: mensajeUsuario,
-      historial: conCita.slice(-8), idioma: pista.idioma, resultadosAcciones,
+      historial: conCita.slice(-10), idioma: pista.idioma, referencia,
+      idiomaObligatorio: pista.fuente === "mensaje" ? pista.idioma : null, resultadosAcciones,
       diagnostico: dato => console.warn("[Sara] revisión rechazada", JSON.stringify(dato)),
       fuentes: SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf('## Nuestros locales'), SYSTEM_PROMPT.indexOf('## Carta, platos')) + '\n' + partesFecha + '\n' + saraConfigTexto + '\n' + (campana?.texto || ''),
     });
-    let respuestaFinal = revision.respuesta.trim();
+    let respuestaFinal = pulirCatalan(revision.respuesta.trim(), revision.idioma);
     if (revision.decision === 'consultar') {
-      const yaDerivada = resultadosAcciones.some(a => a.herramienta === 'pasar_a_persona' && !a.resultado.is_error);
-      const derivacion = yaDerivada ? { is_error: false } : await ejecutarHerramienta({ name: 'pasar_a_persona', input: { motivo: String(revision.motivo || mensajeUsuario).slice(0, 300), pidio_persona: false } }, adjuntoUrl, jid);
-      // Separa la acción verificada de cualquier consulta adicional; no contradigas su éxito.
+      const derivacion = await ejecutarHerramienta({ name: 'pasar_a_persona', input: {
+        motivo: String(revision.motivo || mensajeUsuario).slice(0, 300), pidio_persona: false,
+      } }, adjuntoUrl, jid);
       const confirmada = confirmacionAcciones(resultadosAcciones, revision.idioma);
-      const adicional = revision.idioma === 'ca' ? 'Hi ha una consulta addicional pendent de revisió amb l’equip.' : revision.idioma === 'en' ? 'An additional question is awaiting review by the team.' : 'Hay una consulta adicional pendiente de revisión con el equipo.';
-      respuestaFinal = confirmada
-        ? confirmada + (derivacion.is_error ? '' : '\n\n' + adicional)
-        : textoSeguro(derivacion.is_error ? 'error' : 'consulta', revision.idioma);
+      respuestaFinal = [confirmada || respuestaFinal, derivacion.is_error
+        ? (confirmada ? '' : textoSeguro('error', revision.idioma))
+        : (confirmada || respuestaFinal ? textoBreve('persona', revision.idioma) : textoSeguro('consulta', revision.idioma))]
+        .filter(Boolean).join(' ');
     }
+    respuestaFinal = await incluirClubEnRespuesta(respuestaFinal, resultadosAcciones, telefonoContexto, revision.idioma);
     historial.push({ role: "assistant", content: respuestaFinal });
     return respuestaFinal;
   } catch (err) {
@@ -842,7 +863,16 @@ async function responderConIA(jid, mensajeUsuario, adjuntoUrl, contextoRetraso, 
     // criptográfico, pero un objeto de error de una librería no se imprime crudo y punto.
     console.error(lineaError("[IA] Error", err), JSON.stringify(redactar(err.error, { profundidad: 2 })));
     const confirmada=confirmacionAcciones(resultadosAcciones,pista.idioma);
-    if(confirmada){historial.push({role:'assistant',content:confirmada});return confirmada;}
+    if (confirmada) {
+      const respuesta = await incluirClubEnRespuesta(confirmada, resultadosAcciones, telefonoContexto, pista.idioma);
+      historial.push({ role: 'assistant', content: respuesta });
+      return respuesta;
+    }
+    if (String(err.message).startsWith('revision_no_valida:') && !resultadosAcciones.length) {
+      const aclaracion = textoSeguro('aclaracion', pista.idioma);
+      historial.push({ role: 'assistant', content: aclaracion });
+      return aclaracion;
+    }
     const derivacion=await ejecutarHerramienta({name:'pasar_a_persona',input:{motivo:('Gestión sin completar: '+mensajeUsuario).slice(0,300),pidio_persona:false}},adjuntoUrl,jid);
     const aviso=textoSeguro(!derivacion.is_error?'consulta':resultadosAcciones.length?'resultado':'error',pista.idioma);
     historial.push({role:'assistant',content:aviso});
@@ -906,6 +936,18 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
       if (!onCancelarReserva) throw new Error("sistema de cancelaciones no disponible");
       const telefono = await resolverTelefono(jid);
       const resultado = await onCancelarReserva({ ...input, telefono }, jid);
+      if (resultado?.motivo === "ambigua") {
+        const preguntas = {
+          hora: `Pregunta a qué hora es la que quiere cancelar (${resultado.horas.join(" o ")}).`,
+          local: "Pregunta en qué local está la reserva que quiere cancelar.",
+          nombre: "Pregunta a nombre de quién está la reserva que quiere cancelar.",
+          equipo: "Son indistinguibles. Pide al equipo que identifique la reserva correcta.",
+        };
+        return { content: "No se ha cancelado ninguna reserva. " + preguntas[resultado.pedir], is_error: false };
+      }
+      if (resultado?.motivo === "cambio concurrente") {
+        return { content: "No se ha cancelado la reserva porque cambió durante la gestión. Pide confirmar sus datos actuales.", is_error: false };
+      }
       if (!resultado || resultado.ok === false) {
         return {
           content: "No encuentro una reserva que coincida para cancelar. Pídele al cliente el día exacto y el nombre de la reserva, o dile que llame al local.",
@@ -1001,6 +1043,11 @@ async function procesarBatch(jid, items) {
   let textoCombinado = items.map(i => i.textoFinal).join("\n");
   let ficha = null;
   let pausada = false;
+  let estadoSara = null;
+  async function enviarRespuesta(texto) {
+    try { await enviarDesdeAplicacion(jid, {text: texto}); }
+    catch (error) { estadoSara = 'sara_fallo_envio'; throw error; }
+  }
   await atencionEntrada?.entrada(jid,textoCombinado).catch(e=>console.error("[Atención]",e.message));
 
   // ── ¿ESTÁ ESTA CONVERSACIÓN EN MANOS DE UNA PERSONA? ──────────────────────────────────────
@@ -1024,6 +1071,7 @@ async function procesarBatch(jid, items) {
     } catch (e) {
       // Si no se puede comprobar la pausa, conservar el mensaje sin intervenir en el chat.
       pausada = true;
+      estadoSara = "sara_fallo_procesamiento";
       console.error("[Sara] no se pudo leer el estado de la conversación:", e.message);
     }
   }
@@ -1040,30 +1088,41 @@ async function procesarBatch(jid, items) {
   const idsAdjuntos = adjuntos.map(a => a.id).filter(Boolean);
   if (!pausada && perfilLoader && adjuntos.length) {
     try { pausada = pausaBloqueante(await perfilLoader(jid)); }
-    catch { pausada = true; }
+    catch { pausada = true; estadoSara = 'sara_fallo_procesamiento'; }
   }
   if (pausada) {
     let respuesta=null;
-    if(ficha?.pausado_por==='sara' && ficha.pausa_motivo==='pidio_persona' && await atencionEntrada?.acuse(jid)) {
-      const idioma=idiomaSugerido({mensajesCliente:[textoCombinado],idiomaContacto:ficha.idioma_ultimo}).idioma;
-      const acuse={es:'He recibido tu mensaje. Tu consulta sigue pendiente del equipo.',ca:'He rebut el teu missatge. La teva consulta continua pendent de l’equip.',en:'I have received your message. Your request is still awaiting the team.'}[idioma]||'He recibido tu mensaje. Tu consulta sigue pendiente del equipo.';
-      await conTurno(jid,async()=>{const actual=await perfilLoader(jid);if(actual?.pausado_por!=='sara')return;_marcarMensajeSistema(jid,acuse);await enviarDesdeAplicacion(jid,{text:acuse});respuesta=acuse;});
+    try {
+      if(ficha?.pausado_por==='sara' && ficha.pausa_motivo==='pidio_persona' && await atencionEntrada?.acuse(jid)) {
+        const idioma=idiomaSugerido({mensajesCliente:[textoCombinado],idiomaContacto:ficha.idioma_ultimo}).idioma;
+        const acuse={es:'He recibido tu mensaje. Tu consulta sigue pendiente del equipo.',ca:'He rebut el teu missatge. La teva consulta continua pendent de l’equip.',en:'I have received your message. Your request is still awaiting the team.'}[idioma]||'He recibido tu mensaje. Tu consulta sigue pendiente del equipo.';
+        await conTurno(jid,async()=>{const actual=await perfilLoader(jid);if(actual?.pausado_por!=='sara')return;_marcarMensajeSistema(jid,acuse);await enviarRespuesta(acuse);respuesta=acuse;});
+      }
+    } catch (error) {
+      await atencionEntrada?.abrir(jid, 'error_respuesta', textoCombinado).catch(() => {});
+      console.error('[Sara] No se pudo enviar el acuse:', error.message);
     }
-    if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta, pausada: true, adjuntos: idsAdjuntos });
+    if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta, pausada: true,
+      estadoSara: estadoSara || (respuesta ? null : 'sara_pausada'), adjuntos: idsAdjuntos });
     return;
   }
   if (adjuntos.some(a => a.error)) {
     const idioma = idiomaSugerido({ mensajesCliente: items.map(i => i.textoFinal), idiomaContacto: ficha?.idioma_ultimo }).idioma;
     const respuesta = textoSeguro('adjunto', idioma);
     let enviada = false;
-    try { enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await enviarDesdeAplicacion(jid, { text: respuesta }); return true; }); }
-    finally { if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: enviada ? respuesta : null, adjuntos: idsAdjuntos }); }
+    try { enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await enviarRespuesta(respuesta); return true; }); }
+    finally { if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: enviada ? respuesta : null, estadoSara: enviada ? null : estadoSara || 'sara_pausada', adjuntos: idsAdjuntos }); }
     return;
   }
   const adjuntoInfo = idsAdjuntos.length ? 'Adjuntos guardados en la conversación del panel' : null;
   const contextoRetraso = items.find(i => i.contextoRetraso)?.contextoRetraso || null;
 
-  if (followupAwaitingReply.has(jid)) {
+  // De varios mensajes seguidos manda la última cita de WhatsApp.
+  const citado = [...items].reverse().map((x) => x.citado).find(Boolean) || null;
+  const peticionNueva = pidePersona(textoCombinado) ||
+    (citado?.deNosotros && !/(?:cómo te fue|com et va anar|how was your visit)/i.test(citado.texto)) ||
+    /[?？]|\b(?:reservar|cancel(?:a[rl]?|·lar)?|modifica(?:r|ció|ción)?|canviar|carnet|carta|horarios?|horari|menu|opening hours)\b/i.test(textoCombinado);
+  if (followupAwaitingReply.has(jid) && !peticionNueva) {
     const ctx = followupAwaitingReply.get(jid);
     followupAwaitingReply.delete(jid);
     // Qué se contesta lo decide `server.js`: a quien salió contento se le manda el enlace para
@@ -1087,65 +1146,51 @@ async function procesarBatch(jid, items) {
           `Mensaje: ${textoCombinado}`
         );
       }
-      const enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await enviarDesdeAplicacion(jid, { text: ack }); return true; });
-      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: enviada ? ack : null, adjuntos: idsAdjuntos });
+      const enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await enviarRespuesta(ack); return true; });
+      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: enviada ? ack : null, estadoSara: enviada ? null : 'sara_pausada', adjuntos: idsAdjuntos });
     } catch (err) {
       console.error("Error gestionando follow-up reply:", err.message);
-      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
+      await atencionEntrada?.abrir(jid, "error_respuesta", textoCombinado).catch(() => {});
+      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null,
+        estadoSara: estadoSara || 'sara_fallo_procesamiento', adjuntos: idsAdjuntos });
     }
     return;
   }
 
   try {
     await indicarEscribiendo(sock, jid);
-    // De varios mensajes seguidos manda la cita del ÚLTIMO: es a lo que se refiere ahora.
-    const citado = [...items].reverse().map((x) => x.citado).find(Boolean) || null;
-
-    // ── LA RED DE LA DERIVACIÓN ────────────────────────────────────────────────────────────
-    //
-    // El prompt le dice a Sara que esta petición manda y tiene una herramienta para hacerlo. Pero
-    // un modelo puede no llamarla, y entonces seguiría intentando resolver a alguien que ya ha
-    // dicho que quiere una persona. Así que si la petición es INEQUÍVOCA se marca aquí, antes de
-    // preguntarle: Sara contesta esta vez —en su idioma, con el contexto de siempre— y a partir
-    // de la siguiente ya no.
-    if (onPausarIA && pidePersona(textoCombinado)) {
-      try {
-        await onPausarIA(jid, { motivo: MOTIVO_PAUSA.PIDIO_PERSONA,
-                                detalle: textoCombinado.slice(0, 300), por: "sara" });
-      } catch (e) { console.error("[Sara] no se pudo marcar la derivación:", e.message); }
-    }
     const respuesta = await responderConIA(jid, textoCombinado, adjuntoInfo, contextoRetraso, citado);
     if (['error','resultado','adjunto'].some(tipo=>['es','ca','en'].some(idioma=>respuesta===textoSeguro(tipo,idioma))))
       await atencionEntrada?.abrir(jid,'error_respuesta',textoCombinado).catch(e=>console.error('[Atención]',e.message));
     if (perfilLoader) {
       const actual = await perfilLoader(jid);
       if (estaPausada(actual) && actual.pausado_por !== 'sara') {
-        if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
+        if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, estadoSara: 'sara_pausada', adjuntos: idsAdjuntos });
         return;
       }
     }
-    if (controlAvisosSara.omitir(jid, respuesta)) {
-      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
+    if (controlAvisosSara.omitir(jid, respuesta, textoCombinado)) {
+      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, estadoSara: 'sara_aviso_repetido', adjuntos: idsAdjuntos });
       return;
     }
     const enviado = await conTurno(jid, async () => {
       const actual = perfilLoader ? await perfilLoader(jid) : null;
       if (estaPausada(actual) && actual.pausado_por !== 'sara') return false;
       _marcarMensajeSistema(jid, respuesta);
-      await enviarDesdeAplicacion(jid, { text: respuesta });
+      await enviarRespuesta(respuesta);
       return true;
     });
     if (!enviado) {
-      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
+      if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, estadoSara: 'sara_pausada', adjuntos: idsAdjuntos });
       return;
     }
-    controlAvisosSara.enviado(jid, respuesta);
+    controlAvisosSara.enviado(jid, respuesta, textoCombinado);
     console.log(`📤 Respuesta enviada a ${jid}`);
     if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta, adjuntos: idsAdjuntos });
   } catch (err) {
     console.error("Error respondiendo:", err.message);
     await atencionEntrada?.abrir(jid,"error_respuesta",textoCombinado).catch(e=>console.error("[Atención]",e.message));
-    if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, adjuntos: idsAdjuntos });
+    if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: null, estadoSara: estadoSara || 'sara_fallo_procesamiento', adjuntos: idsAdjuntos });
   }
 }
 
@@ -1387,7 +1432,7 @@ async function connectToWhatsApp() {
         if (!entradaDiferidaVigente(msg) || !entradaDiferidaPermitida) continue;
         // No reabrir una conversación contestada desde el teléfono durante la caída.
         if (messages.some(m => m.key?.fromMe && m.key?.remoteJid === jid
-          && Number(m.messageTimestamp) >= Number(msg.messageTimestamp))) continue;
+          && Number(m.messageTimestamp) >= Number(msg.messageTimestamp) && !mensajesAplicacion.has(m.key.id))) continue;
         try {
           if (!(await entradaDiferidaPermitida(msg, await resolverTelefono(jid)))) continue;
         } catch (e) {
@@ -1465,7 +1510,7 @@ async function connectToWhatsApp() {
 function formatPhone(telefono) {
   let num = telefono.replace(/\D/g, "");
   if (num.startsWith("00")) num = num.slice(2);
-  if (!num.startsWith("34") && (num.startsWith("6") || num.startsWith("7") || num.startsWith("9"))) {
+  if (/^[6789]\d{8}$/.test(num)) {
     num = "34" + num;
   }
   return `${num}@s.whatsapp.net`;
@@ -1492,9 +1537,8 @@ export async function resolverTelefono(jid) {
  * lo apunta como enviado. Es el fallo más silencioso que hay aquí — el cliente espera un código
  * que no va a llegar nunca y nosotros creemos habérselo mandado.
  *
- * Y hay un caso peor. `formatPhone` antepone «34» a cualquier número que empiece por 6, 7 o 9,
- * así que un móvil francés (612345678) se convierte en un español REAL y distinto: el código se
- * le manda a otra persona. Preguntar antes es lo único que lo caza.
+ * Los teléfonos de nueve dígitos se tratan como nacionales. Consultar a WhatsApp antes de
+ * enviar evita marcar como entregado un mensaje dirigido a un número sin cuenta.
  *
  * Devuelve `true`, `false`, o `null` cuando no se ha podido preguntar (WhatsApp caído, la
  * consulta falla). `null` es «no lo sé», y quien llame debe tratarlo como «sigue adelante»: no
@@ -1615,50 +1659,59 @@ function lineaZona(zona) {
   return "";
 }
 
-export async function sendConfirmacionCliente(telefono, reserva) {
-  if (!clientReady || !sock) return;
+function zonaConfirmacion(zona, idioma) {
+  const zonas = { terraza: {es:'Terraza',ca:'Terrassa',en:'Terrace'}, interior: {es:'Interior',ca:'Interior',en:'Indoors'} };
+  return zonas[zona]?.[idioma] || zonas[zona]?.es;
+}
+
+function fechaConfirmacion(dia, idioma) {
+  const fecha = new Date(String(dia).slice(0, 10) + 'T12:00:00Z');
+  if (!Number.isFinite(+fecha)) return formatFecha(dia);
+  return new Intl.DateTimeFormat({ca:'ca-ES',en:'en-GB',es:'es-ES'}[idioma] || 'es-ES', {
+    weekday:'long', day:'numeric', month:'long', timeZone:'UTC',
+  }).format(fecha);
+}
+
+export async function sendConfirmacionCliente(telefono, reserva, consultaClub) {
+  if (!clientReady || !sock) return false;
   try {
     const jid = formatPhone(telefono);
-    const nombre = reserva.nombre_reserva.split(" ")[0];
-    const msg =
-      `¡Hola ${nombre}! 😊 Soy Sara, la asistente virtual de Familia del Amor. Te escribo para confirmarte la reserva:\n\n` +
-      `✅ *Reserva confirmada*\n\n` +
-      `🏠 ${reserva.local}\n` + (DIRECCIONES_RESERVA[reserva.local] ? `📍 ${DIRECCIONES_RESERVA[reserva.local]}\n` : "") +
-      `📅 ${formatFecha(reserva.dia)}\n` +
-      `⏰ ${reserva.hora}\n` +
-      `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}` +
-      lineaZona(reserva.zona) + `\n` +
-      `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
-      `¡Te esperamos! Si necesitas cancelar o modificar, escríbenos aquí o llámanos.`;
+    const idioma = reserva.idioma || (perfilLoader ? (await perfilLoader(jid).catch(() => null))?.idioma_ultimo : null) || 'es';
+    const fecha = fechaConfirmacion(reserva.dia, idioma);
+    const titulos = {es: 'Reserva confirmada', ca: 'Reserva confirmada', en: 'Booking confirmed'};
+    const personas = {es: Number(reserva.personas) === 1 ? 'persona' : 'personas', ca: Number(reserva.personas) === 1 ? 'persona' : 'persones', en: Number(reserva.personas) === 1 ? 'guest' : 'guests'};
+    const resumen = reserva.local + ' · ' + fecha + ', ' + reserva.hora + ' · ' + reserva.personas + ' ' + (personas[idioma] || personas.es);
+    const nota = reserva.clubOmitir ? '' : await notaClubReserva({local: reserva.local, telefono, idioma, consultar: carnetResolver, resultado: consultaClub});
+    const msg = ['✅ *' + (titulos[idioma] || titulos.es) + '*', resumen,
+      DIRECCIONES_RESERVA[reserva.local], reserva.nombre_reserva, zonaConfirmacion(reserva.zona, idioma),
+      nota ? '\n' + nota : ''].filter(Boolean).join('\n');
     await enviarDesdeAplicacion(jid, { text: msg });
     addSaraToHistorial(jid, msg);
-    if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
-    console.log(`📤 Confirmación enviada a ${telefono}`);
+    if (onMensajeSaliente) await onMensajeSaliente({ jid, mensaje: msg, tipoMensaje: 'reserva_confirmada', idioma });
+    return true;
   } catch (err) {
     console.error("Error enviando confirmación:", err.message);
+    return false;
   }
 }
 
 export async function sendConfirmacionPendienteCliente(telefono, reserva) {
-  if (!clientReady || !sock) return;
+  if (!clientReady || !sock) return false;
   try {
     const jid = formatPhone(telefono);
-    const nombre = reserva.nombre_reserva.split(" ")[0];
-    const msg =
-      `¡Hola ${nombre}! 😊 Soy Sara, la asistente virtual de Familia del Amor. Te escribo para confirmarte que hemos recibido tu solicitud de reserva:\n\n` +
-      `⏳ *Reserva pendiente de confirmación*\n\n` +
-      `🏠 ${reserva.local}\n` + (DIRECCIONES_RESERVA[reserva.local] ? `📍 ${DIRECCIONES_RESERVA[reserva.local]}\n` : "") +
-      `📅 ${formatFecha(reserva.dia)}\n` +
-      `⏰ ${reserva.hora}\n` +
-      `👥 ${reserva.personas} personas\n` +
-      `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
-      `Por el número de comensales, un encargado se pondrá en contacto contigo en breve para confirmar todos los detalles. Si necesitas modificar o cancelar la solicitud, responde aquí. ¡Gracias!`;
+    const idioma = reserva.idioma || (perfilLoader ? (await perfilLoader(jid).catch(() => null))?.idioma_ultimo : null) || 'es';
+    const titulos = {es:'Solicitud pendiente de confirmación del local',ca:'Sol·licitud pendent de confirmació del local',en:'Booking request awaiting confirmation from the restaurant'};
+    const fecha = fechaConfirmacion(reserva.dia, idioma);
+    const unidad = {es:'personas',ca:'persones',en:'guests'};
+    const msg = '⏳ *' + (titulos[idioma] || titulos.es) + '*\n' +
+      reserva.local + ' · ' + fecha + ', ' + reserva.hora + ' · ' + reserva.personas + ' ' + (unidad[idioma] || unidad.es);
     await enviarDesdeAplicacion(jid, { text: msg });
     addSaraToHistorial(jid, msg);
-    if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
-    console.log(`📤 Confirmación pendiente enviada a ${telefono}`);
+    if (onMensajeSaliente) await onMensajeSaliente({ jid, mensaje: msg, tipoMensaje: 'reserva_pendiente', idioma });
+    return true;
   } catch (err) {
     console.error("Error enviando confirmación pendiente:", err.message);
+    return false;
   }
 }
 

@@ -20,7 +20,7 @@ test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente'
  if(!await disponible())return t.skip(motivoSalto());const db=await conEsquema();
  try{
  await db.raw(BANDEJA_SCHEMA);await db.raw(ATENCION_SCHEMA);
- await db.raw('CREATE TABLE whatsapp_messages(id SERIAL PRIMARY KEY,jid TEXT,telefono TEXT,mensaje TEXT,respuesta TEXT,tipo TEXT,creado_en TEXT,adjuntos JSONB,historico INTEGER DEFAULT 0)');
+ await db.raw('CREATE TABLE whatsapp_messages(id SERIAL PRIMARY KEY,jid TEXT,telefono TEXT,mensaje TEXT,respuesta TEXT,tipo TEXT,tipo_mensaje TEXT,creado_en TEXT,adjuntos JSONB,historico INTEGER DEFAULT 0)');
  await db.raw('CREATE TABLE wa_clientes(jid TEXT PRIMARY KEY,estado_ia TEXT,pausa_motivo TEXT,nombre TEXT,telefono TEXT,pausado_por TEXT)');
  await db.raw('CREATE TABLE leads(id SERIAL PRIMARY KEY,nombre TEXT,apellidos TEXT,telefono TEXT)');await db.raw(VINCULOS_SCHEMA);
  const jid='34600000000@s.whatsapp.net',lid='123456789@lid',send=[],rec=[];
@@ -47,7 +47,20 @@ test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente'
  const item={msg:{key:{id:'live1'}}};assert.equal((await svc.iniciar(lid,[item])).length,1);assert.equal((await svc.iniciar(jid,[item])).length,0);
  const otro='34600000001@s.whatsapp.net';
  await db.raw("INSERT INTO wa_bandeja_mensajes(jid,mensaje_id,enviado,texto,fecha) VALUES($1,'m1',false,'Reservar para mañana',now()-interval '10 minutes')",[otro]);
+ await db.raw("INSERT INTO wa_bandeja_mensajes(jid,mensaje_id,enviado,texto,fecha) VALUES($1,'promo',true,'Campaña',now()-interval '9 minutes')",[otro]);
+ await db.raw("INSERT INTO whatsapp_messages(jid,tipo,mensaje,respuesta,creado_en) VALUES($1,'saliente','Sistema','Campaña',(now()-interval '9 minutes')::text)",[otro]);
+ assert.equal(await svc.diagnosticoSara(otro,{}),'sara_pendiente_recuperacion');
  await svc.tick();assert.equal(rec.length,1);await svc.tick();assert.equal(rec.length,1);
+ assert.equal(await svc.diagnosticoSara(otro,{}),'sara_recuperacion_iniciada');
+ await db.raw("INSERT INTO whatsapp_messages(jid,tipo,mensaje,tipo_mensaje,creado_en) VALUES($1,'intercambio','Reservar para mañana','sara_fallo_envio',now()::text)",[otro]);
+ assert.equal(await svc.diagnosticoSara(otro,{}),'sara_fallo_envio');
+ await db.raw("UPDATE whatsapp_messages SET tipo_mensaje='sara_pausada' WHERE jid=$1 AND tipo='intercambio'",[otro]);
+ assert.equal(await svc.diagnosticoSara(otro,{}),'sara_pausada');
+ await db.raw("INSERT INTO wa_bandeja_mensajes(jid,mensaje_id,enviado,texto,fecha) VALUES($1,'manual',true,'Te confirma el local',now()+interval '1 second')",[otro]);
+ assert.equal(await svc.diagnosticoSara(otro,{}),null);
+ const respondido='34600000006@s.whatsapp.net';
+ await db.raw("INSERT INTO wa_bandeja_mensajes(jid,mensaje_id,enviado,texto,fecha) VALUES($1,'m1',false,'Quiero reservar',now()-interval '10 minutes'),($1,'m2',true,'Te atiende el local',now()-interval '9 minutes')",[respondido]);
+ await svc.tick();assert.equal(rec.length,1,'una respuesta manual posterior impide recuperar');
  assert.equal((await db.raw('SELECT * FROM wa_atencion WHERE jid=$1',[otro])).rows.length,0,'un mensaje recibido no crea una tarea humana por sí solo');
  const despedida='34600000003@s.whatsapp.net';
  await db.raw("INSERT INTO wa_bandeja_mensajes(jid,mensaje_id,enviado,texto,fecha) VALUES($1,'fin',false,'Muchas gracias!',now()-interval '10 minutes')",[despedida]);

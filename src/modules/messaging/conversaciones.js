@@ -82,7 +82,11 @@ export function registrarConversaciones(app, {auth, pool, enviar, listo, bloquea
   const porId=new Map(archivos.map(a=>[a.id,a]));
   for(const m of datos)m.adjuntos=(Array.isArray(m.adjuntos)?m.adjuntos:[]).map(id=>porId.get(id)||{id,disponible:false});
   const tarea=(await pool.query('SELECT * FROM wa_atencion WHERE jid=$1',[jid])).rows[0]||null;
-  res.json({ok:true,pendiente:conversacionPendiente(c.rows[0],tarea),motivo_pendiente:motivoPendiente(c.rows[0],tarea),data:datos,mas:r.rows.length>100,cursor:datos.length?[datos[0].creado_en,datos[0].id]:null,cliente:c.rows[0],atencion:tarea,connected:listo()});
+  const diagnosticoSara = await atencion?.diagnosticoSara?.(jid,c.rows[0]).catch(e=>{
+   console.error('[Conversaciones] Diagnóstico de Sara:',e.message);
+   return null;
+  });
+  res.json({ok:true,diagnostico_sara:diagnosticoSara??null,pendiente:conversacionPendiente(c.rows[0],tarea),motivo_pendiente:motivoPendiente(c.rows[0],tarea),data:datos,mas:r.rows.length>100,cursor:datos.length?[datos[0].creado_en,datos[0].id]:null,cliente:c.rows[0],atencion:tarea,connected:listo()});
  }));
  // Las lecturas pertenecen a cada usuario del panel, no al estado de atención de Sara.
  app.post(ruta+'/leer',permiso,wrap(async(req,res)=>{

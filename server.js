@@ -11,7 +11,7 @@ import {recordarProveedorRevision} from './src/modules/facturas/aprendizaje-revi
 import {guardarDeshacerRevision,deshacerRevision} from './src/modules/facturas/deshacer-revision.js';
 import { criterioFechaCompras, listadoFacturasSQL } from './src/modules/facturas/fecha-listado.js';
 import { completarIva } from './src/modules/facturas/iva-inferido.js';
-import { recuperarCarnet } from './src/modules/messaging/sara-carnet.js';
+import { recuperarCarnet, clubEnReserva, consultarClubReserva, telefonoCarnet } from './src/modules/messaging/sara-carnet.js';
 import {rutasPaginas} from './src/modules/facturas/paginas-rutas.js';
 import {PAGINAS_SCHEMA,PAGINAS_ELEGIBLES_SQL,crearPaginas} from './src/modules/facturas/paginas.js';
 import {compararFotos} from './src/modules/facturas/paginas-clasificacion.js';
@@ -8458,7 +8458,8 @@ app.post("/api/reservas", async (req, res) => {
     );
     const reserva_id = rowRes.id;
     const pendiente = parseInt(personas) > 8;
-    const reserva = { local, personas, dia, hora, telefono, nombre_reserva, observaciones };
+    const reserva = { reservaId: reserva_id, local, personas, dia, hora, telefono, nombre_reserva, observaciones };
+    if (['ca', 'es', 'en'].includes(req.body.idioma)) reserva.idioma = req.body.idioma;
     upsertLeadFromReserva({ nombre_reserva, telefono });
     // AQUÍ NO HABÍA NADA. Las reservas del panel —las de teléfono, las de la puerta— son casi
     // todas, y ninguna programaba el seguimiento del día siguiente: solo lo hacían las que se
@@ -8467,12 +8468,27 @@ app.post("/api/reservas", async (req, res) => {
       .then((r) => { if (!r.ok && r.motivo !== "reserva_pendiente") console.log(`[seguimiento] no se programa (${r.motivo})`); })
       .catch(() => {});
     console.log(`[Reserva] WhatsApp listo: ${isReady()} | ${pendiente ? "PENDIENTE" : "Confirmación"} a ${telefono}`);
-    if (pendiente) {
-      if (isReady()) sendConfirmacionPendienteCliente(telefono, reserva);
-      else guardarPendienteWA("confirmacion_pendiente", telefono, reserva);
+    const tipoConfirmacion = pendiente ? "confirmacion_pendiente" : "confirmacion";
+    const consultaClub = !pendiente && TARJETA_ACTIVA && clubEnReserva(local) && req.body.esperar_alta_club === true
+      ? await consultarClubReserva({local, telefono, consultar:resolverCarnetSara}) : undefined;
+    const esperaAlta = consultaClub?.estado === "sin_carnet";
+    if (esperaAlta) {
+      const enCola = await guardarPendienteWA(tipoConfirmacion, telefono, {
+        ...reserva, clubEsperaHasta: Date.now() + 2 * 60_000,
+      });
+      if (enCola) {
+        // Cubre un alta concurrente entre la primera consulta y la escritura de la cola.
+        void procesarPendientesWA();
+      } else {
+        void sendConfirmacionCliente(telefono, reserva, consultaClub);
+      }
+    } else if (isReady()) {
+      const enviar = pendiente ? sendConfirmacionPendienteCliente : sendConfirmacionCliente;
+      void enviar(telefono, reserva, consultaClub).then(ok => {
+        if (!ok) return guardarPendienteWA(tipoConfirmacion, telefono, reserva);
+      });
     } else {
-      if (isReady()) sendConfirmacionCliente(telefono, reserva);
-      else guardarPendienteWA("confirmacion", telefono, reserva);
+      void guardarPendienteWA(tipoConfirmacion, telefono, reserva);
     }
     // Notificar grupo del local
     dbGet(`SELECT group_jid FROM wa_links WHERE local = ?`, [local]).then((row) => {
@@ -13841,6 +13857,7 @@ app.post("/api/publico/formulario/:clave", async (req, res) => {
     // Si acaba de ganarse un regalo y tiene el pase en el móvil, que se le note. Va FUERA de la
     // transacción y sin `await`: toca Wallet, que es otra cosa, y el alta no puede depender de
     // ello. Si falla, el pase se pondrá al día en la siguiente pasada del reconciliador de Wallet.
+    if (qrId) void procesarPendientesWA();
     if (derechoNuevo && qrId) marcarPaseActualizado(qrId, "derecho").catch(() => {});
 
     // Se despierta al worker sin esperar a la pasada del reloj: casi siempre sale a la primera.
@@ -14777,6 +14794,8 @@ app.post("/api/tarjeta/alta", async (req, res) => {
         opt_in_email: alta.opt_in && alta.correo ? 1 : 0,
       });
     } catch (e) { console.error("[tarjeta] consent:", e.message); }
+
+    void procesarPendientesWA();
 
     // Se le manda el enlace por WhatsApp al número que ha escrito. Es lo que hace que quien
     // pruebe un teléfono ajeno no se lleve nada: el enlace llega al dueño, no a quien lo pidió.
@@ -21038,7 +21057,7 @@ app.post("/api/whatsapp/test", requireAuth(["direccion"]), async (req, res) => {
     dia: "2026-05-20",
     hora: "14:00",
     personas: 2,
-    nombre_reserva: "Prueba WhatsApp"
+    nombre_reserva: "Prueba WhatsApp", clubOmitir: true
   });
   res.json({ ok: true, mensaje: `Mensaje de prueba enviado a ${telefono}` });
 });
@@ -25852,13 +25871,26 @@ async function guardarPendienteWA(tipo, destino, reserva) {
       `INSERT INTO pending_whatsapp (tipo, destino, reserva_json) VALUES (?, ?, ?)`,
       [tipo, destino, JSON.stringify(reserva)]
     );
-    console.log(`📥 Mensaje WA guardado como pendiente: ${tipo} → ${destino}`);
+    console.log(`📥 Mensaje WA guardado como pendiente: ${tipo}`);
+    return true;
   } catch (err) {
     console.error("Error guardando pendiente WA:", err.message);
+    return false;
   }
 }
 
+async function resolverCarnetSara(telefono, { paraReserva = false } = {}) {
+  if (paraReserva && TARJETA_ACTIVA) {
+    const pref = await dbGet(`SELECT baja FROM marketing_prefs WHERE ${MATCH_TEL9("telefono")} LIMIT 1`, [telefono]);
+    if (Number(pref?.baja) === 1) return { estado: "sin_comunicaciones" };
+  }
+  return recuperarCarnet({all:dbAll,telefono,base:proBase(null),activo:TARJETA_ACTIVA});
+}
+
+let procesandoPendientesWA = false;
 async function procesarPendientesWA() {
+  if (!isReady() || procesandoPendientesWA) return;
+  procesandoPendientesWA = true;
   try {
     const rows = await dbAll(`SELECT * FROM pending_whatsapp ORDER BY creado_en ASC`);
     if (!rows || !rows.length) return;
@@ -25866,8 +25898,28 @@ async function procesarPendientesWA() {
     for (const row of rows) {
       try {
         const reserva = JSON.parse(row.reserva_json);
-        if (row.tipo === "confirmacion") await sendConfirmacionCliente(row.destino, reserva);
-        else if (row.tipo === "confirmacion_pendiente") await sendConfirmacionPendienteCliente(row.destino, reserva);
+        if (!isReady()) break;
+        if (row.tipo === "confirmacion" || row.tipo === "confirmacion_pendiente") {
+          let actual = reserva;
+          if (reserva.reservaId) {
+            const guardada = await dbGet(
+              "SELECT local, personas, dia, hora, telefono, nombre_reserva FROM reservas WHERE id = ?", [reserva.reservaId]);
+            if (!guardada) {
+              await dbRun("DELETE FROM pending_whatsapp WHERE id = ?", [row.id]);
+              continue;
+            }
+            actual = {...reserva, ...guardada};
+          }
+          const enviar = Number(actual.personas) > 8 || (!reserva.reservaId && row.tipo === "confirmacion_pendiente")
+            ? sendConfirmacionPendienteCliente : sendConfirmacionCliente;
+          const numero = actual.telefono || row.destino;
+          let consultaClub;
+          if (enviar === sendConfirmacionCliente && Number(reserva.clubEsperaHasta) > Date.now()) {
+            consultaClub = await consultarClubReserva({local:actual.local, telefono:numero, consultar:resolverCarnetSara});
+            if (clubEnReserva(actual.local) && !['encontrado', 'sin_comunicaciones', 'no_disponible'].includes(consultaClub?.estado)) continue;
+          }
+          if (!await enviar(numero, actual, consultaClub)) continue;
+        }
         else if (row.tipo === "grupo") await sendNotificacionGrupo(row.destino, reserva);
         else if (row.tipo === "grupo_pendiente") await sendNotificacionGrupoPendiente(row.destino, reserva);
         await dbRun(`DELETE FROM pending_whatsapp WHERE id = ?`, [row.id]);
@@ -25878,7 +25930,7 @@ async function procesarPendientesWA() {
     }
   } catch (e) {
     console.error("Error procesando pendientes WA:", e.message);
-  }
+  } finally { procesandoPendientesWA = false; }
 }
 
 // Manejador de errores global (Iteración 1A): respuesta 500 genérica sin filtrar internos,
@@ -26044,6 +26096,7 @@ const server = app.listen(PORT, async () => {
   } catch (e) { console.error("[Migration] empresa post-restore fix:", e.message); }
 
   setAtencionEntrada(atencionWA);
+  if (PROD) setInterval(() => void procesarPendientesWA(), 20_000).unref();
   if(PROD)setInterval(()=>recordarBancos().catch(e=>console.error('[Bancos] Recordatorio:',e.message)),60000).unref();
   if (PROD) setInterval(() => atencionWA.tick().catch(e => console.error("[Atención WA]", e.message)), 60000).unref();
   setOnReady(async () => {
@@ -26284,27 +26337,30 @@ const server = app.listen(PORT, async () => {
   setEntradaDiferidaPermitida(async (msg, tel) => {
     const jid = msg.key.remoteJid;
     const identidad = identidadConversacion(jid, tel);
-    const respuestaMovil = await dbGet(`SELECT id FROM wa_bandeja_mensajes
-      WHERE jid IN (?, ?) AND enviado = true
-      AND fecha >= to_timestamp(?::double precision) LIMIT 1`,
-      [jid, identidad.jidTelefono, Number(msg.messageTimestamp)]);
-    if (respuestaMovil) return false;
+    const fecha = Number(msg.messageTimestamp);
     const contestado = await dbGet(`SELECT id FROM whatsapp_messages
       WHERE (jid = ? OR jid = ? OR telefono = ? OR telefono = ?) AND creado_en::timestamptz >= to_timestamp(?::double precision)
-      AND (tipo = 'saliente' OR (NULLIF(respuesta, '') IS NOT NULL
-        AND respuesta != '(sin respuesta registrada)')) LIMIT 1`,
-      [jid, identidad.jidTelefono, identidad.telefono, identidad.nacional, Number(msg.messageTimestamp)]);
-    return !contestado;
+      AND COALESCE(historico,0)=0 AND (tipo = 'manual' OR
+        (tipo = 'intercambio' AND NULLIF(respuesta, '') IS NOT NULL AND respuesta != '(sin respuesta registrada)'))
+      LIMIT 1`, [jid, identidad.jidTelefono, identidad.telefono, identidad.nacional, fecha]);
+    if (contestado) return false;
+    const respuestaMovil = await dbGet(`SELECT m.id FROM wa_bandeja_mensajes m
+      WHERE m.jid IN (?, ?) AND m.enviado = true AND m.fecha >= to_timestamp(?::double precision)
+      AND NOT EXISTS (SELECT 1 FROM whatsapp_messages w
+        WHERE (w.jid = ? OR w.jid = ? OR w.telefono = ? OR w.telefono = ?) AND w.tipo='saliente'
+          AND w.respuesta=m.texto AND abs(extract(epoch FROM (w.creado_en::timestamptz-m.fecha))) < 300)
+      LIMIT 1`, [jid, identidad.jidTelefono, fecha, jid, identidad.jidTelefono, identidad.telefono, identidad.nacional]);
+    return !respuestaMovil;
   });
 
   setArchivoBandeja(crearArchivoBandeja(pool));
 
-  setOnMessage(async ({ jid, texto, respuesta, historico = false, interno = false, adjuntos = [] }) => {
+  setOnMessage(async ({ jid, texto, respuesta, historico = false, interno = false, adjuntos = [], estadoSara = null }) => {
     const telefono = jid.replace("@s.whatsapp.net", "").replace("@g.us", "");
     try {
       await dbRun(
-        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo, adjuntos) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb)`,
-        [jid, telefono, texto, respuesta, historico ? 1 : 0, interno ? "interno" : "intercambio", JSON.stringify(adjuntos)]
+        `INSERT INTO whatsapp_messages (jid, telefono, mensaje, respuesta, historico, tipo, adjuntos, tipo_mensaje) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)`,
+        [jid, telefono, texto, respuesta, historico ? 1 : 0, interno ? "interno" : "intercambio", JSON.stringify(adjuntos), estadoSara]
       );
       // Los de la casa NO entran en wa_clientes (que es la agenda de clientes de WhatsApp)
       // ni pasan por la lógica de marketing: el mensaje queda guardado y nada más.
@@ -26422,19 +26478,33 @@ const server = app.listen(PORT, async () => {
     }
   });
 
-  setOnCancelarReserva(async ({ telefono, dia, local }, jid) => {
+  setOnCancelarReserva(async ({ telefono, dia, local, hora, nombre }, jid) => {
     try {
-      const clave = (telefono || "").replace(/\D/g, "");
-      if (clave.length < 9 || !dia) return { ok: false, motivo: "faltan datos" };
-      const cola = clave.slice(-9);
-      const rows = await dbAll(
-        `SELECT * FROM reservas WHERE dia = ?${local ? " AND local = ?" : ""} ORDER BY creado_en DESC`,
+      const numero = telefonoCarnet(telefono);
+      if (!numero || !dia) return { ok: false, motivo: "faltan datos" };
+      const filas = await dbAll(
+        `SELECT * FROM reservas WHERE dia = ?${local ? " AND local = ?" : ""}`,
         local ? [dia, local] : [dia]
       );
-      const reserva = rows.find(r => (r.telefono || "").replace(/\D/g, "").endsWith(cola));
-      if (!reserva) return { ok: false, motivo: "no encontrada" };
-
-      await dbRun(`DELETE FROM reservas WHERE id = ?`, [reserva.id]);
+      const normalizarNombre = valor => String(valor || '').normalize('NFD').replace(/\p{M}/gu, '').trim().toLowerCase();
+      const coincidencias = filas.filter(r => telefonoCarnet(r.telefono) === numero &&
+        (!hora || String(r.hora).slice(0, 5) === hora) &&
+        (!nombre || normalizarNombre(r.nombre_reserva) === normalizarNombre(nombre)));
+      if (!coincidencias.length) return { ok: false, motivo: "no encontrada" };
+      if (coincidencias.length > 1) {
+        const horas = [...new Set(coincidencias.map(r => String(r.hora).slice(0, 5)).filter(h => /^\d{2}:\d{2}$/.test(h)))].sort();
+        const locales = new Set(coincidencias.map(r => r.local));
+        const nombres = new Set(coincidencias.map(r => normalizarNombre(r.nombre_reserva)));
+        return { ok: false, motivo: "ambigua", horas,
+          pedir: horas.length > 1 ? "hora" : locales.size > 1 ? "local" : nombres.size > 1 ? "nombre" : "equipo" };
+      }
+      const reserva = coincidencias[0];
+      // Si otra gestión cambió los datos mientras se identificaba, no se cancela con el estado antiguo.
+      const borrada = await dbRun(`DELETE FROM reservas WHERE id = ? AND dia = ? AND local = ?
+        AND hora IS NOT DISTINCT FROM ? AND telefono IS NOT DISTINCT FROM ?
+        AND nombre_reserva IS NOT DISTINCT FROM ? RETURNING id`,
+        [reserva.id, reserva.dia, reserva.local, reserva.hora ?? null, reserva.telefono, reserva.nombre_reserva ?? null]);
+      if (!borrada) return { ok: false, motivo: "cambio concurrente" };
       console.log(`🗑️ Reserva cancelada por Sara (id ${reserva.id}): ${reserva.nombre_reserva} en ${reserva.local} ${reserva.dia}`);
 
       // La cancelación ya está guardada: un fallo del aviso no cambia su resultado.
@@ -26559,7 +26629,7 @@ const server = app.listen(PORT, async () => {
     }
   });
 
-  setCarnetResolver(telefono => recuperarCarnet({all:dbAll,telefono,base:proBase(null),activo:TARJETA_ACTIVA}));
+  setCarnetResolver(resolverCarnetSara);
 
   setDocumentoResolver(async (documentoId) => {
     try {

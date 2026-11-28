@@ -31,3 +31,33 @@ export function instruccionesCarnet(r){
  default:return 'Ha fallado la consulta del carnet. No significa que no tenga uno. Indica que no has podido recuperarlo ahora y que puede volver a intentarlo más tarde; no crees otro ni inventes un enlace.';
  }
 }
+
+const LOCALES_CLUB_RESERVA = new Set(['La Tapeta - Blanes', 'La Tapeta - Lloret', 'La Tapeta - Girona']);
+export const clubEnReserva = local => LOCALES_CLUB_RESERVA.has(local);
+
+const textosReserva = {
+ es: { socio: 'Recuerda enseñar tu tarjeta del Club para sumar puntos y aprovechar las promociones vigentes que te correspondan.', alta: 'Únete gratis al Club para sumar puntos y acceder a promociones:' },
+ ca: { socio: 'Recorda ensenyar la targeta del Club per sumar punts i aprofitar les promocions vigents que et corresponguin.', alta: 'Uneix-te al Club de franc per sumar punts i accedir a promocions:' },
+ en: { socio: 'Show your Club card to earn points and use any current offers you qualify for.', alta: 'Join the Club for free to earn points and access offers:' },
+};
+
+export async function consultarClubReserva({ local, telefono, consultar }) {
+ if (!clubEnReserva(local) || !telefonoCarnet(telefono) || !consultar) return null;
+ let timer;
+ try {
+  return await Promise.race([
+   Promise.resolve().then(() => consultar(telefono, { paraReserva: true })),
+   new Promise(resolve => { timer = setTimeout(() => resolve(null), 1500); }),
+  ]);
+ } catch { return null; }
+ finally { clearTimeout(timer); }
+}
+
+export async function notaClubReserva({ local, telefono, idioma, consultar, resultado }) {
+ if (!clubEnReserva(local)) return '';
+ const carnet = resultado === undefined ? await consultarClubReserva({local, telefono, consultar}) : resultado;
+ const texto = textosReserva[idioma] || textosReserva.es;
+ if (carnet?.estado === 'encontrado') return texto.socio;
+ if (carnet?.estado === 'sin_carnet' && carnet.url) return texto.alta + ' ' + carnet.url;
+ return '';
+}

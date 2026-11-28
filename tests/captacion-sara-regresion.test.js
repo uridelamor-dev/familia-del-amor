@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { identidadConversacion, contextoCampanas, construirContexto, anteponerCitado } from '../src/modules/messaging/contexto.js';
-import { idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan } from '../src/modules/messaging/sara.js';
+import { idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia, pulirCatalan, referenciaRespuesta, respuestaBreve, pidePersona, textoBreve } from '../src/modules/messaging/sara.js';
 
 const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 const wa = readFileSync(new URL('../whatsapp.js', import.meta.url), 'utf8');
@@ -46,7 +46,7 @@ function formulario(tieneWhatsApp) {
     POLITICA_VERSION:2,fidPoliticaUrl:()=>'/privacitat.html', MATCH_TEL9:()=> 'telefono = ?',
     proEmitir:async()=>{datos.qr={id:1,token:'prueba',clase:'carnet'};return datos.qr;},
     fidComponerMensaje:x=>x, fidRender:x=>x, proEnlace:()=>'/cupon.html?t=prueba',FID_TIPO_MENSAJE:{ENTREGA:'entrega'},
-    capVaciarCola:async()=>{},ficAuditar:async()=>{},lineaErrorSql:(_m,e)=>e.message,FID_MENSAJES_DEF:{error:'error'} };
+    procesarPendientesWA:async()=>{assert.ok(datos.qr);datos.despertares=(datos.despertares||0)+1;},capVaciarCola:async()=>{},ficAuditar:async()=>{},lineaErrorSql:(_m,e)=>e.message,FID_MENSAJES_DEF:{error:'error'} };
   const start=server.indexOf('app.post("/api/publico/formulario/:clave"');
   vm.runInNewContext(server.slice(start,server.indexOf('// ── DARSE DE BAJA',start)),env);
   return {datos, enviar:async()=>{const result={status:200};const res={set:()=>{},status:n=>{result.status=n;return res;},json:b=>{result.body=b;}};
@@ -59,6 +59,7 @@ for (const estado of [null, new Error('sin conexión'), true]) {
     assert.equal(r.status,200);assert.equal(r.body.evento_lead,true);
     assert.equal(f.datos.leads.length,1);assert.equal(f.datos.cola.length,1);
     assert.equal(r.body.envio.estado,'pendiente_envio');
+    assert.equal(f.datos.despertares,1);
     const repetida=await f.enviar();assert.equal(repetida.body.evento_lead,false);
     assert.equal(f.datos.leads.length,1);assert.equal(f.datos.cola.length,1);
   });
@@ -93,10 +94,10 @@ test('Sara recarga el historial con teléfono resuelto aunque la sesión ya est�
   let consultado;let peticion;
   const entrega=contextoCampanas([{campana:'prueba',texto:'Invitació a esmorzar',donde:'Local de Girona',idioma:'ca'}]);
   const historial=construirContexto([{tipo:'saliente',origen:'campana',respuesta:'Invitació a esmorzar'}]);
-  const env={console,respuestaTrasHerramientas,pideExcepcionPromocion,confirmacionAcciones, acuseTrasIncidencia, confirmacionDocumentoEnviado,textoSeguro,revisarRespuesta:async({borrador})=>({decision:'enviar',respuesta:borrador,idioma:'es'}),perfilLoader:async()=>null,resolverTelefono:async()=> '34600000001',
+  const env={console,incluirClubEnRespuesta:async texto=>texto,respuestaTrasHerramientas,pideExcepcionPromocion,confirmacionAcciones, acuseTrasIncidencia, confirmacionDocumentoEnviado,textoSeguro,revisarRespuesta:async({borrador})=>({decision:'enviar',respuesta:borrador,idioma:'es'}),perfilLoader:async()=>null,resolverTelefono:async()=> '34600000001',
     campanaLoader:async()=>entrega,reservaLoader:null, conversaciones:new Map([['123@lid',[]]]),
     historialLoader:async(...args)=>{consultado=args;return historial;},SESION_TTL_SEG:14400,MAX_HISTORIAL:10,
-    getContextoFechaHora:()=> '2026-09-23',idiomaSugerido,lineaIdioma,pistaIdioma,respuestaCortesia,pulirCatalan,
+    getContextoFechaHora:()=> '2026-09-23',idiomaSugerido,lineaIdioma,pistaIdioma,pulirCatalan,referenciaRespuesta, respuestaBreve, pidePersona, textoBreve,
     onActualizarPerfil:null,saraConfigLoader:null,SYSTEM_PROMPT:'Prompt de prueba',buildPerfilContext:()=>'',
     ctxAnteponerCitado:anteponerCitado,TOOLS:[],getAnthropic:()=>({messages:{create:async args=>{
       peticion=args;return {content:[{type:'text',text:'La invitación es para el local de Girona.'}],stop_reason:'end_turn'};

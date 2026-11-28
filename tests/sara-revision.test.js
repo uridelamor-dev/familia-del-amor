@@ -5,7 +5,9 @@ import vm from 'node:vm';
 import { revisarRespuesta, textoSeguro, confirmacionAcciones, acuseTrasIncidencia, confirmacionDocumentoEnviado, pideExcepcionPromocion } from '../src/modules/messaging/sara-revision.js';
 import { condicionesPromociones, ADJUNTOS_SCHEMA } from '../src/modules/messaging/sara-promociones.js';
 import { respuestaTrasHerramientas } from '../src/modules/messaging/respuesta-herramientas.js';
-import { estaPausada, idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia } from '../src/modules/messaging/sara.js';
+import { estaPausada, idiomaSugerido, lineaIdioma, pistaIdioma, pulirCatalan, datosCancelacionConfirmados, referenciaRespuesta, respuestaBreve, pidePersona, textoBreve } from '../src/modules/messaging/sara.js';
+import { pausaBloqueante } from '../src/modules/messaging/atencion.js';
+import { notaClubReserva, telefonoCarnet } from '../src/modules/messaging/sara-carnet.js';
 import { anteponerCitado } from '../src/modules/messaging/contexto.js';
 
 const valido = { decision: 'enviar', idioma: 'ca', respuesta: 'La promoció és el dia 1.', motivo: '', evidencias: ['Promoción: día 1'] };
@@ -38,26 +40,26 @@ test('condiciones no mezclan cupón con oferta de caja ni revelan secretos', () 
 });
 
 const wa = readFileSync(new URL('../whatsapp.js', import.meta.url), 'utf8');
-function conversacion({ respuesta = 'Dime algo', revision = { ...valido, respuesta: 'Digues-me què necessites.', evidencias: [] }, falloDerivacion = false, falloRevision = false, accion = false, resultadoAccion }  = {}) {
+function conversacion({ respuesta = 'Dime algo', revision = { ...valido, respuesta: 'Digues-me què necessites.', evidencias: [] }, falloDerivacion = false, falloRevision = false, accion = false, resultadoAccion, historial = [], citado = null, solicitud = {}, carnetResolver = null, revisarPeticion = () => {} }  = {}) {
   let llamadas = 0, acciones = [];
-  const env = { console, estaPausada, respuestaTrasHerramientas, revisarRespuesta, textoSeguro, confirmacionAcciones, acuseTrasIncidencia, confirmacionDocumentoEnviado, pideExcepcionPromocion,
+  const env = { console, estaPausada, pausaBloqueante, notaClubReserva, telefonoCarnet, carnetResolver, respuestaTrasHerramientas, revisarRespuesta, textoSeguro, confirmacionAcciones, acuseTrasIncidencia, confirmacionDocumentoEnviado, pideExcepcionPromocion,
     perfilLoader: async () => null, resolverTelefono: async () => '34600111222', campanaLoader: async () => ({ texto: 'Promoción: día 1', idioma: 'ca' }), reservaLoader: null,
-    conversaciones: new Map(), historialLoader: null, MAX_HISTORIAL: 10, SESION_TTL_SEG: 100,
-    getContextoFechaHora: () => '2026-10-04', idiomaSugerido, lineaIdioma, pistaIdioma, respuestaCortesia,
+    conversaciones: new Map(), historialLoader: historial.length ? async () => [...historial] : null, MAX_HISTORIAL: 10, SESION_TTL_SEG: 100,
+    getContextoFechaHora: () => '2026-10-04', idiomaSugerido, lineaIdioma, pistaIdioma, pulirCatalan, datosCancelacionConfirmados, referenciaRespuesta, respuestaBreve, pidePersona, textoBreve,
     onActualizarPerfil: null, saraConfigLoader: async () => 'Promoción: día 1', SYSTEM_PROMPT: '## Nuestros locales Local A ## Carta, platos',
     buildPerfilContext: () => '', ctxAnteponerCitado: anteponerCitado, TOOLS: [], Anthropic: { RateLimitError: class extends Error {} },
     lineaError: () => 'Error controlado', redactar: () => ({}),
     ejecutarHerramienta: async b => { acciones.push(b.name); return { content: resultadoAccion && b.name !== 'pasar_a_persona' ? resultadoAccion : b.name === 'enviar_documento' ? 'Documento enviado al cliente correctamente.' : 'Acción registrada', is_error: falloDerivacion }; },
     getAnthropic: () => ({ messages: { create: async args => {
-      if (args.tool_choice) { if (falloRevision) throw new Error('proveedor'); return bloque(revision); }
+      if (args.tool_choice) { revisarPeticion(JSON.parse(args.messages[0].content)); if (falloRevision) throw new Error('proveedor'); return bloque(revision); }
       llamadas++;
-      if (accion && llamadas === 1) return { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: typeof accion === 'string' ? accion : 'registrar_reserva', id: 't1', input: {} }] };
+      if (accion && llamadas === 1) return { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: typeof accion === 'string' ? accion : 'registrar_reserva', id: 't1', input: solicitud }] };
       return { stop_reason: 'end_turn', content: [{ type: 'text', text: respuesta }] };
     } } }),
   };
-  const a = wa.indexOf('async function responderConIA('), b = wa.indexOf('// Ejecuta una herramienta', a);
+  const a = wa.indexOf('async function incluirClubEnRespuesta('), b = wa.indexOf('// Ejecuta una herramienta', a);
   vm.runInNewContext(wa.slice(a, b), env);
-  return { run: m => env.responderConIA('test', m, null, null), acciones, llamadas: () => llamadas };
+  return { run: m => env.responderConIA('test', m, null, null, citado), acciones, llamadas: () => llamadas };
 }
 test('turno real: preguntar por otro día consulta condiciones antes de decidir una derivación', async () => {
   const c = conversacion({ revision: { ...valido, respuesta: 'La promoció és el dia 1.' } });
@@ -141,6 +143,7 @@ test('avisos consecutivos se suprimen por cliente, conservando respuestas válid
   tiempo = 13000;
   assert.equal(control.omitir('a', aviso), true);
   assert.equal(control.omitir('b', aviso), false);
+  assert.equal(control.omitir('a', aviso, 'Otra pregunta'), false);
   assert.equal(control.omitir('a', 'A quin nom?'), false);
   control.enviado('a', 'A quin nom?');
   assert.equal(control.omitir('a', aviso), false);
@@ -182,4 +185,97 @@ test('un Ok después de una incidencia no vuelve al modelo ni repite acciones',a
  await c.run('Vull reservar');const llamadas=c.llamadas();
  const r=await c.run('Ok');assert.equal(c.llamadas(),llamadas);
  assert.deepEqual(c.acciones,['pasar_a_persona']);assert.doesNotMatch(r,/torna|volver|again/i);
+});
+
+test('auditoría: una respuesta larga o con idioma distinto debe corregirse antes de salir', async () => {
+  let intento = 0;
+  const rechazos = [];
+  const ejemplos = [
+    { ...valido, respuesta: ('Pots venir amb nosaltres aquest diumenge. ').repeat(20) },
+    { ...valido, idioma: 'es', respuesta: '¿En qué local?' },
+  ];
+  for (const defectuosa of ejemplos) {
+    intento = 0;
+    const r = await revisarRespuesta({
+      mensaje: 'Bon dia, voldria reservar per diumenge', idioma: 'ca', idiomaObligatorio: 'ca',
+      diagnostico: d => rechazos.push(d.motivo), crear: async () => bloque(++intento === 1 ? defectuosa : {
+        ...valido, respuesta:'En quin local?', evidencias: [],
+      }),
+      fuentes: 'Promoción: día 1',
+    });
+    assert.equal(r.respuesta, 'En quin local?');
+  }
+  assert.deepEqual(rechazos, ['respuesta_extensa', 'idioma']);
+});
+
+test('auditoría: llegada, agradecimiento y siete comensales ya confirmados se acusan sin derivar', async () => {
+  for (const [cliente, anterior, esperado] of [
+    ['Arrivo! Gracias', 'Reserva confirmada', '¡Hasta ahora!'],
+    ['Ok perfecto, gracias', 'El Club és vàlid als locals participants.', '¡De nada!'],
+    ['Gracias! Seremos 6 adultos y 1 niño', '✅ Reserva confirmada\n7 personas', 'Gracias por aclararlo.'],
+  ]) {
+    const c = conversacion({ historial:[{role:'assistant',content:anterior}] });
+    assert.equal(await c.run(cliente), esperado);
+    assert.equal(c.llamadas(), 0);
+    assert.deepEqual(c.acciones, []);
+  }
+});
+
+test('auditoría: un Ok tras una pregunta del equipo conserva la referencia frente a una campaña', async () => {
+  const texto = 'Vols que canviem la reserva a les 21 h?';
+  const c = conversacion({
+    historial:[{ role:'assistant', content:texto },
+      { role:'user', content:'[CONTEXTO INTERNO: El cliente recibió un mensaje de Familia del Amor, enviado por una campaña automática]' },
+      { role:'assistant', content:'Dimarts de coques a 9 €.' }],
+    revisarPeticion: cuerpo => assert.equal(cuerpo.referencia, texto),
+    revision:{ ...valido, respuesta:'A quin nom tens la reserva?', evidencias:[] },
+  });
+  assert.equal(await c.run('Ok'), 'A quin nom tens la reserva?');
+  assert.equal(c.llamadas(), 1);
+  assert.deepEqual(c.acciones, []);
+});
+
+test('auditoría: la pregunta de Club en Tordera no puede derivarse desde el borrador', async () => {
+  const c = conversacion({
+    accion:'pasar_a_persona',
+    revision:{...valido, idioma:'es', respuesta:'El Club se usa en La Tapeta de Blanes, Lloret y Girona.', evidencias:[]},
+  });
+  assert.match(await c.run('¿Puedo usar la tarjeta en Tordera?'), /Blanes, Lloret y Girona/);
+  assert.deepEqual(c.acciones, []);
+});
+
+test('auditoría: una incidencia real pide intervención, sin abrir una segunda derivación', async () => {
+  const c = conversacion({
+    accion:'pasar_a_persona',
+    revision:{...valido, decision:'consultar', motivo:'El local debe revisar una reserva confirmada con el establecimiento cerrado.',
+      respuesta:'Em sap greu que trobéssiu el local tancat.', evidencias:[]},
+  });
+  assert.equal(await c.run('Vam anar amb reserva i ens vam trobar el local tancat'), 'Em sap greu que trobéssiu el local tancat. He passat el teu missatge a l’equip.');
+  assert.deepEqual(c.acciones, ['pasar_a_persona']);
+  assert.equal(pidePersona('No hace falta hablar con un encargado'), false);
+  assert.equal(pidePersona('No quiero un bot'), true);
+});
+
+test('confirmación por chat añade la nota del Club solo para el teléfono del remitente', async () => {
+  const corre = async telefono => {
+    const c = conversacion({
+      accion:'registrar_reserva', resultadoAccion:'Reserva registrada correctamente.',
+      solicitud:{telefono,local:'La Tapeta - Girona'},
+      revision:{...valido,respuesta:'Reserva confirmada.',evidencias:[]},
+      carnetResolver: async () => ({estado:'encontrado', url:'https://example.test/t?token=privado'}),
+    });
+    return c.run('Vull reservar una taula');
+  };
+  assert.match(await corre('600111222'), /targeta del Club/);
+  assert.doesNotMatch(await corre('600333444'), /targeta del Club/);
+});
+
+test('la última reserva del historial no autoriza elegir entre dos horas', async () => {
+  const datos = {dia:'2026-11-28', hora:'21:00', local:'La Tapeta - Blanes',nombre:'Prueba'};
+  assert.deepEqual(datosCancelacionConfirmados(datos, ['Cancela la del sábado.'], 'Tu última reserva es a las 21:00'), {dia:datos.dia});
+  assert.deepEqual(datosCancelacionConfirmados(datos, ['La de las 21 en La Tapeta Blanes'], '¿La de las 20:00 o las 21:00?'),
+    {dia:datos.dia,hora:'21:00',local:'La Tapeta - Blanes'});
+  assert.deepEqual(datosCancelacionConfirmados(datos, ['Sí'], '¿Cancelo la de las 20:00 o la de las 21:00?'), {dia:datos.dia});
+  assert.deepEqual(datosCancelacionConfirmados(datos, ['Sí'], '¿Cancelo la de las 21:00 en La Tapeta Blanes?'),
+    {dia:datos.dia,hora:'21:00',local:'La Tapeta - Blanes'});
 });

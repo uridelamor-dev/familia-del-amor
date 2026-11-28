@@ -21,8 +21,8 @@ test('la recuperación consulta respuestas previas usando el teléfono resuelto 
  const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
  let callback, encontrado=null, movil=null;
  const env={setEntradaDiferidaPermitida:fn=>callback=fn,identidadConversacion,dbGet:async(sql,args)=>{
- if (sql.includes('wa_bandeja_mensajes')) { assert.ok(args.includes('34600000000@s.whatsapp.net')); return movil; }
- assert.match(sql,/tipo = 'saliente'/);assert.match(sql,/sin respuesta registrada/);
+ if (sql.includes('wa_bandeja_mensajes')) { assert.ok(args.includes('34600000000@s.whatsapp.net')); assert.match(sql,/NOT EXISTS[\s\S]*tipo='saliente'/); return movil; }
+ assert.match(sql,/tipo = 'manual'/);assert.match(sql,/sin respuesta registrada/);
  assert.ok(args.includes('34600000000'));return encontrado;
  }};
  vm.runInNewContext(server.slice(server.indexOf('  setEntradaDiferidaPermitida(async'),server.indexOf('  setArchivoBandeja(',server.indexOf('  setEntradaDiferidaPermitida(async'))),env);
@@ -74,4 +74,26 @@ test('una respuesta de WhatsApp cuenta para Atención y el eco de un envío prop
  await handler({type:'notify',messages:[salida('manual',{conversation:'Hola, te ayudamos'}),salida('audio',{audioMessage:{ptt:true}})]});
  assert.deepEqual(respuestas,[[jid,new Date(1761200000000)],[jid,new Date(1761200000000)]]);
  assert.ok(!historial.some(h=>h.mensaje==='Mensaje de Sara'));
+});
+
+test('una campaña archivada tras la entrada no cuenta como atención; una respuesta manual sí', {skip:!process.env.TEST_PGLITE_MODULE}, async()=>{
+ const {PGlite}=await import(process.env.TEST_PGLITE_MODULE);
+ const db=new PGlite();
+ try{
+  await db.exec(`CREATE TABLE whatsapp_messages(id serial, jid text, telefono text, creado_en text, tipo text, respuesta text, historico integer);
+   CREATE TABLE wa_bandeja_mensajes(id serial, jid text, enviado boolean, fecha timestamptz, texto text);`);
+  const server=readFileSync(new URL('../server.js',import.meta.url),'utf8');
+  let consultar;
+  const dbGet=async(sql,args)=>{
+   let n=0;return (await db.query(sql.replace(/\?/g,()=>'$'+ ++n),args)).rows[0];
+  };
+  const a=server.indexOf('  setEntradaDiferidaPermitida(async');
+  vm.runInNewContext(server.slice(a,server.indexOf('  setArchivoBandeja(',a)),{setEntradaDiferidaPermitida:f=>consultar=f,identidadConversacion,dbGet});
+  const fecha=new Date(msg.messageTimestamp*1000+5000).toISOString(), jid=msg.key.remoteJid, tel='34600000000';
+  await db.query("INSERT INTO whatsapp_messages(jid,telefono,creado_en,tipo,respuesta,historico) VALUES($1,$2,$3,'saliente','Campaña',0)",[jid,tel,fecha]);
+  await db.query("INSERT INTO wa_bandeja_mensajes(jid,enviado,fecha,texto) VALUES($1,true,$2,'Campaña')",[jid,fecha]);
+  assert.equal(await consultar(msg,tel),true);
+  await db.query("INSERT INTO wa_bandeja_mensajes(jid,enviado,fecha,texto) VALUES($1,true,$2,'Te confirma el local')",[jid,fecha]);
+  assert.equal(await consultar(msg,tel),false);
+ }finally{await db.close();}
 });

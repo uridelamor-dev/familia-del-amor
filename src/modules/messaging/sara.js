@@ -19,6 +19,8 @@
 //  LA PAUSA
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+import { LOCALES_RESERVA } from "../reservas/disponibilidad.js";
+
 export const ESTADO_IA = Object.freeze({ ACTIVA: "activa", PAUSADA: "pausada" });
 
 /** Por qué se paró Sara. Sirve para que el equipo sepa qué le están pidiendo antes de abrirla. */
@@ -103,7 +105,7 @@ export function pistaIdioma(texto) {
          /\bnosaltres\b/, /\bserem\b/, /\bqualsevol\b/, /\bd'un\b|\bd'una\b|\bl'altre\b|\bm'agrada\b/, /\bquè\b/,
          /\bpersona\b.*\bparlar\b|\bparlar\b/],
     en: [/\bthe\b/, /\bi'm\b/, /\bcan i\b/, /\bcould\b/, /\bwould\b/, /\banother\b/, /\bplease\b/,
-         /\bthanks\b/, /\bspeak\b/, /\bsomeone\b/, /\bwhat\b/, /\bwhen\b/, /\bdoes\b/, /\byour\b/],
+         /\bthanks\b|\bthank you\b|^ hello[!.? ]*$/, /\bspeak\b/, /\bsomeone\b/, /\bwhat\b/, /\bwhen\b/, /\bdoes\b/, /\byour\b/],
     es: [/\bpero\b/, /\bmuy\b/, /\bpuedo\b/, /\btrabajo\b/, /\bgracias\b/, /\bpersona\b.*\bhablar\b|\bhablar\b/,
          /\botro día\b/, /\bmañana\b/, /\bquiero\b/, /\busted\b/, /\bqué\b/, /\bcómo\b/],
   };
@@ -219,7 +221,8 @@ const PIDE_PERSONA = [
 export function pidePersona(texto) {
   const t = String(texto || "");
   if (!t.trim()) return false;
-  return PIDE_PERSONA.some((re) => re.test(t));
+  const sinNegaciones = t.replace(/(?:no (?:hace falta|necesito)|no quiero hablar|no cal|no vull parlar|no necessito|(?:do not|don['’]t) (?:need|want) to (?:talk|speak))[^.!?;\n]*/gi, '');
+  return PIDE_PERSONA.some((re) => re.test(sinNegaciones));
 }
 
 /** Un agradecimiento no abre otra venta ni necesita consultar al modelo. */
@@ -236,9 +239,85 @@ export function respuestaCortesia(texto, idioma, conInvitacion) {
 /** Correcciones inequívocas de interferencias detectadas; nunca modifica datos ni condiciones. */
 export function pulirCatalan(texto, idioma) {
   if (idioma !== 'ca') return texto;
-  return String(texto).replace(/[¿¡]/g, '')
+  return String(texto).split(/(https?:\/\/\S+)/gi).map((parte, i) => i % 2 ? parte : parte.replace(/[¿¡]/g, '')
     .replace(/\bDime\b/g, 'Digues-me').replace(/\bdime\b/g, 'digues-me')
     .replace(/\balgo\b/g, 'alguna cosa').replace(/\bsi necesites\b/g, 'si necessites')
     .replace(/\bnecesites\b/g, 'necessitis')
-    .replace(/\bpuga\b/g, 'pugui');
+    .replace(/\bpuga\b/g, 'pugui')).join('');
+}
+
+/** La cita expresa manda. Un envío comercial intercalado no borra la última pregunta del equipo. */
+export function referenciaRespuesta(historial = [], citado) {
+  if (citado?.texto && citado.deNosotros) return citado.texto;
+  for (let i = historial.length - 1; i >= 0; i--) {
+    const t = historial[i];
+    if (t.role !== 'assistant' || !t.content || t.content.startsWith('[CONTEXTO INTERNO:')) continue;
+    const origen = historial[i - 1]?.content || '';
+    if (/^\[CONTEXTO INTERNO: El cliente recibió.*(?:una campaña automática| · comercial · )/.test(origen)) continue;
+    return t.content;
+  }
+  return '';
+}
+
+const breve = {
+  es: { llegada: '¡Hasta ahora!', agradece: '¡De nada!', ok: '¡Perfecto!', saludo: 'Hola, ¿en qué te ayudo?', persona: 'He pasado tu mensaje al equipo.', mismaMesa: 'Gracias por aclararlo.' },
+  ca: { llegada: 'Fins ara!', agradece: 'De res!', ok: 'Perfecte!', saludo: 'Hola, en què et puc ajudar?', persona: 'He passat el teu missatge a l’equip.', mismaMesa: 'Gràcies per aclarir-ho.' },
+  en: { llegada: 'See you shortly!', agradece: 'You’re welcome!', ok: 'All right!', saludo: 'Hi, how can I help?', persona: 'I’ve passed your message to the team.', mismaMesa: 'Thanks for clarifying.' },
+};
+
+export function textoBreve(tipo, idioma) {
+  return (breve[idioma] || breve.es)[tipo];
+}
+
+export function respuestaBreve(mensaje, anterior, idioma) {
+  const t = String(mensaje || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(?:arrivo|ya llego|ya llegamos|estoy llegando|estamos llegando|ja arribo|ja arribem|on my way|on our way)(?: (?:gracias|gracies|thanks))?$/.test(t)) return textoBreve('llegada', idioma);
+  const composicion = /^(?:(?:gracias|gracies|thanks) )?(?:seremos|serem|we will be) (\d+|[a-z]+) (?:adultos|adults) (?:y|i|and) (\d+|[a-z]+) (?:ninos?|nen[sa]?|nens|child|children)$/.exec(t);
+  const totalConfirmado = /(?:reserva confirmada|booking confirmed)[\s\S]*?\b(\d+) (?:personas|persones|guests?)\b/i.exec(anterior);
+  if (composicion && totalConfirmado) {
+    const numeros = {un:1, uno:1, una:1, one:1, dos:2, dues:2, two:2, tres:3, three:3,
+      cuatro:4, quatre:4, four:4, cinco:5, cinc:5, five:5, seis:6, sis:6, six:6, siete:7, set:7, seven:7};
+    const total = (numeros[composicion[1]] || Number(composicion[1])) + (numeros[composicion[2]] || Number(composicion[2]));
+    if (total === Number(totalConfirmado[1])) return textoBreve('mismaMesa', idioma);
+  }
+  if (!anterior && /^(?:hola|bon dia|bona tarda|bona nit|buenos dias|buenas tardes|buenas noches|hello|hi|hey)$/.test(t)) {
+    return textoBreve('saludo', idioma);
+  }
+  if (/[?？]|\b(?:conf[ií]rmame|confirma si|av[ií]same si|d[ií]me si|fes-me saber si|let me know|reply to confirm)\b/i.test(anterior)) return null;
+  if (anterior && /^👍[🏻🏼🏽🏾🏿]?$/u.test(String(mensaje).trim())) return textoBreve('ok', idioma);
+  if (/^(?:muchas gracias|gracias|moltes gracies|gracies|thank you|thanks|merci|ok perfecto gracias)$/.test(t)) return textoBreve('agradece', idioma);
+  if (/^(?:ok(?:ay)?|vale|perfect[oe]|d acord|de acuerdo|entendido|entes)$/.test(t)
+      && /reserva confirmada|reserva (?:ha quedat|ha quedado) confirmada|reservation (?:is )?confirmed|booking (?:is )?confirmed/i.test(anterior)) return textoBreve('ok', idioma);
+  return null;
+}
+
+/** Los datos de la última reserva pueden orientar una pregunta, pero no elegir qué mesa borrar. */
+export function datosCancelacionConfirmados(input, mensajes, referencia) {
+  const normal = texto => String(texto || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  const ultimo = normal(mensajes.at(-1));
+  const acepta = /^(?:si|yes|ok|vale|d[’']?acord|confirmo|adelante)[.!\s]*$/.test(ultimo)
+    && /cancel|anul/.test(normal(referencia));
+  const horas = texto => [...normal(texto).matchAll(/(?:\b(?:a|de) las |\b(?:a|de) les |\bat |^)([01]?\d|2[0-3])(?::([0-5]\d)|\s*h)?(?=\s|[.,!?]|$)|\b([01]?\d|2[0-3])(?::([0-5]\d)|\s*h)(?!\d)/g)]
+    .map(m => (m[1] || m[3]).padStart(2, '0') + ':' + (m[2] || m[4] || '00'));
+  const anteriores = acepta ? mensajes.slice(-3, -1).map(normal) : [];
+  const propuesta = acepta && new Set(horas(referencia)).size <= 1 ? normal(referencia) : '';
+  const textos = [ultimo, ...anteriores, propuesta];
+  const {dia, hora, local, nombre} = input || {};
+  const [nombreLocal, ciudad] = normal(local).split(' - ');
+  const locales = LOCALES_RESERVA.map(l => normal(l).split(' - '));
+  const municipioUnico = ciudad && locales.filter(([, sitio]) => sitio === ciudad).length === 1;
+  const nombreUnico = locales.filter(([nombre]) => nombre === nombreLocal).length === 1;
+  const sitio = local && textos.some(t => t.includes(normal(local)) ||
+    (nombreUnico && t.includes(nombreLocal)) ||
+    (municipioUnico && t.includes(ciudad)) ||
+    (ciudad && t.includes(nombreLocal) && t.includes(ciudad)));
+  const palabras = texto => ' ' + normal(texto).replace(/[^\p{L}\p{N}]+/gu, ' ').trim() + ' ';
+  const horasCliente = [...new Set(textos.flatMap(horas))];
+  return {
+    dia,
+    ...(hora && horasCliente.length === 1 && horasCliente[0] === hora ? {hora} : {}),
+    ...(sitio ? {local} : {}),
+    ...(nombre && textos.some(t => palabras(t).includes(palabras(nombre))) ? {nombre} : {}),
+  };
 }
