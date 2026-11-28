@@ -1,4 +1,5 @@
-import {tareaHumana,motivoAtencion,enlaceConversacion} from './motivo-atencion.js';
+import {tareaHumana,enlaceConversacion} from './motivo-atencion.js';
+import {instanteMadrid,sumaDias} from '../horarios/tiempo.js';
 import { ARCHIVO_CTE } from './bandeja-historial.js';
 import { IDENTIDAD_CTE, telefonoContacto } from './contacto-conversacion.js';
 
@@ -25,68 +26,53 @@ export function cierreCortesia(texto) {
   .replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim();
  return /^(muchas gracias|gracias|moltes gracies|gracies|thank you|thanks|merci|hasta luego|hasta pronto|adeu|fins aviat)( (a ti|a tu|igualmente|igualment))?$/.test(t);
 }
-export function accionPendiente(t) {
- if(t.motivo==='pidio_persona') return 'Atender personalmente: el cliente lo ha pedido.';
- if(t.motivo==='sin_respuesta') return 'Comprobar si ya se atendió y responder si sigue pendiente.';
- if(t.motivo?.startsWith('error_')) return 'Comprobar el resultado de la gestión antes de repetirla.';
- return 'Resolver la duda indicada y responder al cliente.';
+function accionPendiente(t) {
+ if(t.motivo==='pidio_persona') return 'Ha pedido hablar con una persona. Respóndele.';
+ if(t.motivo==='sin_respuesta') return 'Comprueba si ya se atendió y responde si sigue pendiente.';
+ if(t.motivo?.startsWith('error_')) return 'Comprueba qué se completó antes de repetir la gestión.';
+ return 'Revisa y responde a esta consulta.';
 }
-export function avisoAtencion(tareas,nivel,ahora=new Date()) {
+export function avisoAtencion(tareas,nivel) {
  const validas=tareas.filter(t=>contactoAtendible(t.jid)&&tareaHumana(t)&&!t.interno);
  if(!validas.length)return '';
- const antiguas=t=>+ahora-Date.parse(t.fecha_cliente||t.ultimo_cliente)>24*60*60000;
- const lineas=[`📩 *${nivel===3?'Atención pendiente · Dirección':nivel===2?'Recordatorio · Atención al cliente':'Atención al cliente'}*`,
-  `${validas.length} ${validas.length===1?'conversación por revisar':'conversaciones por revisar'}.`];
- for(const [anterior,titulo] of [[false,'Últimas 24 horas'],[true,'Conversaciones anteriores · más de 24 h']]) {
-  const grupo=validas.filter(t=>antiguas(t)===anterior).sort((a,b)=>Date.parse(b.fecha_cliente||b.ultimo_cliente)-Date.parse(a.fecha_cliente||a.ultimo_cliente));
-  if(!grupo.length)continue;
-  lineas.push('',`*${titulo}*`);
-  for(const t of grupo.slice(0,3)) {
-   const tel=telefonoContacto(t.telefono_visible)||(t.jid.endsWith('@s.whatsapp.net')?telefonoContacto(t.jid.split('@')[0]):null);
-   const nombre=breve(t.nombre,60),etiqueta=nombre&&nombre!==tel?nombre:tel?'+'+tel:'Contacto sin nombre';
-   const fecha=new Date(t.fecha_cliente||t.ultimo_cliente);
-   const cuando=Number.isFinite(+fecha)?fecha.toLocaleString('es-ES',{timeZone:'Europe/Madrid',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'Fecha no disponible';
-   lineas.push('',`• *${etiqueta}*${tel&&etiqueta!=='+'+tel?' · +'+tel:''}`,cuando);
-   if(t.ultimo_texto)lineas.push(`Último mensaje: «${breve(t.ultimo_texto,140)}»`);
-   else if(t.resumen&&!t.resumen.startsWith('Consulta anterior pendiente'))lineas.push(`Contexto: ${breve(t.resumen,140)}`);
-   lineas.push(`Motivo de revisión: ${breve(motivoAtencion(t),240)}`);
-   lineas.push(`Qué falta: ${accionPendiente(t)}`);
-   lineas.push(`Estado: ${t.estado==='en_curso'?'En curso':'Pendiente'} · Responsable: ${breve(t.responsable==='marketing'?'Laura':t.responsable||'Laura',60)}`);
-   lineas.push(enlaceConversacion(t.jid));
-  }
-  if(grupo.length>3)lineas.push('',`Y ${grupo.length-3} más en el panel.`);
+ const titulo=nivel===3?'⚠️ Uriel, casos sin resolver tras 72 horas'
+   :nivel===2?'🔔 Laura, recordatorio de casos pendientes':'📩 Laura, atención al cliente';
+ const lineas=[`*${titulo}*`];
+ for(const t of validas.slice(0,6)) {
+  const tel=telefonoContacto(t.telefono_visible)||(t.jid.endsWith('@s.whatsapp.net')?telefonoContacto(t.jid.split('@')[0]):null);
+  const nombre=breve(t.nombre,60)|| (tel?'+'+tel:'Contacto sin nombre');
+  lineas.push('',`*${nombre}* · ${accionPendiente(t)}`);
+  const contexto=breve(t.resumen,150);
+  if(t.motivo!=='pidio_persona' && contexto && !contexto.startsWith('Consulta anterior pendiente'))lineas.push(contexto);
+  if(t.estado==='en_curso')lineas.push(`Lo está gestionando ${breve(t.responsable==='marketing'?'Laura':t.responsable||'el equipo',60)}.`);
+  lineas.push(enlaceConversacion(t.jid));
  }
- lineas.push('','*Revisar en el panel*','https://familiadelamor.org/panel/#conversaciones',
-  'Abre el enlace de la consulta. Pulsa «Tomar el control» para atenderla y «Resuelta» al terminar; así se detienen los recordatorios.');
+ if(validas.length>6)lineas.push('',`Hay ${validas.length-6} más en el panel.`,'https://familiadelamor.org/panel/#conversaciones');
  return lineas.join('\n');
 }
 export function pausaBloqueante(ficha) {
  return ficha?.estado_ia === 'pausada' && !(ficha.pausado_por === 'sara' && ficha.pausa_motivo === 'consulta');
 }
 export function nivelAviso(tarea, ahora = new Date()) {
- const hora = Number(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Madrid',hour:'2-digit',hourCycle:'h23'}).format(ahora));
- if(tarea.aviso_en && +ahora-Date.parse(tarea.aviso_en)<5*60000)return 0;
- if(hora<10 || hora>=21 || !tareaHumana(tarea))return 0;
- // Dar margen real a quien ya está atendiendo; el cliente no reinicia este reloj.
- if(tarea.estado==='en_curso' && +ahora-Date.parse(tarea.actualizada_en||tarea.abierta_en)<240*60000)return 0;
- const minutos=(+ahora-Date.parse(tarea.abierta_en))/60000;
+ if(!tareaHumana(tarea))return 0;
  const previo=Number(tarea.aviso_nivel||0);
- // Siempre avisar primero a Laura, también al recuperar una tarea antigua.
  if(previo===0)return 1;
- const desdeAviso=(+ahora-Date.parse(tarea.aviso_en||tarea.abierta_en))/60000;
- if(previo===1 && desdeAviso>=30)return 2;
- // Dirección solo tras aviso y recordatorio, con tiempo real para intervenir.
- const referencia=tarea.estado==='en_curso'?tarea.actualizada_en||tarea.abierta_en:tarea.abierta_en;
- const espera=(+ahora-Date.parse(referencia))/60000;
- if(previo===2 && desdeAviso>=60 && minutos>=120 && espera>=(tarea.estado==='en_curso'?240:120))return 3;
+ if(previo===1) {
+  const primerAviso=new Date(tarea.aviso_en||tarea.abierta_en);
+  if(!Number.isFinite(+primerAviso))return 0;
+  const recordatorio=sumaDias(instanteMadrid(primerAviso).fecha,1);
+  const {fecha,minutoDia}=instanteMadrid(ahora);
+  return fecha>recordatorio || (fecha===recordatorio && minutoDia>=9*60) ? 2 : 0;
+ }
+ if(previo===2 && +ahora-Date.parse(tarea.abierta_en)>=72*60*60000)return 3;
  return 0;
 }
-export function crearAtencion({pool,enviar,listo,recuperar,ahora=()=>new Date()}) {
+export function crearAtencion({pool,enviar,listo,recuperar,avisarAlAbrir=false,ahora=()=>new Date()}) {
  const canon=async jid=>(await pool.query('SELECT COALESCE(telefono_jid,jid) AS jid FROM wa_bandeja_chats WHERE jid=$1',[jid])).rows[0]?.jid||jid;
  async function abrir(jid,motivo,resumen,fecha=new Date()) {
   jid=await canon(jid);
   if(!contactoAtendible(jid))return;
-  await pool.query(`INSERT INTO wa_atencion(jid,motivo,resumen,ultimo_cliente) VALUES($1,$2,$3,$4)
+  const guardada=await pool.query(`INSERT INTO wa_atencion(jid,motivo,resumen,ultimo_cliente) VALUES($1,$2,$3,$4)
    ON CONFLICT(jid) DO UPDATE SET
     estado=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN 'pendiente' ELSE wa_atencion.estado END,
     motivo=EXCLUDED.motivo,resumen=EXCLUDED.resumen,ultimo_cliente=GREATEST(wa_atencion.ultimo_cliente,EXCLUDED.ultimo_cliente),
@@ -96,8 +82,12 @@ export function crearAtencion({pool,enviar,listo,recuperar,ahora=()=>new Date()}
     acuse_en=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN NULL ELSE wa_atencion.acuse_en END,
     aviso_error=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN false ELSE wa_atencion.aviso_error END,
     responsable=CASE WHEN (wa_atencion.estado='resuelta' OR (wa_atencion.motivo='sin_respuesta' AND EXCLUDED.motivo<>'sin_respuesta')) THEN 'marketing' ELSE wa_atencion.responsable END
-   WHERE EXCLUDED.ultimo_cliente>COALESCE(wa_atencion.cerrada_en,wa_atencion.ultimo_cliente)`,
+   WHERE EXCLUDED.ultimo_cliente>COALESCE(wa_atencion.cerrada_en,wa_atencion.ultimo_cliente)
+   RETURNING aviso_nivel`,
    [jid,motivo,String(resumen||'').slice(0,1000),fecha]);
+  if(avisarAlAbrir && Number(guardada.rows[0]?.aviso_nivel)===0 && motivo!=='sin_respuesta') {
+   await avisar(jid).catch(e=>console.error('[Atención WA] Primer aviso:',e.message));
+  }
  }
  async function control(jid,accion,usuario) {
   jid=await canon(jid);
@@ -160,26 +150,21 @@ export function crearAtencion({pool,enviar,listo,recuperar,ahora=()=>new Date()}
    AND NOT EXISTS(SELECT 1 FROM wa_atencion a WHERE a.jid=COALESCE((SELECT telefono_jid FROM wa_bandeja_chats WHERE jid=c.jid),c.jid)) LIMIT 100`);
   for(const c of pausadas.rows)await abrir(c.jid,c.pausa_motivo||'manual','Consulta anterior pendiente de revisión; consultar el historial antes de responder.');
  }
- let ocupado=false;
- async function tick() {
-  if(ocupado)return;ocupado=true;
-  try {
-   await recuperarRecientes();
-   await barrer();
+ async function avisar(jid=null) {
    if(!listo())return;
    const identidad=IDENTIDAD_CTE.replace("NULLIF(trim(t.nombre_wa),'')","NULLIF(trim(t.nombre_wa),''),NULLIF(trim(t.nombre_archivo),'')");
    const {rows}=await pool.query(`WITH ${ARCHIVO_CTE}, ${identidad}
-    SELECT a.*,i.nombre,i.telefono_visible,e.mensaje AS ultimo_texto,COALESCE(e.fecha,a.ultimo_cliente) AS fecha_cliente
+    SELECT a.*,i.nombre,i.telefono_visible
     FROM wa_atencion a LEFT JOIN identidades i ON i.jid=a.jid
-    LEFT JOIN LATERAL(SELECT mensaje,fecha FROM eventos WHERE jid=a.jid AND tipo='recibido' ORDER BY fecha DESC,clave DESC LIMIT 1)e ON true
     WHERE a.estado<>'resuelta' AND (a.motivo<>'sin_respuesta' OR a.estado='en_curso') AND a.jid ~ '^([1-9][0-9]{9,14}@s[.]whatsapp[.]net|[1-9][0-9]*@lid)$'
-    AND NOT COALESCE(i.interno,false) ORDER BY a.abierta_en LIMIT 500`);
-   for(const nivel of [1,2,3]) {
-    const candidatas=rows.filter(t=>nivelAviso(t,ahora())===nivel).slice(0,20),tomadas=[];
+    AND NOT COALESCE(i.interno,false) AND ($1::text IS NULL OR a.jid=$1) ORDER BY a.abierta_en LIMIT 500`,[jid]);
+   const instante=ahora();
+   for(const nivel of (jid?[1]:[1,2,3])) {
+    const candidatas=rows.filter(t=>nivelAviso(t,instante)===nivel).slice(0,20),tomadas=[];
     for(const t of candidatas) {
      // Reclamar antes de enviar: una entrega incierta no se repite al reiniciar.
-     const r=await pool.query(`UPDATE wa_atencion SET aviso_nivel=$3,aviso_en=now(),aviso_error=false
-      WHERE jid=$1 AND version=$2 AND estado<>'resuelta' AND aviso_nivel<$3 RETURNING jid`,[t.jid,t.version,nivel]);
+     const r=await pool.query(`UPDATE wa_atencion SET aviso_nivel=$3,aviso_en=$4,aviso_error=false
+      WHERE jid=$1 AND version=$2 AND estado<>'resuelta' AND aviso_nivel<$3 RETURNING jid`,[t.jid,t.version,nivel,instante]);
      if(r.rows.length)tomadas.push(t);
     }
     if(!tomadas.length)continue;
@@ -187,10 +172,19 @@ export function crearAtencion({pool,enviar,listo,recuperar,ahora=()=>new Date()}
     // Volver a comprobar antes del envío: un cierre o toma reciente invalida el aviso.
     const vigentes=[];
     for(const t of tomadas){const r=await pool.query("SELECT jid FROM wa_atencion WHERE jid=$1 AND version=$2 AND estado<>'resuelta'",[t.jid,t.version]);if(r.rows.length)vigentes.push(t);}
-    const texto=avisoAtencion(vigentes,nivel,ahora());if(!texto)continue;
+    const texto=avisoAtencion(vigentes,nivel);if(!texto)continue;
     try{await enviar(nivel===3?'34622149946':'34633018834',texto);}
     catch(e){for(const t of tomadas)await pool.query('UPDATE wa_atencion SET aviso_error=true WHERE jid=$1 AND version=$2',[t.jid,t.version]);throw e;}
    }
+ }
+ let ocupado=false;
+ async function tick() {
+  if(ocupado)return;
+  ocupado=true;
+  try {
+   await recuperarRecientes();
+   await barrer();
+   await avisar();
   } finally {ocupado=false;}
  }
  return {abrir,entrada,control,acuse,iniciar,tick};

@@ -9,12 +9,12 @@ test('consulta automática no bloquea, persona y toma manual sí',()=>{
  for(const ficha of [{pausado_por:'Laura',pausa_motivo:'consulta'},{pausado_por:'sara',pausa_motivo:'pidio_persona'},{}])assert.equal(pausaBloqueante({estado_ia:'pausada',...ficha}),true);
  assert.equal(pausaBloqueante(null),false);
 });
-test('avisos: horario Madrid, escalado, no duplicados ni resueltas',()=>{
+test('avisos: apertura, casos resueltos y escalada ya completada',()=>{
  const ahora=new Date('2026-10-20T12:00:00Z');
  for(const [mins,n] of [[0,1],[31,1],[61,1]])assert.equal(nivelAviso({estado:'pendiente',motivo:'consulta',abierta_en:new Date(+ahora-mins*60000),aviso_nivel:0},ahora),n);
  assert.equal(nivelAviso({abierta_en:ahora,estado:'resuelta'},ahora),0);
- assert.equal(nivelAviso({abierta_en:ahora},new Date('2026-10-20T22:00:00Z')),0);
- assert.equal(nivelAviso({abierta_en:ahora,aviso_nivel:3},ahora),0);
+ assert.equal(nivelAviso({abierta_en:ahora,estado:'pendiente'},new Date('2026-10-20T22:00:00Z')),1);
+ assert.equal(nivelAviso({abierta_en:ahora,estado:'pendiente',aviso_nivel:3},ahora),0);
 });
 test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente',async t=>{
  if(!await disponible())return t.skip(motivoSalto());const db=await conEsquema();
@@ -58,16 +58,23 @@ test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente'
  await svc.iniciar(tercero,[{msg:{key:{id:'m2'}}}]);await svc.tick();assert.equal(rec.length,1,'procesada antes de un corte no debe repetir acciones');
 
  // Recorrido completo con envío simulado: Laura, recordatorio, Dirección y cierre.
- const reloj=new Date('2026-10-20T13:00:00Z'),avisos=[];
- const notificador=crearAtencion({pool:{query:db.raw},listo:()=>true,enviar:async(...a)=>avisos.push(a),ahora:()=>reloj});
+ let reloj=new Date('2026-10-20T20:00:00Z');
+ const avisos=[], casoAviso='34600000009@s.whatsapp.net';
+ const notificador=crearAtencion({pool:{query:db.raw},listo:()=>true,enviar:async(...a)=>avisos.push(a),avisarAlAbrir:true,ahora:()=>reloj});
  await db.raw("UPDATE wa_atencion SET estado='resuelta'");
- await db.raw("INSERT INTO wa_atencion(jid,motivo,resumen,abierta_en) VALUES('34600000009@s.whatsapp.net','consulta','Aprobar presupuesto para grupo',$1)",[new Date(+reloj-180*60000)]);
- await notificador.tick();assert.equal(avisos.length,1);assert.equal(avisos[0][0],'34633018834');assert.match(avisos[0][1],/Aprobar presupuesto para grupo/);
+ await notificador.abrir(casoAviso,'consulta','Aprobar presupuesto para grupo',reloj);
+ assert.equal(avisos.length,1);assert.equal(avisos[0][0],'34633018834');assert.match(avisos[0][1],/Aprobar presupuesto para grupo/);
+ await db.raw("UPDATE wa_atencion SET abierta_en=$1 WHERE jid=$2",[reloj,casoAviso]);
  await notificador.tick();assert.equal(avisos.length,1,'no repite aviso');
- await db.raw("UPDATE wa_atencion SET aviso_en=$1 WHERE jid='34600000009@s.whatsapp.net'",[new Date(+reloj-31*60000)]);
+ reloj=new Date('2026-10-21T06:59:59Z');
+ await notificador.tick();assert.equal(avisos.length,1);
+ reloj=new Date('2026-10-21T07:00:00Z');
  await notificador.tick();assert.equal(avisos.length,2);assert.equal(avisos[1][0],'34633018834');
- await db.raw("UPDATE wa_atencion SET aviso_en=$1 WHERE jid='34600000009@s.whatsapp.net'",[new Date(+reloj-61*60000)]);
+ reloj=new Date('2026-10-23T19:59:59Z');
+ await notificador.tick();assert.equal(avisos.length,2);
+ reloj=new Date('2026-10-23T20:00:00Z');
  await notificador.tick();assert.equal(avisos.length,3);assert.equal(avisos[2][0],'34622149946');
+ assert.match(avisos[2][1],/sin resolver tras 72 horas/);
  await notificador.control('34600000009@s.whatsapp.net','resolver','Laura');
  await notificador.tick();assert.equal(avisos.length,3,'cerrar detiene avisos');
  }finally{await db.fin();}
