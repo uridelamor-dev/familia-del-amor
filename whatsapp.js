@@ -1,9 +1,9 @@
 import { DIRECCIONES_RESERVA } from './src/modules/reservas/direcciones.js';
 import {HERRAMIENTA_CARNET,instruccionesCarnet} from './src/modules/messaging/sara-carnet.js';
-import { pausaBloqueante } from './src/modules/messaging/atencion.js';
+import { pausaBloqueante, fechaRespuestaWhatsApp } from './src/modules/messaging/atencion.js';
 import { conTurno } from './src/modules/messaging/turno.js';
 import { entradaDiferidaVigente, adjuntoGrupoDiferidoVigente, indicarEscribiendo } from './src/modules/messaging/entrada-diferida.js';
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage, fetchLatestWaWebVersion } from "@whiskeysockets/baileys";
+import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, downloadMediaMessage, fetchLatestWaWebVersion, generateMessageIDV2 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import QRCode from "qrcode";
 import pino from "pino";
@@ -368,6 +368,13 @@ const batchPorJid = new Map(); // jid → { timer, items[] }
 
 // Set para deduplicar mensajes automáticos de Sara frente a su evento fromMe en messages.upsert
 // Clave: `${jid}:${texto.slice(0,100)}` — expira a los 15s
+const mensajesAplicacion = new Set();
+function enviarDesdeAplicacion(jid, contenido, opciones = {}) {
+  const messageId = opciones.messageId || generateMessageIDV2(sock.user?.id);
+  mensajesAplicacion.add(messageId);
+  setTimeout(() => mensajesAplicacion.delete(messageId), 5*60000).unref();
+  return sock.sendMessage(jid, contenido, {...opciones,messageId});
+}
 const _mensajesSistema = new Set();
 function _marcarMensajeSistema(jid, texto) {
   const key = `${jid}:${texto.slice(0, 100)}`;
@@ -572,7 +579,7 @@ export function setDocumentoResolver(fn) { documentoResolver = fn; }
 
 export async function sendMensajeAGrupo(groupJid, texto, opciones = {}) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
-  return await sock.sendMessage(groupJid, { text: texto }, opciones);
+  return await enviarDesdeAplicacion(groupJid, { text: texto }, opciones);
 }
 
 // Un adjunto a un grupo. NO se puede usar sendDocumentoLibre para esto: aquel pasa el
@@ -580,7 +587,7 @@ export async function sendMensajeAGrupo(groupJid, texto, opciones = {}) {
 // un JID de grupo (que ya viene entero, con su @g.us).
 export async function sendDocumentoAGrupo(groupJid, buffer, filename, mimetype) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
-  await sock.sendMessage(groupJid, {
+  await enviarDesdeAplicacion(groupJid, {
     document: buffer,
     mimetype: mimetype || "application/octet-stream",
     fileName: filename,
@@ -611,7 +618,7 @@ export function setSeguimientoResolver(fn) { seguimientoResolver = fn; }
 async function notificarLaura(texto) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   try {
-    await sock.sendMessage(LAURA_JID, { text: texto });
+    await enviarDesdeAplicacion(LAURA_JID, { text: texto });
     console.log("📤 Notificación enviada a Laura");
   } catch (err) {
     console.error("Error notificando a Laura:", err.message);
@@ -623,7 +630,7 @@ async function notificarNerea(resumen, adjuntoUrl) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   try {
     const texto = `📋 *Nueva notificación del chatbot*\n\n${resumen}${adjuntoUrl ? `\n\n📎 Adjunto: ${adjuntoUrl}` : ""}`;
-    await sock.sendMessage(NEREA_JID, { text: texto });
+    await enviarDesdeAplicacion(NEREA_JID, { text: texto });
     console.log("📤 Notificación enviada a Nerea");
   } catch (err) {
     console.error("Error notificando a Nerea:", err.message);
@@ -955,7 +962,7 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
       if (!doc || !doc.buffer) {
         return { content: "No se encontró ese documento. No inventes que lo has enviado; ofrece ayudar de otro modo.", is_error: true };
       }
-      await sock.sendMessage(jid, {
+      await enviarDesdeAplicacion(jid, {
         document: doc.buffer,
         mimetype: doc.mimetype || "application/pdf",
         fileName: doc.filename || "documento.pdf"
@@ -968,7 +975,7 @@ async function ejecutarHerramienta(toolUse, adjuntoUrl, jid) {
     }
     if (name === "notificar_silvia") {
       if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
-      await sock.sendMessage(SILVIA_JID, {
+      await enviarDesdeAplicacion(SILVIA_JID, {
         text: `📋 *Consulta de contabilidad via chatbot*\n\n${input.resumen}`
       });
       console.log("📤 Notificación enviada a Silvia");
@@ -1040,7 +1047,7 @@ async function procesarBatch(jid, items) {
     if(ficha?.pausado_por==='sara' && ficha.pausa_motivo==='pidio_persona' && await atencionEntrada?.acuse(jid)) {
       const idioma=idiomaSugerido({mensajesCliente:[textoCombinado],idiomaContacto:ficha.idioma_ultimo}).idioma;
       const acuse={es:'He recibido tu mensaje. Tu consulta sigue pendiente del equipo.',ca:'He rebut el teu missatge. La teva consulta continua pendent de l’equip.',en:'I have received your message. Your request is still awaiting the team.'}[idioma]||'He recibido tu mensaje. Tu consulta sigue pendiente del equipo.';
-      await conTurno(jid,async()=>{const actual=await perfilLoader(jid);if(actual?.pausado_por!=='sara')return;_marcarMensajeSistema(jid,acuse);await sock.sendMessage(jid,{text:acuse});respuesta=acuse;});
+      await conTurno(jid,async()=>{const actual=await perfilLoader(jid);if(actual?.pausado_por!=='sara')return;_marcarMensajeSistema(jid,acuse);await enviarDesdeAplicacion(jid,{text:acuse});respuesta=acuse;});
     }
     if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta, pausada: true, adjuntos: idsAdjuntos });
     return;
@@ -1049,7 +1056,7 @@ async function procesarBatch(jid, items) {
     const idioma = idiomaSugerido({ mensajesCliente: items.map(i => i.textoFinal), idiomaContacto: ficha?.idioma_ultimo }).idioma;
     const respuesta = textoSeguro('adjunto', idioma);
     let enviada = false;
-    try { enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await sock.sendMessage(jid, { text: respuesta }); return true; }); }
+    try { enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await enviarDesdeAplicacion(jid, { text: respuesta }); return true; }); }
     finally { if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: enviada ? respuesta : null, adjuntos: idsAdjuntos }); }
     return;
   }
@@ -1080,7 +1087,7 @@ async function procesarBatch(jid, items) {
           `Mensaje: ${textoCombinado}`
         );
       }
-      const enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await sock.sendMessage(jid, { text: ack }); return true; });
+      const enviada = await conTurno(jid, async () => { const p = perfilLoader ? await perfilLoader(jid) : null; if (estaPausada(p) && p.pausado_por !== 'sara') return false; await enviarDesdeAplicacion(jid, { text: ack }); return true; });
       if (onMessage) await onMessage({ jid, texto: textoCombinado, respuesta: enviada ? ack : null, adjuntos: idsAdjuntos });
     } catch (err) {
       console.error("Error gestionando follow-up reply:", err.message);
@@ -1125,7 +1132,7 @@ async function procesarBatch(jid, items) {
       const actual = perfilLoader ? await perfilLoader(jid) : null;
       if (estaPausada(actual) && actual.pausado_por !== 'sara') return false;
       _marcarMensajeSistema(jid, respuesta);
-      await sock.sendMessage(jid, { text: respuesta });
+      await enviarDesdeAplicacion(jid, { text: respuesta });
       return true;
     });
     if (!enviado) {
@@ -1345,7 +1352,15 @@ async function connectToWhatsApp() {
             msg.message?.extendedTextMessage?.text || "";
           const t = textoManual.trim();
           const deduKey = `${jidDest}:${t.slice(0, 100)}`;
-          if (t && !_mensajesSistema.has(deduKey) && !(t.includes('*¡Bienvenido/a a Familia del Amor!*') && t.includes('*Contraseña inicial:*') && t.includes('*PIN para fichar en el sistema de tu local:*'))) {
+          const accesoInicial = t.includes('*¡Bienvenido/a a Familia del Amor!*')
+            && t.includes('*Contraseña inicial:*') && t.includes('*PIN para fichar en el sistema de tu local:*');
+          const esDelSistema = mensajesAplicacion.has(msg.key.id) || _mensajesSistema.has(deduKey) || accesoInicial;
+          if (!esDelSistema && atencionEntrada?.respuestaHumana) {
+            const fecha = fechaRespuestaWhatsApp(msg,type);
+            if(fecha) await atencionEntrada.respuestaHumana(jidDest,fecha)
+              .catch(e=>console.error('[Atención WA] Respuesta manual:',e.message));
+          }
+          if (t && !esDelSistema) {
             // Mensaje escrito a mano por el operador — añadir al contexto de Sara
             if (!conversaciones.has(jidDest)) conversaciones.set(jidDest, []);
             const h = conversaciones.get(jidDest);
@@ -1542,7 +1557,7 @@ export async function sendMensajeLibre(telefono, texto, meta = {}) {
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   const jid = formatPhone(telefono);
   await comprobarHorario(jid, meta);
-  await sock.sendMessage(jid, { text: texto });
+  await enviarDesdeAplicacion(jid, { text: texto });
   // Se marca ANTES de avisar para que el eco, que llega enseguida, ya lo encuentre marcado.
   _marcarMensajeSistema(jid, texto);
   if (onMensajeSaliente) {
@@ -1562,7 +1577,7 @@ export async function sendDocumentoLibre(telefono, buffer, filename, mimetype, m
   if (!clientReady || !sock) throw new Error("WhatsApp no conectado");
   const jid = formatPhone(telefono);
   await comprobarHorario(jid, meta);
-  await sock.sendMessage(jid, {
+  await enviarDesdeAplicacion(jid, {
     document: buffer,
     mimetype: mimetype || "application/octet-stream",
     fileName: filename,
@@ -1576,10 +1591,10 @@ export async function sendMediaLibre(telefono, buffer, filename, mimetype, capti
   const jid = formatPhone(telefono);
   await comprobarHorario(jid, meta);
   if (mimetype && mimetype.startsWith("image/")) {
-    await sock.sendMessage(jid, { image: buffer, caption: caption || "" });
+    await enviarDesdeAplicacion(jid, { image: buffer, caption: caption || "" });
   } else {
-    if (caption) await sock.sendMessage(jid, { text: caption });
-    await sock.sendMessage(jid, { document: buffer, mimetype: mimetype || "application/octet-stream", fileName: filename || "adjunto" });
+    if (caption) await enviarDesdeAplicacion(jid, { text: caption });
+    await enviarDesdeAplicacion(jid, { document: buffer, mimetype: mimetype || "application/octet-stream", fileName: filename || "adjunto" });
   }
 }
 
@@ -1615,7 +1630,7 @@ export async function sendConfirmacionCliente(telefono, reserva) {
       lineaZona(reserva.zona) + `\n` +
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
       `¡Te esperamos! Si necesitas cancelar o modificar, escríbenos aquí o llámanos.`;
-    await sock.sendMessage(jid, { text: msg });
+    await enviarDesdeAplicacion(jid, { text: msg });
     addSaraToHistorial(jid, msg);
     if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
     console.log(`📤 Confirmación enviada a ${telefono}`);
@@ -1638,7 +1653,7 @@ export async function sendConfirmacionPendienteCliente(telefono, reserva) {
       `👥 ${reserva.personas} personas\n` +
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
       `Por el número de comensales, un encargado se pondrá en contacto contigo en breve para confirmar todos los detalles. Si necesitas modificar o cancelar la solicitud, responde aquí. ¡Gracias!`;
-    await sock.sendMessage(jid, { text: msg });
+    await enviarDesdeAplicacion(jid, { text: msg });
     addSaraToHistorial(jid, msg);
     if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
     console.log(`📤 Confirmación pendiente enviada a ${telefono}`);
@@ -1658,7 +1673,7 @@ export async function sendNotificacionGrupo(groupId, reserva) {
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}` +
       lineaZona(reserva.zona) + `\n` +
       `📞 ${reserva.telefono}` + (reserva.observaciones ? `\n📝 ${reserva.observaciones}` : "");
-    await sock.sendMessage(groupId, { text: msg });
+    await enviarDesdeAplicacion(groupId, { text: msg });
     console.log(`📤 Notificación enviada al grupo de ${reserva.local}`);
   } catch (err) {
     console.error("Error enviando a grupo:", err.message);
@@ -1678,7 +1693,7 @@ export async function sendNotificacionGrupoPendiente(groupId, reserva) {
       `📞 ${reserva.telefono}\n` +
       `📍 ${reserva.local}\n\n` +
       (reserva.observaciones ? `📝 ${reserva.observaciones}\n\n` : "") + `Responde con *OK* cuando hayas hablado con el cliente.`;
-    await sock.sendMessage(groupId, { text: msg });
+    await enviarDesdeAplicacion(groupId, { text: msg });
     console.log(`📤 Notificación pendiente enviada al grupo de ${reserva.local}`);
   } catch (err) {
     console.error("Error enviando reserva pendiente al grupo:", err.message);
@@ -1697,7 +1712,7 @@ export async function sendCancelacionCliente(telefono, reserva) {
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
       `🪪 A nombre de: ${reserva.nombre_reserva}\n\n` +
       `Tu reserva ha sido cancelada. Si tienes dudas, llámanos.`;
-    await sock.sendMessage(jid, { text: msg });
+    await enviarDesdeAplicacion(jid, { text: msg });
     addSaraToHistorial(jid, msg);
     if (onMensajeSaliente) onMensajeSaliente({ jid, mensaje: msg });
     console.log(`📤 Cancelación enviada a ${telefono}`);
@@ -1716,7 +1731,7 @@ export async function sendCancelacionGrupo(groupId, reserva) {
       `⏰ ${reserva.hora}\n` +
       `👥 ${reserva.personas} persona${reserva.personas > 1 ? "s" : ""}\n` +
       `📞 ${reserva.telefono}` + (reserva.observaciones ? `\n📝 ${reserva.observaciones}` : "");
-    await sock.sendMessage(groupId, { text: msg });
+    await enviarDesdeAplicacion(groupId, { text: msg });
     console.log(`📤 Cancelación enviada al grupo de ${reserva.local}`);
   } catch (err) {
     console.error("Error enviando cancelación al grupo:", err.message);
@@ -1746,7 +1761,7 @@ export async function sendModificacionGrupo(groupId, reserva, cambios = {}) {
       lineaZona(reserva.zona) + `\n` +
       `📞 ${reserva.telefono}` +
       (lineasCambios ? `\n\n*Cambios:*\n${lineasCambios}` : "");
-    await sock.sendMessage(groupId, { text: msg });
+    await enviarDesdeAplicacion(groupId, { text: msg });
     console.log(`📤 Modificación enviada al grupo de ${reserva.local}`);
   } catch (err) {
     console.error("Error enviando modificación al grupo:", err.message);
@@ -1795,7 +1810,7 @@ export function initWhatsApp() {
 export async function enviarConversacion(jid, texto) {
   if (!clientReady || !sock) throw new Error('WhatsApp no conectado');
   if (!/^\d+@(s\.whatsapp\.net|lid)$/.test(jid)) throw new Error('Destino inválido');
-  await sock.sendMessage(jid, {text:texto});
+  await enviarDesdeAplicacion(jid, {text:texto});
   _marcarMensajeSistema(jid,texto);
   addSaraToHistorial(jid,texto);
   if (onMensajeSaliente) await onMensajeSaliente({jid,mensaje:texto,esManual:true,origen:CTX_ORIGEN.OPERADOR});

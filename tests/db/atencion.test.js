@@ -76,8 +76,19 @@ test('SQL real: tareas, toma, cierre, nuevo mensaje y recuperación idempotente'
  const otroEnCurso='34600000008@s.whatsapp.net';
  await db.raw(`INSERT INTO wa_atencion(jid,motivo,resumen,abierta_en,estado,aviso_nivel)
   VALUES($1,'consulta','Incidencia en gestión',$2,'en_curso',2)`,[otroEnCurso,new Date('2026-10-20T20:00:00Z')]);
+ const respondida='34600000007@s.whatsapp.net';
+ const lidRespondida='123456780@lid';
+ await db.raw("INSERT INTO wa_bandeja_chats(jid,telefono_jid,tiene_chat) VALUES($1,$2,true)",[lidRespondida,respondida]);
+ await db.raw(`INSERT INTO wa_atencion(jid,motivo,resumen,abierta_en,ultimo_cliente,estado,aviso_nivel)
+  VALUES($1,'consulta','Ya respondida desde el móvil',$2,$3,'pendiente',2)`,
+  [respondida,new Date('2026-10-20T20:00:00Z'),new Date('2026-10-20T20:05:00Z')]);
+ assert.equal(await notificador.respuestaHumana(lidRespondida,new Date('2026-10-20T20:04:59Z')),false,'una respuesta anterior a la última consulta no la toma');
+ assert.equal(await notificador.respuestaHumana(lidRespondida,new Date('2026-10-20T20:06:00Z')),true);
+ assert.equal(await notificador.respuestaHumana(lidRespondida,new Date('2026-10-20T20:06:00Z')),false);
+ const estadoWA=(await db.raw("SELECT estado,responsable FROM wa_atencion WHERE jid=$1",[respondida])).rows[0];
+ assert.deepEqual(estadoWA,{estado:'en_curso',responsable:'Equipo por WhatsApp'});
  await notificador.tick();assert.equal(avisos.length,3);
- assert.doesNotMatch(avisos[2][1],/Incidencia en gestión/);assert.equal(avisos[2][0],'34622149946');
+ assert.doesNotMatch(avisos[2][1],/Incidencia en gestión|Ya respondida desde el móvil/);assert.equal(avisos[2][0],'34622149946');
  assert.match(avisos[2][1],/sin resolver tras 72 horas/);
  await notificador.control('34600000009@s.whatsapp.net','resolver','Laura');
  await notificador.tick();assert.equal(avisos.length,3,'cerrar detiene avisos');

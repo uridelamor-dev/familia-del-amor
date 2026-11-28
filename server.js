@@ -22216,7 +22216,10 @@ app.post("/api/campanas-config", requireAuth(["direccion", "marketing"]), async 
 
 registrarBancos(app,{pool,auth:requireAuth});
 const recordarBancos=crearRecordatorioBancos({pool,enviar:sendMensajeLibre,listo:isReady});
-const atencionWA = crearAtencion({pool,enviar:sendMensajeLibre,listo:isReady,recuperar:recuperarEntradaSinAtender,avisarAlAbrir:PROD});
+const atencionWA = crearAtencion({
+  pool,enviar:(telefono,texto)=>sendMensajeLibre(telefono,texto,{interno:true}),
+  listo:isReady,recuperar:recuperarEntradaSinAtender,avisarAlAbrir:PROD,
+});
 registrarConversaciones(app, {atencion:atencionWA,auth:requireAuth,pool,resolverTelefono,enviar:enviarConversacion,listo:isReady,bloquear:conTurno,olvidar:olvidarSesionWA});
 
 app.post("/api/whatsapp/send", requireAuth(["direccion"]), async (req, res) => {

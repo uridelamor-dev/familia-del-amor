@@ -18,6 +18,15 @@ CREATE INDEX IF NOT EXISTS wa_atencion_abiertas ON wa_atencion(estado,ultimo_cli
 export function contactoAtendible(jid) {
  return /^[1-9]\d*@lid$/.test(String(jid||'')) || /^[1-9]\d{9,14}@s\.whatsapp\.net$/.test(String(jid||''));
 }
+export function fechaRespuestaWhatsApp(msg, tipo) {
+ if(tipo!=='notify' || !msg?.key?.fromMe || !msg.key.id || !contactoAtendible(msg.key.remoteJid))return null;
+ const m=msg.message;
+ const texto=m?.conversation || m?.extendedTextMessage?.text;
+ if(!(typeof texto==='string' && texto.trim()) &&
+    ![m?.audioMessage,m?.imageMessage,m?.videoMessage,m?.documentMessage].some(Boolean))return null;
+ const fecha=new Date(Number(msg.messageTimestamp)*1000);
+ return Number.isFinite(+fecha) && +fecha>0 ? fecha : null;
+}
 const breve=(v,n)=>{const t=String(v||'').replace(/https?:\/\/\S+/gi,'[enlace]').replace(/[*_~`<>]/g,'').replace(/\s+/g,' ').trim();return t.length>n?t.slice(0,n-1)+'…':t;};
 // No confundir una despedida inequívoca con una consulta sin atender.
 // «Ok», «sí» o «perfecto» podrían confirmar una reserva: no se excluyen.
@@ -99,6 +108,16 @@ export function crearAtencion({pool,enviar,listo,recuperar,avisarAlAbrir=false,a
     VALUES($1,'resuelta','manual',$2,now()) ON CONFLICT(jid) DO UPDATE
     SET estado='resuelta',cerrada_en=now(),actualizada_en=now(),version=wa_atencion.version+1`,[jid,usuario]);
   }
+ }
+ async function respuestaHumana(jid,fecha) {
+  if(!contactoAtendible(jid) || !Number.isFinite(+fecha) || +fecha<=0)return false;
+  jid=await canon(jid);
+  // WhatsApp entrega la hora de envío con precisión de segundos.
+  const r=await pool.query(`UPDATE wa_atencion SET estado='en_curso',responsable='Equipo por WhatsApp',
+   actualizada_en=now(),version=version+1
+   WHERE jid=$1 AND estado='pendiente' AND date_trunc('second',abierta_en)<=$2
+   AND date_trunc('second',ultimo_cliente)<=$2 RETURNING jid`,[jid,fecha]);
+  return !!r.rows.length;
  }
  async function entrada(jid,texto,fecha=new Date()) {
   jid=await canon(jid);
@@ -187,5 +206,5 @@ export function crearAtencion({pool,enviar,listo,recuperar,avisarAlAbrir=false,a
    await avisar();
   } finally {ocupado=false;}
  }
- return {abrir,entrada,control,acuse,iniciar,tick};
+ return {abrir,entrada,respuestaHumana,control,acuse,iniciar,tick};
 }

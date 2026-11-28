@@ -1,3 +1,4 @@
+import {fechaRespuestaWhatsApp} from '../src/modules/messaging/atencion.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { entradaDiferidaVigente, indicarEscribiendo } from '../src/modules/messaging/entrada-diferida.js';
@@ -45,4 +46,32 @@ test('manejador real: append llega al procesamiento, se deduplica y no reabre co
  await handler({messages:[entrada],type:'notify'});assert.equal(recibidos.length,1);
  permitir=false;await handler({messages:[{...entrada,key:{...entrada.key,id:'m2'}}],type:'append'});assert.equal(recibidos.length,1);
  await handler({messages:[{...entrada,key:{...entrada.key,id:'m3'},messageTimestamp:1}],type:'append'});assert.equal(recibidos.length,1);
+});
+
+test('una respuesta de WhatsApp cuenta para Atención y el eco de un envío propio queda fuera',async()=>{
+ const wa=readFileSync(new URL('../whatsapp.js',import.meta.url),'utf8');
+ let handler;
+ const respuestas=[], historial=[];
+ const jid='34600000000@s.whatsapp.net';
+ const salida=(id,message)=>({key:{id,remoteJid:jid,fromMe:true},message,messageTimestamp:1761200000});
+ const env={console:{log(){},error(e){assert.fail(e);}},archivarBandeja:()=>{},mensajeNormalizado:x=>x,
+  fechaRespuestaWhatsApp,conversaciones:new Map(),MAX_HISTORIAL:10,_mensajesSistema:new Set(),
+  generateMessageIDV2:()=> 'automatizado',setTimeout:()=>({unref(){}}),
+  atencionEntrada:{respuestaHumana:async(...args)=>respuestas.push(args)},
+  onMensajeSaliente:args=>historial.push(args),
+  sock:{ev:{on:(_evento,fn)=>handler=fn},sendMessage:async(_jid,contenido,{messageId})=>{
+   // El eco puede entrar antes de que sendMessage haya devuelto el ID.
+   await handler({type:'notify',messages:[salida(messageId,{conversation:contenido.text})]});
+  }},
+ };
+ const envio=wa.slice(wa.indexOf('const mensajesAplicacion ='),wa.indexOf('const _mensajesSistema ='));
+ const inicio=wa.indexOf('  sock.ev.on("messages.upsert"'),fin=wa.indexOf(String.fromCharCode(10)+'function formatPhone',inicio);
+ vm.runInNewContext(envio+wa.slice(inicio,fin).replace(/\n}\s*$/,''),env);
+ await env.enviarDesdeAplicacion(jid,{text:'Mensaje de Sara'});
+ await handler({type:'append',messages:[salida('historico',{conversation:'Respuesta de ayer'})]});
+ await handler({type:'notify',messages:[salida('reaccion',{reactionMessage:{text:'👍'}})]});
+ assert.equal(respuestas.length,0);
+ await handler({type:'notify',messages:[salida('manual',{conversation:'Hola, te ayudamos'}),salida('audio',{audioMessage:{ptt:true}})]});
+ assert.deepEqual(respuestas,[[jid,new Date(1761200000000)],[jid,new Date(1761200000000)]]);
+ assert.ok(!historial.some(h=>h.mensaje==='Mensaje de Sara'));
 });
